@@ -48,12 +48,12 @@ impl AppState {
     }
 
     pub async fn from_config(config: AppConfig) -> Result<Self, sqlx::Error> {
-        match config.database_url.clone() {
+        match config.database_url.as_ref() {
             Some(database_url) => {
                 let pool = PgPoolOptions::new()
                     .max_connections(config.db_pool_max_connections)
                     .acquire_timeout(Duration::from_millis(config.db_pool_acquire_timeout_ms))
-                    .connect(&database_url)
+                    .connect(database_url)
                     .await?;
 
                 Ok(Self::with_pool(config, pool))

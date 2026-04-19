@@ -36,13 +36,9 @@ RUN mkdir -p crates/infrastructure/src && printf '' > crates/infrastructure/src/
 
 RUN cargo build --release --workspace
 
-RUN rm -rf crates/api/src/main.rs \
-    crates/worker/src/main.rs \
-    crates/application/src/lib.rs \
-    crates/domain/src/lib.rs \
-    crates/infrastructure/src/lib.rs
+RUN rm -rf crates
 
-COPY backend/crates ./crates
+COPY backend/crates ./crates/
 
 RUN cargo build --release --workspace
 
