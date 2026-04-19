@@ -191,7 +191,7 @@ export function Workspace({
     setEditingPassageId(null);
   };
 
-  const handleAddPassageToLibrary = (passageId: string) => {
+  const handleAddPassageToLibrary = async (passageId: string) => {
     const passage = state.reading.passages.find(p => p.id === passageId);
     if (!passage) return;
 
@@ -206,8 +206,12 @@ export function Workspace({
       author: 'Unknown'
     };
 
-    passageLibraryService.addPassage(passage, metadata);
-    alert('Passage added to library successfully!');
+    try {
+      await passageLibraryService.addPassage(passage, metadata);
+      alert('Passage added to library successfully!');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to add passage to library.');
+    }
   };
 
   return (

@@ -7,9 +7,9 @@ import {
 import {
   backendDelete,
   backendGet,
+  isBackendLibraryEnabled,
   backendPatch,
   backendPost,
-  isBackendBuilderEnabled,
 } from './backendBridge';
 import { logger } from '../utils/logger';
 
@@ -340,7 +340,7 @@ class HybridQuestionBank {
   ) {}
 
   private useBackend(): boolean {
-    return isBackendBuilderEnabled();
+    return isBackendLibraryEnabled();
   }
 
   getAllQuestions(): Promise<QuestionBankItem[]> {

@@ -144,6 +144,31 @@ function envFlag(name: string): boolean {
   return String(env[name] ?? 'false') === 'true';
 }
 
+function readCookie(name: string): string | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+
+  const prefix = `${name}=`;
+  const match = document.cookie
+    .split(';')
+    .map((entry) => entry.trim())
+    .find((entry) => entry.startsWith(prefix));
+
+  return match ? decodeURIComponent(match.slice(prefix.length)) : null;
+}
+
+function hasAuthenticatedSessionCookie(): boolean {
+  const configuredName = import.meta.env['VITE_AUTH_SESSION_COOKIE_NAME'];
+  const cookieNames = [
+    typeof configuredName === 'string' ? configuredName : null,
+    '__Host-session',
+    'session',
+  ].filter((value): value is string => Boolean(value));
+
+  return cookieNames.some((cookieName) => Boolean(readCookie(cookieName)));
+}
+
 function isBackendEnvelope<T>(value: unknown): value is BackendEnvelope<T> {
   return (
     typeof value === 'object' &&
@@ -173,6 +198,10 @@ function compactObject<T extends Record<string, unknown>>(value: T): T {
 
 export function isBackendBuilderEnabled(): boolean {
   return envFlag('VITE_FEATURE_USE_BACKEND_BUILDER') || envFlag('FEATURE_USE_BACKEND_BUILDER');
+}
+
+export function isBackendLibraryEnabled(): boolean {
+  return isBackendBuilderEnabled() || hasAuthenticatedSessionCookie();
 }
 
 export function isBackendSchedulingEnabled(): boolean {

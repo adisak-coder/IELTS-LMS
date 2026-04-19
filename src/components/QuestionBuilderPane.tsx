@@ -121,7 +121,7 @@ export function QuestionBuilderPane({
     setSelectedQuestionItem(null);
   };
 
-  const handleAddToBank = () => {
+  const handleAddToBank = async () => {
     if (!selectedBlockId) {
       alert('Please select a question block first by clicking on it.');
       return;
@@ -137,8 +137,12 @@ export function QuestionBuilderPane({
       author: 'Unknown'
     };
 
-    questionBankService.addQuestion(block, metadata);
-    alert('Question added to bank successfully!');
+    try {
+      await questionBankService.addQuestion(block, metadata);
+      alert('Question added to bank successfully!');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Failed to add question to bank.');
+    }
   };
 
   const handleAddQuestionToBlock = (blockId: string) => {

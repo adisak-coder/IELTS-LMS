@@ -7,9 +7,9 @@ import {
 import {
   backendDelete,
   backendGet,
+  isBackendLibraryEnabled,
   backendPatch,
   backendPost,
-  isBackendBuilderEnabled,
 } from './backendBridge';
 import { logger } from '../utils/logger';
 
@@ -351,7 +351,7 @@ class HybridPassageLibrary {
   ) {}
 
   private useBackend(): boolean {
-    return isBackendBuilderEnabled();
+    return isBackendLibraryEnabled();
   }
 
   getAllPassages(): Promise<PassageLibraryItem[]> {
