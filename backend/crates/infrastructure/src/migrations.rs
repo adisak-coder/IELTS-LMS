@@ -36,7 +36,10 @@ pub async fn run_startup_migrations(pool: &PgPool, migrations_dir: &Path) -> Res
 }
 
 pub fn default_migrations_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations")
+    resolve_default_migrations_dir(
+        std::env::current_exe().ok().as_deref(),
+        Path::new(env!("CARGO_MANIFEST_DIR")),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -204,9 +207,28 @@ fn sanitize_migration_sql<'a>(sql: &'a str, roles_supported: bool) -> Cow<'a, st
     Cow::Owned(filtered)
 }
 
+fn resolve_default_migrations_dir(current_exe: Option<&Path>, manifest_dir: &Path) -> PathBuf {
+    if let Some(executable) = current_exe {
+        if let Some(parent) = executable.parent() {
+            let adjacent = parent.join("migrations");
+            if adjacent.exists() {
+                return adjacent;
+            }
+        }
+    }
+
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(manifest_dir)
+        .join("migrations")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::sanitize_migration_sql;
+    use std::path::Path;
+
+    use super::{resolve_default_migrations_dir, sanitize_migration_sql};
 
     #[test]
     fn strips_app_role_grants_when_roles_are_unavailable() {
@@ -231,5 +253,35 @@ CREATE INDEX idx_foo_id ON foo(id);\n";
         let filtered = sanitize_migration_sql(sql, true);
 
         assert_eq!(filtered.as_ref(), sql);
+    }
+
+    #[test]
+    fn prefers_executable_adjacent_migrations_dir_when_present() {
+        let unique = format!(
+            "ielts-migrations-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos()
+        );
+        let bin_dir = std::env::temp_dir().join(unique).join("app");
+        let migrations_dir = bin_dir.join("migrations");
+        std::fs::create_dir_all(&migrations_dir).expect("create migrations dir");
+        let exe_path = bin_dir.join("migrate");
+
+        let resolved = resolve_default_migrations_dir(Some(&exe_path), Path::new("/manifest/dir"));
+
+        assert_eq!(resolved, migrations_dir);
+        let _ = std::fs::remove_dir_all(bin_dir.parent().expect("temp test root"));
+    }
+
+    #[test]
+    fn falls_back_to_manifest_relative_migrations_dir_when_adjacent_dir_is_missing() {
+        let resolved = resolve_default_migrations_dir(
+            Some(Path::new("/tmp/runtime/migrate")),
+            Path::new("/workspace/backend/crates/infrastructure"),
+        );
+
+        assert_eq!(resolved, Path::new("/workspace/backend/migrations"));
     }
 }
