@@ -229,11 +229,21 @@ class ApiClient {
     }
 
     // All retries failed
-    logError(lastError || new Error('Request failed after retries'), {
-      endpoint,
-      requestId,
-      attempts: retries + 1,
-    });
+    const statusCode = this.getStatusCode(lastError || new Error('Request failed'));
+    // Log 401 as warning since it's expected for unauthenticated requests
+    if (statusCode === 401) {
+      logWarn('Request failed with 401 Unauthorized', {
+        endpoint,
+        requestId,
+        attempts: retries + 1,
+      });
+    } else {
+      logError(lastError || new Error('Request failed after retries'), {
+        endpoint,
+        requestId,
+        attempts: retries + 1,
+      });
+    }
 
     if (lastError) {
       throw lastError;
