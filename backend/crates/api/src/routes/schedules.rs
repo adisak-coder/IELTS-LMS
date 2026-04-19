@@ -137,7 +137,6 @@ pub async fn apply_runtime_command(
 pub async fn create_student_registration(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
-    _csrf: VerifiedCsrf,
     Path(schedule_id): Path<Uuid>,
     Json(req): Json<StudentRegistrationRequest>,
 ) -> Result<ApiResponse<ielts_backend_domain::attempt::StudentRegistrationResponse>, ApiError> {
