@@ -11,7 +11,6 @@ export function ExamReviewRoute() {
   const { examId } = useParams<{ examId: string }>();
   const controller = useReviewRouteController(examId);
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
-  const [scheduledTime, setScheduledTime] = React.useState('');
 
   if (controller.isLoading) {
     return (
@@ -28,6 +27,32 @@ export function ExamReviewRoute() {
       </div>
     );
   }
+
+  const currentDraftVersion = controller.versions.find(
+    (version) => version.id === controller.exam?.currentDraftVersionId,
+  );
+  const currentPublishedVersion = controller.versions.find(
+    (version) => version.id === controller.exam?.currentPublishedVersionId,
+  );
+  const latestSchedule = [...controller.schedules]
+    .sort((left, right) => new Date(right.startTime).getTime() - new Date(left.startTime).getTime())
+    .find((schedule) => schedule.status === 'scheduled' || schedule.status === 'live' || schedule.status === 'completed');
+  const scheduledTime = latestSchedule ? new Date(latestSchedule.startTime).toLocaleString() : '';
+  const publishedLink =
+    latestSchedule && typeof window !== 'undefined'
+      ? `${window.location.origin}/student/${latestSchedule.id}/register`
+      : latestSchedule
+        ? `/student/${latestSchedule.id}/register`
+        : undefined;
+  const publishSuccess =
+    controller.exam?.status === 'published' && currentPublishedVersion
+      ? {
+          draftVersion: currentDraftVersion?.versionNumber ?? currentPublishedVersion.versionNumber,
+          publishedVersion: currentPublishedVersion.versionNumber,
+          scheduledDate: scheduledTime || undefined,
+          publishedLink,
+        }
+      : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -59,6 +84,7 @@ export function ExamReviewRoute() {
                   scheduledTime={scheduledTime}
                   onOpenSchedulingWorkflow={() => setShowScheduleModal(true)}
                   onUnpublish={controller.handleUnpublish}
+                  publishSuccess={publishSuccess}
                   exam={{ title: controller.exam?.title || 'Untitled Exam' }}
                 />
               ) : (
@@ -104,7 +130,6 @@ export function ExamReviewRoute() {
             onClose={() => setShowScheduleModal(false)}
             onCreateSchedule={async (schedule) => {
               await controller.handleCreateSchedule(schedule);
-              setScheduledTime(new Date(schedule.startTime).toLocaleString());
             }}
           />
         )}

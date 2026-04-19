@@ -7,6 +7,7 @@ interface PublishSuccessState {
   draftVersion: number;
   publishedVersion: number;
   scheduledDate?: string;
+  publishedLink?: string;
 }
 
 interface PublishActionsProps {
@@ -48,6 +49,7 @@ export function PublishActions({
   const [scheduledTime, setScheduledTime] = useState('');
   const [showSchedule, setShowSchedule] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const isValidationPassed = publishReadiness?.canPublish ?? false;
   const isContentReviewed = true;
@@ -87,6 +89,31 @@ export function PublishActions({
         <div className="p-3 bg-sky-50 rounded-lg border border-sky-100">
           <p className="text-xs text-sky-900">Draft remains editable. Create new published version when ready.</p>
         </div>
+
+        {publishSuccess.publishedLink && (
+          <div className="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2">
+            <p className="text-xs font-semibold text-slate-700 uppercase tracking-wider">Student Access Link</p>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={publishSuccess.publishedLink}
+                className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white text-slate-700"
+                aria-label="Published exam link"
+              />
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(publishSuccess.publishedLink!);
+                  setLinkCopied(true);
+                  window.setTimeout(() => setLinkCopied(false), 1500);
+                }}
+                className="px-4 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 transition-all duration-200"
+                aria-label="Copy student link"
+              >
+                {linkCopied ? 'Copied' : 'Copy Link'}
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="flex gap-3">
           {onViewPublished && (

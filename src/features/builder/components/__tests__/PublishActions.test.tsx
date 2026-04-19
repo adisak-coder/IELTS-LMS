@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PublishActions } from '../PublishActions';
 import type { PublishReadiness } from '../../../../types/domain';
@@ -162,6 +162,33 @@ describe('PublishActions', () => {
 
     const continueButton = screen.getByRole('button', { name: /continue editing draft/i });
     expect(continueButton).toBeTruthy();
+  });
+
+  it('copies the published student link', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+
+    render(
+      <PublishActions
+        {...defaultProps}
+        canPublish={true}
+        publishReadiness={mockPublishReadiness}
+        publishSuccess={{
+          draftVersion: 3,
+          publishedVersion: 4,
+          scheduledDate: '2026-04-20',
+          publishedLink: 'https://example.com/student/sched-1/register',
+        }}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /copy student link/i }));
+
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith('https://example.com/student/sched-1/register');
+    });
   });
 
   it('opens the real scheduling workflow when provided', () => {

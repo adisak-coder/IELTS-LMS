@@ -12,6 +12,7 @@ export interface ReviewRouteController {
   isLoading: boolean;
   state: ExamState | null;
   versions: ExamVersion[];
+  schedules: ExamSchedule[];
   publishReadiness: PublishReadiness | undefined;
   handlePublish: (notes?: string) => Promise<void>;
   handleSchedulePublish: (scheduledTime: string) => Promise<void>;
@@ -33,6 +34,7 @@ export function useReviewRouteController(
   const [state, setState] = useState<ExamState | null>(null);
   const [exam, setExam] = useState<ExamEntity | undefined>(undefined);
   const [versions, setVersions] = useState<ExamVersion[]>([]);
+  const [schedules, setSchedules] = useState<ExamSchedule[]>([]);
   const [publishReadiness, setPublishReadiness] = useState<PublishReadiness | undefined>(
     undefined,
   );
@@ -58,14 +60,16 @@ export function useReviewRouteController(
       const examState = entity.currentDraftVersionId
         ? await examRepository.getVersionById(entity.currentDraftVersionId).then(v => v?.contentSnapshot ?? null)
         : null;
-      const [allVersions, readiness] = await Promise.all([
+      const [allVersions, allSchedules, readiness] = await Promise.all([
         examRepository.getAllVersions(examId),
+        examRepository.getSchedulesByExam(examId),
         examLifecycleService.getPublishReadiness(examId),
       ]);
 
       setExam(entity);
       setState(examState ? hydrateExamState(examState) : null);
       setVersions(allVersions);
+      setSchedules(allSchedules);
       setPublishReadiness(readiness);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load exam');
@@ -162,7 +166,8 @@ export function useReviewRouteController(
 
   const handleCreateSchedule = useCallback(async (schedule: ExamSchedule) => {
     await examRepository.saveSchedule(schedule);
-  }, []);
+    await loadExam();
+  }, [loadExam]);
 
   const handleBackToAdmin = useCallback(() => {
     navigate('/admin');
@@ -174,6 +179,7 @@ export function useReviewRouteController(
     isLoading,
     state,
     versions,
+    schedules,
     publishReadiness,
     handlePublish,
     handleSchedulePublish,
