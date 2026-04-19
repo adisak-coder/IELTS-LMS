@@ -1,13 +1,11 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum UserRole {
     Admin,
     Builder,
@@ -16,9 +14,8 @@ pub enum UserRole {
     Student,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum UserState {
     Active,
     Disabled,
@@ -117,6 +114,71 @@ pub struct StudentProfile {
     pub institution: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[cfg(feature = "sqlx")]
+mod sqlx_text_enums {
+    use super::{UserRole, UserState};
+
+    use sqlx::{
+        decode::Decode,
+        encode::Encode,
+        error::BoxDynError,
+        mysql::MySqlTypeInfo,
+        MySql, Type,
+    };
+
+    fn invalid_enum_value(name: &str, value: &str) -> BoxDynError {
+        format!("invalid {name} value: {value}").into()
+    }
+
+    macro_rules! impl_text_enum {
+        ($ty:ty, { $($variant:ident => $value:expr),+ $(,)? }) => {
+            impl Type<MySql> for $ty {
+                fn type_info() -> MySqlTypeInfo {
+                    <&str as Type<MySql>>::type_info()
+                }
+
+                fn compatible(ty: &MySqlTypeInfo) -> bool {
+                    <&str as Type<MySql>>::compatible(ty)
+                }
+            }
+
+            impl<'q> Encode<'q, MySql> for $ty {
+                fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+                    let value = match self {
+                        $(Self::$variant => $value,)+
+                    };
+                    <&str as Encode<MySql>>::encode_by_ref(&value, buf)
+                }
+            }
+
+            impl<'r> Decode<'r, MySql> for $ty {
+                fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+                    let text = <&str as Decode<MySql>>::decode(value)?;
+                    match text {
+                        $($value => Ok(Self::$variant),)+
+                        other => Err(invalid_enum_value(stringify!($ty), other)),
+                    }
+                }
+            }
+        };
+    }
+
+    impl_text_enum!(UserRole, {
+        Admin => "admin",
+        Builder => "builder",
+        Proctor => "proctor",
+        Grader => "grader",
+        Student => "student",
+    });
+
+    impl_text_enum!(UserState, {
+        Active => "active",
+        Disabled => "disabled",
+        Locked => "locked",
+        PendingActivation => "pending_activation",
+    });
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

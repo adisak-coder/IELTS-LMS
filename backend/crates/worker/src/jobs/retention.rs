@@ -34,13 +34,16 @@ pub async fn run_once(pool: MySqlPool) -> Result<RetentionRunReport, sqlx::Error
     let cache_rows = sqlx::query(
         r#"
         DELETE FROM shared_cache_entries
-        WHERE id IN (
-            SELECT id
-            FROM shared_cache_entries
-            WHERE (invalidated_at IS NOT NULL AND invalidated_at < NOW() - INTERVAL 24 HOUR)
-               OR (expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL 24 HOUR)
-            ORDER BY COALESCE(invalidated_at, expires_at) ASC
-            LIMIT ?
+        WHERE cache_key IN (
+            SELECT cache_key
+            FROM (
+                SELECT cache_key
+                FROM shared_cache_entries
+                WHERE (invalidated_at IS NOT NULL AND invalidated_at < NOW() - INTERVAL 24 HOUR)
+                   OR (expires_at IS NOT NULL AND expires_at < NOW() - INTERVAL 24 HOUR)
+                ORDER BY COALESCE(invalidated_at, expires_at) ASC
+                LIMIT ?
+            ) AS cache_keys_to_delete
         )
         "#,
     )
