@@ -197,33 +197,27 @@ function compactObject<T extends Record<string, unknown>>(value: T): T {
 }
 
 export function isBackendBuilderEnabled(): boolean {
-  return envFlag('VITE_FEATURE_USE_BACKEND_BUILDER') || envFlag('FEATURE_USE_BACKEND_BUILDER');
+  return true; // Always use backend API for cross-device synchronization
 }
 
 export function isBackendLibraryEnabled(): boolean {
-  return isBackendBuilderEnabled() || hasAuthenticatedSessionCookie();
+  return true; // Always use backend API for cross-device synchronization
 }
 
 export function isBackendSchedulingEnabled(): boolean {
-  return (
-    envFlag('VITE_FEATURE_USE_BACKEND_SCHEDULING') ||
-    envFlag('FEATURE_USE_BACKEND_SCHEDULING')
-  );
+  return true; // Always use backend API for cross-device synchronization
 }
 
 export function isBackendDeliveryEnabled(): boolean {
-  return envFlag('VITE_FEATURE_USE_BACKEND_DELIVERY') || envFlag('FEATURE_USE_BACKEND_DELIVERY');
+  return true; // Always use backend API for cross-device synchronization
 }
 
 export function isBackendProctoringEnabled(): boolean {
-  return (
-    envFlag('VITE_FEATURE_USE_BACKEND_PROCTORING') ||
-    envFlag('FEATURE_USE_BACKEND_PROCTORING')
-  );
+  return true; // Always use backend API for cross-device synchronization
 }
 
 export function isBackendGradingEnabled(): boolean {
-  return envFlag('VITE_FEATURE_USE_BACKEND_GRADING') || envFlag('FEATURE_USE_BACKEND_GRADING');
+  return true; // Always use backend API for cross-device synchronization
 }
 
 export function hasBackendStatusCode(error: unknown, statusCode: number): boolean {

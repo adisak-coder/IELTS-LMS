@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ExamDeliveryService } from '../examDeliveryService';
-import { LocalStorageExamRepository } from '../examRepository';
+import { BackendExamRepository } from '../examRepository';
 import { studentAttemptRepository } from '../studentAttemptRepository';
 import { ExamConfig, ExamState } from '../../types';
 import { createDefaultConfig } from '../../constants/examDefaults';
 import { ExamEntity, ExamSchedule, ExamVersion, SCHEMA_VERSION } from '../../types/domain';
 
 describe('ExamDeliveryService', () => {
-  let repository: LocalStorageExamRepository;
+  let repository: BackendExamRepository;
   let service: ExamDeliveryService;
 
   beforeEach(() => {
     localStorage.clear();
-    repository = new LocalStorageExamRepository();
+    repository = new BackendExamRepository();
     service = new ExamDeliveryService(repository);
   });
 

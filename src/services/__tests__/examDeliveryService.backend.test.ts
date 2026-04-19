@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ExamDeliveryService } from '../examDeliveryService';
-import { LocalStorageExamRepository } from '../examRepository';
+import { BackendExamRepository } from '../examRepository';
 
 const originalFetch = global.fetch;
 
@@ -93,7 +93,7 @@ describe('ExamDeliveryService backend scheduling mode', () => {
       );
     global.fetch = fetchMock as typeof fetch;
 
-    const service = new ExamDeliveryService(new LocalStorageExamRepository());
+    const service = new ExamDeliveryService(new BackendExamRepository());
     const result = await service.startRuntime('sched-1', 'Proctor');
 
     expect(result.success).toBe(true);
