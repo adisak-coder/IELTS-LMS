@@ -78,9 +78,14 @@ export function StudentRegistrationRoute() {
       return;
     }
 
+    if (!scheduleId) {
+      setSubmitError('Invalid schedule id');
+      return;
+    }
+
     // Check authentication for backend registration
     const shouldUseBackendRegistration =
-      Boolean(scheduleId) && isBackendSchedulingEnabled() && isUuid(scheduleId);
+      isBackendSchedulingEnabled() && isUuid(scheduleId);
 
     if (shouldUseBackendRegistration && authStatus !== 'authenticated') {
       setSubmitError('Please log in to register for this exam');

@@ -10,6 +10,7 @@ use ielts_backend_domain::{
 };
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
+    auth::sha256_hex,
     idempotency::{IdempotencyRecord, IdempotencyRepository},
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -571,7 +572,7 @@ impl DeliveryService {
                 phase = ?,
                 recovery = ?,
                 final_submission = ?,
-                submitted_at = NOW(),
+                submitted_at = ?,
                 updated_at = NOW(),
                 revision = revision + 1
             WHERE id = ?
@@ -580,6 +581,7 @@ impl DeliveryService {
         .bind("post-exam")
         .bind(recovery)
         .bind(&final_submission)
+        .bind(now)
         .bind(&req.attempt_id)
         .execute(tx.as_mut())
         .await?;
@@ -589,10 +591,11 @@ impl DeliveryService {
             .fetch_one(tx.as_mut())
             .await?;
 
+        let submitted_at = attempt.submitted_at.unwrap_or(now);
         let response = StudentSubmitResponse {
             attempt,
             submission_id,
-            submitted_at: now,
+            submitted_at,
             refreshed_attempt_credential: None,
         };
 
@@ -884,9 +887,9 @@ impl DeliveryService {
             return Ok(None);
         }
 
-        serde_json::to_string(request)
-            .map(Some)
-            .map_err(|err| DeliveryError::Internal(format!("Failed to serialize request: {err}")))
+        let serialized = serde_json::to_string(request)
+            .map_err(|err| DeliveryError::Internal(format!("Failed to serialize request: {err}")))?;
+        Ok(Some(sha256_hex(&serialized)))
     }
 
     async fn lookup_idempotent_response<T>(

@@ -24,7 +24,7 @@ const SCHEDULING_MIGRATIONS: &[&str] = &[
 ];
 
 #[tokio::test]
-async fn registration_rejects_invalid_wcode_and_prevents_duplicates() {
+async fn registration_rejects_invalid_wcode_and_is_idempotent_for_same_user() {
     let database = mysql::TestDatabase::new(SCHEDULING_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
     let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
@@ -60,6 +60,21 @@ async fn registration_rejects_invalid_wcode_and_prevents_duplicates() {
         created.student_key,
         format!("student-{}-W123456", schedule_id)
     );
+
+    let idempotent = service
+        .create_student_registration(
+            &actor,
+            schedule_id,
+            "W123456".to_owned(),
+            "changed@example.com".to_owned(),
+            "Changed Name".to_owned(),
+            user_id,
+        )
+        .await
+        .expect("idempotent registration");
+    assert_eq!(idempotent.id, created.id);
+    assert_eq!(idempotent.wcode, "W123456");
+    assert_eq!(idempotent.email, "alice@example.com");
 
     let duplicate = service
         .create_student_registration(

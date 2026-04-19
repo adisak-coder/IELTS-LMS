@@ -290,9 +290,7 @@ class ApiClient {
    */
   private createErrorFromResponse(response: Response, errorData: unknown): Error {
     const status = response.status;
-    const message = errorData && typeof errorData === 'object' && 'message' in errorData
-      ? String((errorData as { message?: unknown }).message ?? response.statusText)
-      : response.statusText;
+    const message = this.extractErrorMessage(errorData, response.statusText);
 
     if (status === 503) {
       return new ServiceUnavailableError(message);
@@ -303,6 +301,31 @@ class ApiClient {
     }
 
     return this.withStatusCode(new Error(message), status);
+  }
+
+  private extractErrorMessage(errorData: unknown, fallback: string): string {
+    if (!errorData || typeof errorData !== 'object') {
+      return fallback;
+    }
+
+    if ('message' in errorData) {
+      const value = (errorData as { message?: unknown }).message;
+      if (typeof value === 'string' && value.trim().length > 0) {
+        return value;
+      }
+    }
+
+    if ('error' in errorData) {
+      const nested = (errorData as { error?: unknown }).error;
+      if (nested && typeof nested === 'object' && 'message' in nested) {
+        const value = (nested as { message?: unknown }).message;
+        if (typeof value === 'string' && value.trim().length > 0) {
+          return value;
+        }
+      }
+    }
+
+    return fallback;
   }
 
   /**

@@ -3,7 +3,7 @@ use ielts_backend_domain::schedule::{
     validate_email, validate_wcode, CreateScheduleRequest, DeliveryMode, ExamSchedule,
     ExamSessionRuntime, RecurrenceType, RuntimeCommandAction, RuntimeCommandEvent,
     RuntimeCommandRequest, RuntimeSectionState, RuntimeStatus, ScheduleSectionPlanEntry,
-    ScheduleStatus, SectionRuntimeStatus, UpdateScheduleRequest,
+    ScheduleRegistration, ScheduleStatus, SectionRuntimeStatus, UpdateScheduleRequest,
 };
 use ielts_backend_infrastructure::{
     actor_context::ActorContext,
@@ -33,6 +33,45 @@ pub struct SchedulingService {
 impl SchedulingService {
     pub fn new(pool: MySqlPool) -> Self {
         Self { pool }
+    }
+
+    async fn load_registration_by_wcode(
+        &self,
+        schedule_id: Uuid,
+        wcode: &str,
+    ) -> Result<Option<ScheduleRegistrationRow>, SchedulingError> {
+        sqlx::query_as::<_, ScheduleRegistrationRow>(
+            r#"
+            SELECT
+                id,
+                schedule_id,
+                wcode,
+                student_email,
+                student_key,
+                actor_id,
+                student_id,
+                student_name,
+                access_state,
+                allowed_from,
+                allowed_until,
+                extra_time_minutes,
+                seat_label,
+                metadata,
+                created_at,
+                updated_at,
+                revision,
+                user_id
+            FROM schedule_registrations
+            WHERE schedule_id = ?
+              AND wcode = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(schedule_id.to_string())
+        .bind(wcode)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(SchedulingError::from)
     }
 
     pub async fn create_schedule(
@@ -675,30 +714,35 @@ impl SchedulingService {
         email: String,
         student_name: String,
         user_id: Uuid,
-    ) -> Result<ielts_backend_domain::schedule::ScheduleRegistration, SchedulingError> {
+    ) -> Result<ScheduleRegistration, SchedulingError> {
         validate_wcode(&wcode).map_err(|e| SchedulingError::Validation(e))?;
         validate_email(&email).map_err(|e| SchedulingError::Validation(e))?;
 
         self.get_schedule(ctx, schedule_id).await?;
 
-        let existing = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM schedule_registrations WHERE schedule_id = ? AND wcode = ?"
-        )
-        .bind(schedule_id.to_string())
-        .bind(&wcode)
-        .fetch_one(&self.pool)
-        .await?;
+        let user_id_str = user_id.to_string();
 
-        if existing > 0 {
-            return Err(SchedulingError::Conflict(
-                format!("Wcode {} is already registered for this schedule", wcode)
-            ));
+        if let Some(row) = self.load_registration_by_wcode(schedule_id, &wcode).await? {
+            let same_user = row
+                .user_id
+                .map(|id| id.into_uuid())
+                .is_some_and(|id| id == user_id)
+                || row.actor_id.as_deref() == Some(user_id_str.as_str());
+
+            if same_user {
+                return Ok(row.into_domain());
+            }
+
+            return Err(SchedulingError::Conflict(format!(
+                "Wcode {} is already registered for this schedule",
+                wcode
+            )));
         }
 
         let student_key = format!("student-{}-{}", schedule_id, wcode);
         let registration_id = Uuid::new_v4();
 
-        sqlx::query(
+        let inserted = sqlx::query(
             r#"
             INSERT INTO schedule_registrations (
                 id, schedule_id, user_id, actor_id, wcode, student_key, student_id, student_name, student_email,
@@ -717,27 +761,58 @@ impl SchedulingService {
         .bind(&student_name)
         .bind(&email)
         .execute(&self.pool)
-        .await?;
+        .await;
 
-        Ok(ielts_backend_domain::schedule::ScheduleRegistration {
-            id: registration_id,
-            schedule_id,
-            wcode: wcode.clone(),
-            email: email.clone(),
-            student_key,
-            actor_id: Some(user_id.to_string()),
-            student_id: wcode,
-            student_name,
-            access_state: "invited".to_string(),
-            allowed_from: None,
-            allowed_until: None,
-            extra_time_minutes: 0,
-            seat_label: None,
-            metadata: None,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-            revision: 0,
-        })
+        match inserted {
+            Ok(_) => Ok(ScheduleRegistration {
+                id: registration_id,
+                schedule_id,
+                wcode: wcode.clone(),
+                email: email.clone(),
+                student_key,
+                actor_id: Some(user_id_str),
+                student_id: wcode,
+                student_name,
+                access_state: "invited".to_string(),
+                allowed_from: None,
+                allowed_until: None,
+                extra_time_minutes: 0,
+                seat_label: None,
+                metadata: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                revision: 0,
+            }),
+            Err(err) if is_mysql_duplicate_key(&err) => {
+                // Raced with another request. If it's ours, treat as idempotent.
+                let Some(row) = self.load_registration_by_wcode(schedule_id, &wcode).await? else {
+                    return Err(SchedulingError::Database(err));
+                };
+
+                let same_user = row
+                    .user_id
+                    .map(|id| id.into_uuid())
+                    .is_some_and(|id| id == user_id)
+                    || row.actor_id.as_deref() == Some(user_id_str.as_str());
+
+                if same_user {
+                    Ok(row.into_domain())
+                } else {
+                    Err(SchedulingError::Conflict(format!(
+                        "Wcode {} is already registered for this schedule",
+                        wcode
+                    )))
+                }
+            }
+            Err(err) => Err(SchedulingError::Database(err)),
+        }
+    }
+}
+
+fn is_mysql_duplicate_key(err: &sqlx::Error) -> bool {
+    match err {
+        sqlx::Error::Database(db_err) => db_err.code().as_deref() == Some("1062"),
+        _ => false,
     }
 }
 
@@ -757,6 +832,52 @@ struct VersionContext {
 struct ScheduleContext {
     schedule: ExamSchedule,
     plan: Vec<ScheduleSectionPlanEntry>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+struct ScheduleRegistrationRow {
+    id: Hyphenated,
+    schedule_id: Hyphenated,
+    wcode: String,
+    student_email: Option<String>,
+    student_key: String,
+    actor_id: Option<String>,
+    student_id: String,
+    student_name: String,
+    access_state: String,
+    allowed_from: Option<DateTime<Utc>>,
+    allowed_until: Option<DateTime<Utc>>,
+    extra_time_minutes: i32,
+    seat_label: Option<String>,
+    metadata: Option<Value>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    revision: i32,
+    user_id: Option<Hyphenated>,
+}
+
+impl ScheduleRegistrationRow {
+    fn into_domain(self) -> ScheduleRegistration {
+        ScheduleRegistration {
+            id: self.id.into_uuid(),
+            schedule_id: self.schedule_id.into_uuid(),
+            wcode: self.wcode,
+            email: self.student_email.unwrap_or_default(),
+            student_key: self.student_key,
+            actor_id: self.actor_id,
+            student_id: self.student_id,
+            student_name: self.student_name,
+            access_state: self.access_state,
+            allowed_from: self.allowed_from,
+            allowed_until: self.allowed_until,
+            extra_time_minutes: self.extra_time_minutes,
+            seat_label: self.seat_label,
+            metadata: self.metadata,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            revision: self.revision,
+        }
+    }
 }
 
 #[derive(Debug, Clone, FromRow)]
