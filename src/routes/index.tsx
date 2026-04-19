@@ -263,7 +263,7 @@ export const appRoutes = [
           <Suspense fallback={<RouteLoadingFallback />}>
             <StudentSessionRoute />
           </Suspense>
-        ), ['student']),
+        ), ['admin', 'builder', 'proctor', 'grader', 'student']),
       },
       {
         path: '*',
