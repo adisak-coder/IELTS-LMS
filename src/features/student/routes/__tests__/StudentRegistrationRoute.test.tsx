@@ -22,17 +22,43 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
+function renderRoute(scheduleId: string) {
+  render(
+    <MemoryRouter initialEntries={[`/student/${scheduleId}/register`]}>
+      <Routes>
+        <Route path="/student/:scheduleId/register" element={<StudentRegistrationRoute />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+function submitForm() {
+  fireEvent.change(screen.getByLabelText(/wcode/i), {
+    target: { value: 'W250334' },
+  });
+  fireEvent.change(screen.getByLabelText(/email/i), {
+    target: { value: 'student@example.com' },
+  });
+  fireEvent.change(screen.getByLabelText(/full name/i), {
+    target: { value: 'Student One' },
+  });
+  fireEvent.click(screen.getByRole('button', { name: /register/i }));
+}
+
 describe('StudentRegistrationRoute', () => {
   afterEach(() => {
     navigateMock.mockReset();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
     global.fetch = originalFetch;
   });
 
-  it('posts registration to the schedules endpoint without duplicating the api prefix', async () => {
+  it('posts registration to the backend for UUID schedule ids when backend scheduling is enabled', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_SCHEDULING', 'true');
+    const scheduleId = '550e8400-e29b-41d4-a716-446655440000';
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
-      if (url === '/api/v1/schedules/sched-1/register') {
+      if (url === `/api/v1/schedules/${scheduleId}/register`) {
         return jsonResponse({
           registrationId: 'reg-1',
           wcode: 'W250334',
@@ -52,28 +78,12 @@ describe('StudentRegistrationRoute', () => {
     });
     global.fetch = fetchMock as typeof fetch;
 
-    render(
-      <MemoryRouter initialEntries={['/student/sched-1/register']}>
-        <Routes>
-          <Route path="/student/:scheduleId/register" element={<StudentRegistrationRoute />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    fireEvent.change(screen.getByLabelText(/wcode/i), {
-      target: { value: 'W250334' },
-    });
-    fireEvent.change(screen.getByLabelText(/email/i), {
-      target: { value: 'student@example.com' },
-    });
-    fireEvent.change(screen.getByLabelText(/full name/i), {
-      target: { value: 'Student One' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /register/i }));
+    renderRoute(scheduleId);
+    submitForm();
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        '/api/v1/schedules/sched-1/register',
+        `/api/v1/schedules/${scheduleId}/register`,
         expect.objectContaining({
           method: 'POST',
           body: JSON.stringify({
@@ -86,7 +96,21 @@ describe('StudentRegistrationRoute', () => {
     });
 
     await waitFor(() => {
-      expect(navigateMock).toHaveBeenCalledWith('/student/sched-1/W250334');
+      expect(navigateMock).toHaveBeenCalledWith(`/student/${scheduleId}/W250334`);
     });
+  });
+
+  it('falls back to local registration flow for legacy non-UUID schedule ids', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_SCHEDULING', 'true');
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock as typeof fetch;
+
+    renderRoute('sched-1776575458010');
+    submitForm();
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith('/student/sched-1776575458010/W250334');
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

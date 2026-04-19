@@ -1,11 +1,18 @@
 import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { isBackendSchedulingEnabled } from '../../../services/backendBridge';
 import { backendPost } from '../../../services/backendBridge';
 
 interface RegistrationFormData {
   wcode: string;
   email: string;
   studentName: string;
+}
+
+function isUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }
 
 export function StudentRegistrationRoute() {
@@ -73,19 +80,27 @@ export function StudentRegistrationRoute() {
     setSubmitError(null);
     
     try {
-      const response = await backendPost<{
-        registrationId: string;
-        wcode: string;
-        email: string;
-        studentName: string;
-        accessState: string;
-      }>(`/v1/schedules/${scheduleId}/register`, {
-        wcode: formData.wcode,
-        email: formData.email,
-        studentName: formData.studentName,
-      });
-      
-      navigate(`/student/${scheduleId}/${response.wcode}`);
+      const shouldUseBackendRegistration =
+        Boolean(scheduleId) && isBackendSchedulingEnabled() && isUuid(scheduleId);
+
+      if (shouldUseBackendRegistration) {
+        const response = await backendPost<{
+          registrationId: string;
+          wcode: string;
+          email: string;
+          studentName: string;
+          accessState: string;
+        }>(`/v1/schedules/${scheduleId}/register`, {
+          wcode: formData.wcode,
+          email: formData.email,
+          studentName: formData.studentName,
+        });
+
+        navigate(`/student/${scheduleId}/${response.wcode}`);
+        return;
+      }
+
+      navigate(`/student/${scheduleId}/${formData.wcode}`);
     } catch (error) {
       setSubmitError(
         error instanceof Error ? error.message : 'Registration failed. Please try again.'
