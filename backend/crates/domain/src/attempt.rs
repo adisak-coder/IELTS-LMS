@@ -177,7 +177,6 @@ pub struct StudentSubmitResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StudentRegistrationRequest {
-    pub schedule_id: Uuid,
     pub wcode: String,
     pub email: String,
     pub student_name: String,
