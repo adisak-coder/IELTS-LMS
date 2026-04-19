@@ -682,7 +682,7 @@ impl SchedulingService {
             id: registration_id,
             schedule_id,
             wcode: wcode.clone(),
-            email: student_name.clone(),
+            email: email.clone(),
             student_key,
             actor_id: Some(user_id.to_string()),
             student_id: wcode,
