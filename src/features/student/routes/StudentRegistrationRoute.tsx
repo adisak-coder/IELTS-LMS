@@ -79,7 +79,7 @@ export function StudentRegistrationRoute() {
         email: string;
         studentName: string;
         accessState: string;
-      }>(`/api/v1/schedules/${scheduleId}/register`, {
+      }>(`/v1/schedules/${scheduleId}/register`, {
         wcode: formData.wcode,
         email: formData.email,
         studentName: formData.studentName,
