@@ -34,9 +34,7 @@ RUN mkdir -p crates/application/src && printf '' > crates/application/src/lib.rs
 RUN mkdir -p crates/domain/src && printf '' > crates/domain/src/lib.rs
 RUN mkdir -p crates/infrastructure/src && printf '' > crates/infrastructure/src/lib.rs
 
-RUN cargo build --release --workspace
-
-RUN rm -rf crates
+RUN cargo fetch --locked
 
 COPY backend/crates ./crates/
 
