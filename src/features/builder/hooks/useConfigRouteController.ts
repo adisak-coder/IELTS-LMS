@@ -5,6 +5,7 @@ import { examRepository } from '@services/examRepository';
 import type { ExamConfig } from '../../../types';
 import type { ExamEntity } from '../../../types/domain';
 import { syncConfigWithStandards } from '../../../constants/examDefaults';
+import { hydrateExamState } from '@services/examAdapterService';
 
 export interface ConfigValidationResult {
   isValid: boolean;
@@ -99,7 +100,25 @@ export function useConfigRouteController(
       return;
     }
 
-    const result = await examLifecycleService.saveDraft(examId, { config } as any, 'System');
+    const entity = await examRepository.getExamById(examId);
+    const versionId = entity?.currentDraftVersionId ?? entity?.currentPublishedVersionId;
+    if (!versionId) {
+      setError('Current draft version not found');
+      return;
+    }
+
+    const version = await examRepository.getVersionById(versionId);
+    if (!version) {
+      setError('Current draft version not found');
+      return;
+    }
+
+    const nextContent = hydrateExamState({
+      ...version.contentSnapshot,
+      config,
+    });
+
+    const result = await examLifecycleService.saveDraft(examId, nextContent, 'System');
     if (result.success) {
       await loadExam();
     }

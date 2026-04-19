@@ -255,24 +255,54 @@ export function createInitialExamState(
 }
 
 export function hydrateExamState(state: ExamState): ExamState {
-  const config = normalizeExamConfig(state.config);
+  const partialState = state as Partial<ExamState>;
+  const config = normalizeExamConfig(partialState.config);
+  const fallback = createInitialExamState(
+    partialState.title ?? config.general.title,
+    partialState.type ?? config.general.type,
+    config.general.preset,
+    config,
+  );
+  const mergedState: ExamState = {
+    ...fallback,
+    ...partialState,
+    config,
+    reading: {
+      ...fallback.reading,
+      ...partialState.reading,
+      passages: partialState.reading?.passages ?? fallback.reading.passages,
+    },
+    listening: {
+      ...fallback.listening,
+      ...partialState.listening,
+      parts: partialState.listening?.parts ?? fallback.listening.parts,
+    },
+    writing: {
+      ...fallback.writing,
+      ...partialState.writing,
+    },
+    speaking: {
+      ...fallback.speaking,
+      ...partialState.speaking,
+    },
+  };
   const writing = replaceWritingTaskContents(
     {
-      ...state.writing,
-      customPromptTemplates: state.writing.customPromptTemplates ?? [],
-      rubric: buildWritingRubric(config, structuredClone(state.writing.rubric ?? OFFICIAL_WRITING_RUBRIC)),
-      gradeHistory: state.writing.gradeHistory ?? [],
+      ...mergedState.writing,
+      customPromptTemplates: mergedState.writing.customPromptTemplates ?? [],
+      rubric: buildWritingRubric(config, structuredClone(mergedState.writing.rubric ?? OFFICIAL_WRITING_RUBRIC)),
+      gradeHistory: mergedState.writing.gradeHistory ?? [],
     },
     config.sections.writing.tasks,
-    state.writing.tasks ?? [],
+    mergedState.writing.tasks ?? [],
   );
 
   return {
-    ...state,
+    ...mergedState,
     config,
     reading: {
-      ...state.reading,
-      passages: state.reading.passages.map((passage) => ({
+      ...mergedState.reading,
+      passages: mergedState.reading.passages.map((passage) => ({
         ...passage,
         images: passage.images ?? [],
         wordCount:
@@ -282,16 +312,16 @@ export function hydrateExamState(state: ExamState): ExamState {
     },
     writing,
     speaking: {
-      ...state.speaking,
-      cueCardDetails: state.speaking.cueCardDetails ?? {
-        topic: state.speaking.cueCard || '',
+      ...mergedState.speaking,
+      cueCardDetails: mergedState.speaking.cueCardDetails ?? {
+        topic: mergedState.speaking.cueCard || '',
         bullets: ['', '', '', ''],
         timeAllocation: '1 minute preparation + up to 2 minutes speaking',
-        evaluatorNotes: state.speaking.evaluatorNotes ?? '',
+        evaluatorNotes: mergedState.speaking.evaluatorNotes ?? '',
       },
-      evaluatorNotes: state.speaking.evaluatorNotes ?? '',
-      rubric: buildSpeakingRubric(config, structuredClone(state.speaking.rubric ?? OFFICIAL_SPEAKING_RUBRIC)),
-      gradeHistory: state.speaking.gradeHistory ?? [],
+      evaluatorNotes: mergedState.speaking.evaluatorNotes ?? '',
+      rubric: buildSpeakingRubric(config, structuredClone(mergedState.speaking.rubric ?? OFFICIAL_SPEAKING_RUBRIC)),
+      gradeHistory: mergedState.speaking.gradeHistory ?? [],
     },
   };
 }
