@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
-import { BookOpen, HelpCircle, Plus, Trash2, Edit2, Search, Filter, Grid, List } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { BookOpen, HelpCircle, Trash2, Search, Grid, List } from 'lucide-react';
 import { passageLibraryService } from '@services/passageLibraryService';
 import { questionBankService } from '@services/questionBankService';
-import { PassageLibraryItem, QuestionBankItem, Passage, QuestionBlock, PassageMetadata, QuestionMetadata } from '../../../types';
+import { PassageLibraryItem, QuestionBankItem } from '../../../types';
 
 export function LibraryRoute() {
   const [activeTab, setActiveTab] = useState<'passages' | 'questions'>('passages');
@@ -10,42 +10,119 @@ export function LibraryRoute() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'all'>('all');
   const [selectedTopic, setSelectedTopic] = useState<string>('all');
+  const [passages, setPassages] = useState<PassageLibraryItem[]>([]);
+  const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
+  const [passageTopics, setPassageTopics] = useState<string[]>([]);
+  const [questionTopics, setQuestionTopics] = useState<string[]>([]);
+  const [filteredPassages, setFilteredPassages] = useState<PassageLibraryItem[]>([]);
+  const [filteredQuestions, setFilteredQuestions] = useState<QuestionBankItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
 
-  const passages = passageLibraryService.getAllPassages();
-  const questions = questionBankService.getAllQuestions();
-  const passageTopics = passageLibraryService.getTopics();
-  const questionTopics = questionBankService.getTopics();
+  useEffect(() => {
+    let isActive = true;
 
-  const filteredPassages = passageLibraryService.queryPassages({
-    difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
-    topic: selectedTopic === 'all' ? undefined : selectedTopic,
-    searchTerm: searchTerm || undefined,
-  });
+    async function loadLibrary(): Promise<void> {
+      setIsLoading(true);
+      setErrorMessage(null);
 
-  const filteredQuestions = questionBankService.queryQuestions({
-    difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
-    topic: selectedTopic === 'all' ? undefined : selectedTopic,
-    searchTerm: searchTerm || undefined,
-  });
+      try {
+        const passageQuery = {
+          difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
+          topic: selectedTopic === 'all' ? undefined : selectedTopic,
+          searchTerm: searchTerm || undefined,
+        };
 
-  const handleDeletePassage = (id: string) => {
+        const questionQuery = {
+          difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
+          topic: selectedTopic === 'all' ? undefined : selectedTopic,
+          searchTerm: searchTerm || undefined,
+        };
+
+        const [
+          nextPassages,
+          nextQuestions,
+          nextPassageTopics,
+          nextQuestionTopics,
+          nextFilteredPassages,
+          nextFilteredQuestions,
+        ] = await Promise.all([
+          passageLibraryService.getAllPassages(),
+          questionBankService.getAllQuestions(),
+          passageLibraryService.getTopics(),
+          questionBankService.getTopics(),
+          passageLibraryService.queryPassages(passageQuery),
+          questionBankService.queryQuestions(questionQuery),
+        ]);
+
+        if (!isActive) {
+          return;
+        }
+
+        setPassages(nextPassages);
+        setQuestions(nextQuestions);
+        setPassageTopics(nextPassageTopics);
+        setQuestionTopics(nextQuestionTopics);
+        setFilteredPassages(nextFilteredPassages);
+        setFilteredQuestions(nextFilteredQuestions);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to load library content.');
+      } finally {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    void loadLibrary();
+
+    return () => {
+      isActive = false;
+    };
+  }, [reloadToken, searchTerm, selectedDifficulty, selectedTopic]);
+
+  const refreshLibrary = () => {
+    setReloadToken((current) => current + 1);
+  };
+
+  const handleDeletePassage = async (id: string) => {
     if (confirm('Are you sure you want to delete this passage from the library?')) {
-      passageLibraryService.deletePassage(id);
+      try {
+        await passageLibraryService.deletePassage(id);
+        refreshLibrary();
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to delete passage.');
+      }
     }
   };
 
-  const handleDeleteQuestion = (id: string) => {
+  const handleDeleteQuestion = async (id: string) => {
     if (confirm('Are you sure you want to delete this question from the library?')) {
-      questionBankService.deleteQuestion(id);
+      try {
+        await questionBankService.deleteQuestion(id);
+        refreshLibrary();
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to delete question.');
+      }
     }
   };
 
-  const handleClearAll = () => {
+  const handleClearAll = async () => {
     if (confirm(`Are you sure you want to clear all ${activeTab} from the library? This cannot be undone.`)) {
-      if (activeTab === 'passages') {
-        passageLibraryService.clear();
-      } else {
-        questionBankService.clear();
+      try {
+        if (activeTab === 'passages') {
+          await passageLibraryService.clear();
+        } else {
+          await questionBankService.clear();
+        }
+        refreshLibrary();
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : `Failed to clear ${activeTab}.`);
       }
     }
   };
@@ -156,8 +233,20 @@ export function LibraryRoute() {
         </div>
       </div>
 
+      {errorMessage ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {errorMessage}
+        </div>
+      ) : null}
+
+      {isLoading ? (
+        <div className="bg-white border border-gray-200 rounded-lg p-12 text-center text-sm text-gray-600">
+          Loading library...
+        </div>
+      ) : null}
+
       {/* Content */}
-      {activeTab === 'passages' ? (
+      {!isLoading && activeTab === 'passages' ? (
         <div className="space-y-4">
           <div className="text-sm text-gray-600">
             Showing {filteredPassages.length} of {passages.length} passages
@@ -186,7 +275,7 @@ export function LibraryRoute() {
             </div>
           )}
         </div>
-      ) : (
+      ) : !isLoading ? (
         <div className="space-y-4">
           <div className="text-sm text-gray-600">
             Showing {filteredQuestions.length} of {questions.length} questions
@@ -215,7 +304,7 @@ export function LibraryRoute() {
             </div>
           )}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
