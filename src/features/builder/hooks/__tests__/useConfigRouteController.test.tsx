@@ -121,4 +121,33 @@ describe('useConfigRouteController', () => {
       'System',
     );
   });
+
+  it('surfaces save errors when draft persistence fails', async () => {
+    const config = createDefaultConfig('Academic', 'Academic');
+    const currentState = createInitialExamState('Mock IELTS Exam', 'Academic');
+    currentState.config = config;
+
+    mockGetExamById.mockResolvedValue({
+      id: 'exam-1',
+      currentDraftVersionId: 'ver-1',
+    });
+    mockGetVersionById.mockResolvedValue({
+      id: 'ver-1',
+      configSnapshot: config,
+      contentSnapshot: currentState,
+    });
+    mockSaveDraft.mockResolvedValue({ success: false, error: 'Draft has been modified by another user' });
+
+    const { result } = renderHook(() => useConfigRouteController('exam-1'));
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    await act(async () => {
+      await result.current.handleSaveConfig();
+    });
+
+    expect(result.current.error).toContain('Draft has been modified');
+  });
 });

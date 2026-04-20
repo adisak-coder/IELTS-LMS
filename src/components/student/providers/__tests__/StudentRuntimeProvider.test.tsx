@@ -1,5 +1,5 @@
 import React from 'react';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
 import { ExamConfig, ExamState, ViolationSeverity } from '../../../types';
@@ -471,6 +471,96 @@ describe('StudentRuntimeProvider - Violation Tracking', () => {
 
       expect(result.current.state.blocking.reason).toBe('offline');
       expect(result.current.state.attemptSyncState).toBe('syncing_reconnect');
+    });
+  });
+});
+
+describe('StudentRuntimeProvider - Progression locks', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('prevents navigating back to a submitted module when lockAfterSubmit is enabled', () => {
+    const { result } = renderHook(() => useStudentRuntime(), { wrapper });
+
+    act(() => {
+      result.current.actions.startExam();
+    });
+
+    const firstModule = result.current.state.currentModule;
+
+    act(() => {
+      result.current.actions.submitModule();
+    });
+
+    const afterSubmitModule = result.current.state.currentModule;
+    expect(afterSubmitModule).not.toBe(firstModule);
+
+    act(() => {
+      result.current.actions.setCurrentModule(firstModule);
+    });
+
+    expect(result.current.state.currentModule).toBe(afterSubmitModule);
+  });
+});
+
+describe('StudentRuntimeProvider - Proctor Interventions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('hydrates proctor pause updates even while the attempt is syncing', async () => {
+    const initialAttempt: StudentAttempt = {
+      ...hydratedAttempt,
+      phase: 'exam',
+      proctorStatus: 'active',
+      proctorNote: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    let updateAttemptSnapshot: ((next: StudentAttempt) => void) | null = null;
+
+    const Wrapper = ({ children }: { children: React.ReactNode }) => {
+      const [attemptSnapshot, setAttemptSnapshot] = React.useState(initialAttempt);
+
+      React.useEffect(() => {
+        updateAttemptSnapshot = setAttemptSnapshot;
+        return () => {
+          updateAttemptSnapshot = null;
+        };
+      }, []);
+
+      return (
+        <StudentRuntimeProvider
+          state={mockExamState}
+          onExit={vi.fn()}
+          attemptSnapshot={attemptSnapshot}
+        >
+          {children}
+        </StudentRuntimeProvider>
+      );
+    };
+
+    const { result } = renderHook(() => useStudentRuntime(), { wrapper: Wrapper });
+
+    act(() => {
+      result.current.actions.setAttemptSyncState('saving');
+    });
+
+    await act(async () => {
+      updateAttemptSnapshot?.({
+        ...initialAttempt,
+        updatedAt: '2026-01-01T00:00:02.000Z',
+        proctorStatus: 'paused',
+        proctorNote: 'Suspicious activity detected',
+        proctorUpdatedAt: '2026-01-01T00:00:02.000Z',
+        proctorUpdatedBy: 'Proctor',
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.proctorStatus).toBe('paused');
+      expect(result.current.state.blocking.reason).toBe('proctor_paused');
     });
   });
 });

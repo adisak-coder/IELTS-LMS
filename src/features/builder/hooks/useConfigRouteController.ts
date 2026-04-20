@@ -120,9 +120,12 @@ export function useConfigRouteController(
     });
 
     const result = await examLifecycleService.saveDraft(examId, nextContent, 'System');
-    if (result.success) {
-      await loadExam();
+    if (!result.success) {
+      setError(result.error ?? 'Failed to save draft');
+      return;
     }
+
+    await loadExam();
   }, [examId, config, loadExam]);
 
   const handleNavigateToBuilder = useCallback(() => {

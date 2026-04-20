@@ -306,6 +306,10 @@ describe('StudentProctoringProvider', () => {
   it('pauses the exam when high severity violations hit the configured threshold', () => {
     const harness = renderHarness({
       ...mockConfig,
+      progression: {
+        ...mockConfig.progression,
+        allowPause: true,
+      },
       security: {
         ...mockConfig.security,
         severityThresholds: {
@@ -335,6 +339,32 @@ describe('StudentProctoringProvider', () => {
     expect(harness.result.current.runtime.state.phase).toBe('exam');
     expect(harness.result.current.runtime.state.blocking.active).toBe(true);
     expect(harness.result.current.runtime.state.blocking.reason).toBe('proctor_paused');
+  });
+
+  it('terminates the exam when pause is disabled and high severity violations hit the configured threshold', () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      progression: {
+        ...mockConfig.progression,
+        allowPause: false,
+      },
+      security: {
+        ...mockConfig.security,
+        severityThresholds: {
+          lowLimit: 5,
+          mediumLimit: 3,
+          highLimit: 2,
+          criticalAction: 'terminate',
+        },
+      },
+    });
+
+    act(() => {
+      harness.result.current.proctoring.handleViolation('FULLSCREEN_EXIT', 'Fullscreen exited', 'high');
+      harness.result.current.proctoring.handleViolation('SECONDARY_SCREEN', 'Multiple screens detected', 'high');
+    });
+
+    expect(harness.result.current.runtime.state.phase).toBe('post-exam');
   });
 
   it('logs a tab-switch warning when the tab is hidden', async () => {

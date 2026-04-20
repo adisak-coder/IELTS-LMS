@@ -11,6 +11,7 @@ describe('examRepository backend API', () => {
   });
 
   it('loads exams from the backend API', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_BUILDER', 'true');
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -48,7 +49,7 @@ describe('examRepository backend API', () => {
     const exams = await examRepository.getAllExams();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/exams/',
+      '/api/v1/exams',
       expect.objectContaining({
         method: 'GET',
       }),
@@ -66,6 +67,7 @@ describe('examRepository backend API', () => {
   });
 
   it('creates schedules through the backend API', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_SCHEDULING', 'true');
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -124,7 +126,7 @@ describe('examRepository backend API', () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/api/v1/schedules/',
+      '/api/v1/schedules',
       expect.objectContaining({
         method: 'POST',
       }),
@@ -139,6 +141,7 @@ describe('examRepository backend API', () => {
   });
 
   it('surfaces backend API failures instead of silently returning null', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_BUILDER', 'true');
     global.fetch = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ message: 'builder unavailable' }), {
         status: 401,

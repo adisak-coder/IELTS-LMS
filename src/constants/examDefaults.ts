@@ -364,10 +364,20 @@ const buildDefaultConfig = (
 };
 
 const normalizeModuleConfig = <T extends ExamConfig['sections'][ModuleType]>(base: T, incoming?: DeepPartial<T>): T => {
+  const coerceInt = (value: unknown, fallback: number, min: number) => {
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(numeric)) {
+      return fallback;
+    }
+    return Math.max(min, Math.trunc(numeric));
+  };
+
   const normalized = {
     ...base,
     ...incoming,
-    gapAfterMinutes: incoming?.gapAfterMinutes ?? base.gapAfterMinutes,
+    duration: coerceInt(incoming?.duration, base.duration, 1),
+    order: coerceInt(incoming?.order, base.order, 0),
+    gapAfterMinutes: coerceInt(incoming?.gapAfterMinutes, base.gapAfterMinutes, 0),
     allowedQuestionTypes: incoming?.allowedQuestionTypes ?? base.allowedQuestionTypes
   } as T;
 
@@ -391,14 +401,20 @@ const normalizeModuleConfig = <T extends ExamConfig['sections'][ModuleType]>(bas
 
   if ('partCount' in base) {
     (normalized as T & { partCount: number }).partCount = 
-      (incoming as T & { partCount?: number })?.partCount ?? 
-      (base as T & { partCount: number }).partCount;
+      coerceInt(
+        (incoming as T & { partCount?: number })?.partCount,
+        (base as T & { partCount: number }).partCount,
+        1,
+      );
   }
 
   if ('passageCount' in base) {
     (normalized as T & { passageCount: number }).passageCount = 
-      (incoming as T & { passageCount?: number })?.passageCount ?? 
-      (base as T & { passageCount: number }).passageCount;
+      coerceInt(
+        (incoming as T & { passageCount?: number })?.passageCount,
+        (base as T & { passageCount: number }).passageCount,
+        1,
+      );
   }
 
   if ('rubricWeights' in base) {

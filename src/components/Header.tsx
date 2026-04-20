@@ -37,7 +37,18 @@ export function Header({
           type="text"
           value={state.title}
           onChange={(event) => {
-            void onUpdateState({ ...state, title: event.target.value });
+            const title = event.target.value;
+            void onUpdateState({
+              ...state,
+              title,
+              config: {
+                ...state.config,
+                general: {
+                  ...state.config.general,
+                  title,
+                },
+              },
+            });
           }}
           className="font-semibold text-lg text-gray-900 outline-none border-b border-transparent hover:border-gray-200 focus:border-blue-700 bg-transparent px-1 transition-colors rounded-md"
           aria-label="Exam title"

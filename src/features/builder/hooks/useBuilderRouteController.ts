@@ -103,10 +103,12 @@ export function useBuilderRouteController(
         typeof nextContent === 'function' ? nextContent(state) : nextContent;
       const result = await examLifecycleService.saveDraft(examId, resolvedContent, 'System');
 
-      if (result.success) {
-        setState(resolvedContent);
-        await refreshMetadata();
+      if (!result.success) {
+        throw new Error(result.error ?? 'Failed to save draft');
       }
+
+      setState(resolvedContent);
+      await refreshMetadata();
     },
     [examId, refreshMetadata, state],
   );

@@ -20,14 +20,13 @@ import {
   backendPatch,
   backendPost,
   buildCreateSchedulePayload,
+  buildCreateExamPayload,
   buildUpdateExamPayload,
   buildUpdateSchedulePayload,
   clearExamRevision,
   clearScheduleRevision,
   getExamRevision,
   getScheduleRevision,
-  isBackendBuilderEnabled,
-  isBackendSchedulingEnabled,
   isBackendNotFound,
   mapBackendExamEntity,
   mapBackendExamEvent,
@@ -35,16 +34,6 @@ import {
   mapBackendRuntime,
   mapBackendSchedule,
 } from './backendBridge';
-
-const STORAGE_KEY_EXAMS = 'ielts_exams';
-const STORAGE_KEY_VERSIONS = 'ielts_exam_versions';
-const STORAGE_KEY_EVENTS = 'ielts_exam_events';
-const STORAGE_KEY_SCHEDULES = 'ielts_exam_schedules';
-const STORAGE_KEY_RUNTIMES = 'ielts_exam_runtimes';
-const STORAGE_KEY_CONTROL_EVENTS = 'ielts_cohort_control_events';
-const STORAGE_KEY_AUDIT_LOGS = 'ielts_session_audit_logs';
-const STORAGE_KEY_SESSION_NOTES = 'ielts_session_notes';
-const STORAGE_KEY_VIOLATION_RULES = 'ielts_violation_rules';
 
 /**
  * Repository interface for exam data operations
@@ -128,7 +117,8 @@ export class BackendExamRepository implements IExamRepository {
   async saveExam(exam: ExamEntity): Promise<void> {
     const revision = getExamRevision(exam.id);
     if (revision === undefined) {
-      throw new Error('Saving a new exam through the backend repository is not supported.');
+      await backendPost('/v1/exams', buildCreateExamPayload(exam));
+      return;
     }
 
     await backendPatch(`/v1/exams/${exam.id}`, buildUpdateExamPayload(exam, revision));
@@ -264,6 +254,7 @@ export class BackendExamRepository implements IExamRepository {
 }
 
 /**
- * Singleton instance for app-wide use - always uses backend API
+ * Singleton instance for app-wide use.
+ * Production backend-only: persists through the backend API.
  */
-export const examRepository = new BackendExamRepository();
+export const examRepository: IExamRepository = new BackendExamRepository();

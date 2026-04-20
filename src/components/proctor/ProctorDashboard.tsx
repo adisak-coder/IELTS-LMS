@@ -11,6 +11,7 @@ import { ExamGroupCard } from './ExamGroupCard';
 import { isScheduleReadyToStart } from '../../utils/scheduleUtils';
 import { examRepository } from '../../services/examRepository';
 import { examDeliveryService } from '../../services/examDeliveryService';
+import { backendPost } from '../../services/backendBridge';
 import { useStudentFilters } from './hooks/useStudentFilters';
 import { logger } from '../../utils/logger';
 
@@ -19,6 +20,8 @@ interface ProctorDashboardProps {
   runtimeSnapshots: ExamSessionRuntime[];
   sessions: StudentSession[];
   alerts: ProctorAlert[];
+  currentProctorId?: string | undefined;
+  currentProctorName?: string | undefined;
   searchQuery?: string;
   railSelection?: 'dashboard' | 'alerts' | 'audit' | 'notes';
   auditLogs?: SessionAuditLog[];
@@ -39,6 +42,8 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   runtimeSnapshots,
   sessions,
   alerts,
+  currentProctorId,
+  currentProctorName,
   searchQuery = '',
   railSelection = 'dashboard',
   auditLogs = [],
@@ -53,8 +58,6 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   onExtendCurrentSection,
   onCompleteExam,
 }: ProctorDashboardProps) {
-  void onUpdateAlerts;
-
   type CohortControlAction = 'start' | 'pause' | 'resume' | 'end_section' | 'extend_5' | 'extend_10' | 'complete';
 
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
@@ -176,6 +179,38 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   );
   const scopedAuditLogs = auditLogs.filter((log) => !selectedScheduleId || log.sessionId === selectedScheduleId);
   const scopedNotes = notes.filter((note) => !selectedScheduleId || note.scheduleId === selectedScheduleId);
+
+  useEffect(() => {
+    if (!selectedScheduleId) {
+      return;
+    }
+
+    let cancelled = false;
+    let heartbeatInterval: number | null = null;
+
+    const sendPresence = async (action: 'join' | 'heartbeat' | 'leave') => {
+      try {
+        await backendPost(`/v1/proctor/sessions/${selectedScheduleId}/presence`, { action }, { retries: 0 });
+      } catch (error) {
+        if (!cancelled) {
+          logger.warn('Failed to update proctor presence', { action, error });
+        }
+      }
+    };
+
+    void sendPresence('join');
+    heartbeatInterval = window.setInterval(() => {
+      void sendPresence('heartbeat');
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      if (heartbeatInterval) {
+        window.clearInterval(heartbeatInterval);
+      }
+      void sendPresence('leave');
+    };
+  }, [selectedScheduleId]);
 
   useEffect(() => {
     if (railSelection === 'dashboard') return;
@@ -459,11 +494,22 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                   : 'Select a cohort to open the roster and student activity drawer.'}
               </p>
             </div>
-            {selectedRuntime?.proctorPresence?.length ? (
+            {selectedRuntime ? (
               <PresenceIndicator
-                proctorPresence={selectedRuntime.proctorPresence}
-                currentProctorId="proctor-1"
-                currentProctorName="Current Proctor"
+                proctorPresence={selectedRuntime.proctorPresence ?? []}
+                currentProctorId={currentProctorId ?? 'unknown'}
+                currentProctorName={currentProctorName ?? 'Proctor'}
+                onJoin={() => {
+                  if (!selectedScheduleId) {
+                    return;
+                  }
+
+                  void backendPost(
+                    `/v1/proctor/sessions/${selectedScheduleId}/presence`,
+                    { action: 'join' },
+                    { retries: 0 },
+                  );
+                }}
               />
             ) : null}
           </div>
@@ -482,7 +528,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={startDisabled || controlsBusy}
               title={startDisabled || controlsBusy ? getStartDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'start'}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
             >
               {pendingCohortAction === 'start' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} />}
               {pendingCohortAction === 'start' ? 'Starting…' : 'Start Exam'}
@@ -501,7 +547,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={controlDisabled || selectedRuntimeStatus !== 'live' || controlsBusy}
               title={controlDisabled || selectedRuntimeStatus !== 'live' || controlsBusy ? getPauseDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'pause'}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
               {pendingCohortAction === 'pause' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Pause size={14} />}
               {pendingCohortAction === 'pause' ? 'Pausing…' : 'Pause Cohort'}
@@ -520,7 +566,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={controlDisabled || selectedRuntimeStatus !== 'paused' || controlsBusy}
               title={controlDisabled || selectedRuntimeStatus !== 'paused' || controlsBusy ? getResumeDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'resume'}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
               {pendingCohortAction === 'resume' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} />}
               {pendingCohortAction === 'resume' ? 'Resuming…' : 'Resume Cohort'}
@@ -530,7 +576,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={controlDisabled || (selectedRuntimeStatus !== 'live' && selectedRuntimeStatus !== 'paused') || controlsBusy}
               title={controlDisabled || (selectedRuntimeStatus !== 'live' && selectedRuntimeStatus !== 'paused') || controlsBusy ? getSectionControlDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'end_section'}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
               {pendingCohortAction === 'end_section' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <FastForward size={14} />}
               {pendingCohortAction === 'end_section' ? 'Ending…' : 'End Section'}
@@ -549,7 +595,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={controlDisabled || (selectedRuntimeStatus !== 'live' && selectedRuntimeStatus !== 'paused') || controlsBusy}
               title={controlDisabled || (selectedRuntimeStatus !== 'live' && selectedRuntimeStatus !== 'paused') || controlsBusy ? getSectionControlDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'extend_5'}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
               {pendingCohortAction === 'extend_5' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Timer size={14} />}
               {pendingCohortAction === 'extend_5' ? 'Extending…' : 'Extend +5'}
@@ -568,7 +614,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={controlDisabled || (selectedRuntimeStatus !== 'live' && selectedRuntimeStatus !== 'paused') || controlsBusy}
               title={controlDisabled || (selectedRuntimeStatus !== 'live' && selectedRuntimeStatus !== 'paused') || controlsBusy ? getSectionControlDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'extend_10'}
-              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition active:scale-[0.98] disabled:cursor-not-allowed disabled:text-slate-400"
+              className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
               {pendingCohortAction === 'extend_10' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Timer size={14} />}
               {pendingCohortAction === 'extend_10' ? 'Extending…' : 'Extend +10'}
@@ -578,7 +624,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               disabled={controlDisabled || selectedRuntimeStatus === 'completed' || controlsBusy}
               title={controlDisabled || selectedRuntimeStatus === 'completed' || controlsBusy ? getCompleteDisabledReason() : undefined}
               aria-busy={pendingCohortAction === 'complete'}
-              className="inline-flex items-center justify-center gap-2 rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
+              className="inline-flex items-center justify-center gap-2 rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
             >
               {pendingCohortAction === 'complete' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <StopCircle size={14} />}
               {pendingCohortAction === 'complete' ? 'Completing…' : 'Complete'}

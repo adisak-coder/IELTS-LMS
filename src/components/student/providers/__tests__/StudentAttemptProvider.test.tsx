@@ -246,6 +246,82 @@ describe('StudentAttemptProvider', () => {
     expect(second.result.current.state.attemptId).toBe('attempt-1');
   });
 
+  it('hydrates proctor warnings even while local mutations are pending', async () => {
+    const state = createExamState();
+
+    const initialAttempt = createAttemptSnapshot();
+    let updateAttemptSnapshot: ((next: StudentAttempt) => void) | null = null;
+
+    const Wrapper = ({ children }: { children: React.ReactNode }) => {
+      const [attemptSnapshot, setAttemptSnapshot] = React.useState(initialAttempt);
+
+      React.useEffect(() => {
+        updateAttemptSnapshot = setAttemptSnapshot;
+        return () => {
+          updateAttemptSnapshot = null;
+        };
+      }, []);
+
+      return (
+        <StudentRuntimeProvider state={state} onExit={vi.fn()} attemptSnapshot={attemptSnapshot}>
+          <StudentAttemptProvider
+            scheduleId={attemptSnapshot.scheduleId}
+            attemptSnapshot={attemptSnapshot}
+          >
+            {children}
+          </StudentAttemptProvider>
+        </StudentRuntimeProvider>
+      );
+    };
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(result.current.state.attemptId).toBe('attempt-1');
+    });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'A');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
+      expect(result.current.state.attempt?.answers.q1).toBe('A');
+    });
+
+    const warnedAttempt: StudentAttempt = {
+      ...initialAttempt,
+      updatedAt: '2026-01-01T00:00:01.000Z',
+      violations: [
+        ...initialAttempt.violations,
+        {
+          id: 'warning-1',
+          type: 'PROCTOR_WARNING',
+          severity: 'high',
+          timestamp: '2026-01-01T00:00:01.000Z',
+          description: 'Please focus on your exam',
+        },
+      ],
+      lastWarningId: 'warning-1',
+      proctorStatus: 'warned',
+      proctorUpdatedAt: '2026-01-01T00:00:01.000Z',
+      proctorUpdatedBy: 'Proctor',
+    };
+
+    await act(async () => {
+      updateAttemptSnapshot?.(warnedAttempt);
+    });
+
+    await waitFor(() => {
+      expect(
+        result.current.state.attempt?.violations.some(
+          (violation) => violation.type === 'PROCTOR_WARNING',
+        ),
+      ).toBe(true);
+      expect(result.current.state.attempt?.answers.q1).toBe('A');
+    });
+  });
+
   it('does not attempt state updates after unmount while flushing', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 

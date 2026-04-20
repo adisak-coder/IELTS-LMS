@@ -3,14 +3,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAsyncPolling } from '@app/hooks/useAsyncPolling';
 import {
   backendGet,
-  isBackendProctoringEnabled,
   mapBackendRuntime,
   mapBackendSchedule,
   rememberAttemptSchedule,
 } from '@services/backendBridge';
 import { examDeliveryService } from '@services/examDeliveryService';
-import { examRepository } from '@services/examRepository';
-import { studentAttemptRepository } from '@services/studentAttemptRepository';
 import type {
   ProctorAlert,
   SessionAuditLog,
@@ -20,208 +17,7 @@ import type {
   ViolationSeverity,
 } from '../../../types';
 import type { ExamSchedule, ExamSessionRuntime } from '../../../types/domain';
-import type { StudentAttempt } from '../../../types/studentAttempt';
-
-const ALERT_ACTION_TYPES = new Set<SessionAuditLog['actionType']>([
-  'VIOLATION_DETECTED',
-  'HEARTBEAT_LOST',
-  'DEVICE_CONTINUITY_FAILED',
-  'NETWORK_DISCONNECTED',
-  'AUTO_ACTION',
-  'STUDENT_WARN',
-  'STUDENT_PAUSE',
-  'STUDENT_TERMINATE',
-]);
-
-function generateId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function getSessionStatus(attempt: StudentAttempt): StudentSession['status'] {
-  if (attempt.proctorStatus === 'terminated' || attempt.phase === 'post-exam') {
-    return 'terminated';
-  }
-
-  if (attempt.proctorStatus === 'paused') {
-    return 'paused';
-  }
-
-  if (attempt.integrity.lastHeartbeatStatus === 'lost') {
-    return 'connecting';
-  }
-
-  if (attempt.proctorStatus === 'warned') {
-    return 'warned';
-  }
-
-  if (attempt.phase === 'exam') {
-    return 'active';
-  }
-
-  return 'idle';
-}
-
-function getLastActivityTimestamp(
-  attempt: StudentAttempt,
-  heartbeatTimestamps: string[],
-  auditTimestamps: string[],
-) {
-  const timestamps = [
-    attempt.updatedAt,
-    attempt.integrity.lastHeartbeatAt,
-    ...heartbeatTimestamps,
-    ...auditTimestamps,
-  ].filter((value): value is string => Boolean(value));
-
-  if (timestamps.length === 0) {
-    return attempt.updatedAt;
-  }
-
-  return timestamps.reduce((latest, current) =>
-    new Date(current).getTime() > new Date(latest).getTime() ? current : latest,
-  );
-}
-
-function getAlertSeverity(
-  log: SessionAuditLog,
-  attempt: StudentAttempt | undefined,
-): ViolationSeverity {
-  const payloadSeverity = log.payload?.['severity'];
-  if (
-    payloadSeverity === 'low' ||
-    payloadSeverity === 'medium' ||
-    payloadSeverity === 'high' ||
-    payloadSeverity === 'critical'
-  ) {
-    return payloadSeverity;
-  }
-
-  if (log.actionType === 'DEVICE_CONTINUITY_FAILED' || log.actionType === 'STUDENT_TERMINATE') {
-    return 'critical';
-  }
-
-  if (log.actionType === 'HEARTBEAT_LOST' || log.actionType === 'NETWORK_DISCONNECTED') {
-    return 'high';
-  }
-
-  if (log.actionType === 'STUDENT_WARN') {
-    return 'medium';
-  }
-
-  return (
-    attempt?.violations.find((violation) => violation.id === log.payload?.['warningId'])?.severity ??
-    'medium'
-  );
-}
-
-function getAlertMessage(log: SessionAuditLog): string {
-  const payloadMessage =
-    log.payload?.['message'] ??
-    log.payload?.['description'] ??
-    log.payload?.['reason'] ??
-    null;
-
-  if (typeof payloadMessage === 'string' && payloadMessage.length > 0) {
-    return payloadMessage;
-  }
-
-  switch (log.actionType) {
-    case 'HEARTBEAT_LOST':
-      return 'Candidate heartbeat was lost.';
-    case 'DEVICE_CONTINUITY_FAILED':
-      return 'Device continuity validation failed.';
-    case 'NETWORK_DISCONNECTED':
-      return 'Candidate went offline.';
-    case 'STUDENT_WARN':
-      return 'Proctor warning issued.';
-    case 'STUDENT_PAUSE':
-      return 'Candidate session paused by proctor.';
-    case 'STUDENT_TERMINATE':
-      return 'Candidate session terminated by proctor.';
-    default:
-      return 'Monitoring alert detected.';
-  }
-}
-
-function mapAttemptsToSessions(
-  attempts: StudentAttempt[],
-  schedules: ExamSchedule[],
-  runtimes: ExamSessionRuntime[],
-  auditLogs: SessionAuditLog[],
-  heartbeatMap: Map<string, string[]>,
-): StudentSession[] {
-  return attempts
-    .filter((attempt) => schedules.some((schedule) => schedule.id === attempt.scheduleId))
-    .map((attempt) => {
-      const runtime = runtimes.find((candidate) => candidate.scheduleId === attempt.scheduleId);
-      const auditTimestamps = auditLogs
-        .filter((log) => log.targetStudentId === attempt.id)
-        .map((log) => log.timestamp);
-      const heartbeatTimestamps = heartbeatMap.get(attempt.id) ?? [];
-      const warningCount = attempt.violations.filter(
-        (violation) =>
-          violation.type === 'PROCTOR_WARNING' || violation.type === 'AUTO_WARNING',
-      ).length;
-
-      return {
-        id: attempt.id,
-        studentId: attempt.candidateId,
-        name: attempt.candidateName,
-        email: attempt.candidateEmail,
-        scheduleId: attempt.scheduleId,
-        status: getSessionStatus(attempt),
-        currentSection: attempt.currentModule,
-        timeRemaining: runtime?.currentSectionRemainingSeconds ?? 0,
-        runtimeStatus: runtime?.status ?? 'not_started',
-        runtimeCurrentSection: runtime?.currentSectionKey ?? attempt.currentModule,
-        runtimeTimeRemainingSeconds: runtime?.currentSectionRemainingSeconds ?? 0,
-        runtimeSectionStatus: runtime?.sections.find(
-          (section) => section.sectionKey === runtime.currentSectionKey,
-        )?.status,
-        runtimeWaiting: runtime?.waitingForNextSection ?? false,
-        violations: attempt.violations,
-        warnings: warningCount,
-        lastActivity: getLastActivityTimestamp(attempt, heartbeatTimestamps, auditTimestamps),
-        examId: attempt.examId,
-        examName: attempt.examTitle,
-      };
-    })
-    .sort(
-      (left, right) =>
-        new Date(right.lastActivity).getTime() - new Date(left.lastActivity).getTime(),
-    );
-}
-
-function mapAuditLogsToAlerts(
-  auditLogs: SessionAuditLog[],
-  sessions: StudentSession[],
-  attempts: StudentAttempt[],
-): ProctorAlert[] {
-  const sessionsByAttemptId = new Map(sessions.map((session) => [session.id, session]));
-  const attemptsById = new Map(attempts.map((attempt) => [attempt.id, attempt]));
-
-  return auditLogs
-    .filter((log) => ALERT_ACTION_TYPES.has(log.actionType))
-    .map((log) => {
-      const session = log.targetStudentId ? sessionsByAttemptId.get(log.targetStudentId) : null;
-      const attempt = log.targetStudentId ? attemptsById.get(log.targetStudentId) : null;
-
-      return {
-        id: `alert-${log.id}`,
-        severity: getAlertSeverity(log, attempt ?? undefined),
-        type: log.actionType,
-        studentName: session?.name ?? attempt?.candidateName ?? 'Candidate',
-        studentId: session?.studentId ?? attempt?.candidateId ?? 'unknown',
-        timestamp: log.timestamp,
-        message: getAlertMessage(log),
-        isAcknowledged: false,
-      } satisfies ProctorAlert;
-    })
-    .sort(
-      (left, right) =>
-        new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
-    );
-}
+import type { ProctorPresence } from '../../../types/domain';
 
 function mapBackendSessionSummary(payload: {
   attemptId: string;
@@ -358,6 +154,20 @@ function mapBackendViolationRule(payload: {
   };
 }
 
+function mapBackendProctorPresence(payload: {
+  proctorId: string;
+  proctorName: string;
+  joinedAt: string;
+  lastHeartbeatAt: string;
+}): ProctorPresence {
+  return {
+    proctorId: payload.proctorId,
+    proctorName: payload.proctorName,
+    joinedAt: payload.joinedAt,
+    lastHeartbeat: payload.lastHeartbeatAt,
+  };
+}
+
 export interface ProctorRouteController {
   alerts: ProctorAlert[];
   auditLogs: SessionAuditLog[];
@@ -394,130 +204,73 @@ export function useProctorRouteController(): ProctorRouteController {
   const [error, setError] = useState<string | null>(null);
   const [pollIntervalMs, setPollIntervalMs] = useState(4_000);
 
-  const syncRuntimeSnapshots = useCallback(async (sourceSchedules: ExamSchedule[]) => {
-    if (sourceSchedules.length === 0) {
-      setRuntimeSnapshots([]);
-      return [];
-    }
-
-    const snapshots = (
-      await Promise.all(
-        sourceSchedules.map(async (schedule) => {
-          try {
-            return await examDeliveryService.getRuntimeSnapshot(schedule.id);
-          } catch {
-            return null;
-          }
-        }),
-      )
-    ).filter((snapshot): snapshot is ExamSessionRuntime => Boolean(snapshot));
-
-    setRuntimeSnapshots(snapshots);
-    return snapshots;
-  }, []);
-
   const loadMonitoringState = useCallback(async () => {
-    if (isBackendProctoringEnabled()) {
-      const summaries = await backendGet<Array<{
-        schedule: Parameters<typeof mapBackendSchedule>[0];
-        runtime: Parameters<typeof mapBackendRuntime>[0];
-        degradedLiveMode: boolean;
-      }>>('/v1/proctor/sessions');
+    const summaries = await backendGet<Array<{
+      schedule: Parameters<typeof mapBackendSchedule>[0];
+      runtime: Parameters<typeof mapBackendRuntime>[0];
+      degradedLiveMode: boolean;
+    }>>('/v1/proctor/sessions');
 
-      if (summaries.length === 0) {
-        setSchedules([]);
-        setRuntimeSnapshots([]);
-        setSessions([]);
-        setAlerts([]);
-        setAuditLogs([]);
-        setNotes([]);
-        setViolationRules([]);
-        setPollIntervalMs(4_000);
-        return;
-      }
-
-      const details = await Promise.all(
-        summaries.map((summary) =>
-          backendGet<{
-            schedule: Parameters<typeof mapBackendSchedule>[0];
-            runtime: Parameters<typeof mapBackendRuntime>[0];
-            sessions: Array<Parameters<typeof mapBackendSessionSummary>[0]>;
-            alerts: Array<Parameters<typeof mapBackendAlert>[0]>;
-            auditLogs: Array<Parameters<typeof mapBackendAuditLog>[0]>;
-            notes: Array<Parameters<typeof mapBackendNote>[0]>;
-            violationRules: Array<Parameters<typeof mapBackendViolationRule>[0]>;
-            degradedLiveMode: boolean;
-          }>(`/v1/proctor/sessions/${summary.schedule.id}`),
-        ),
-      );
-
-      setPollIntervalMs(details.some((detail) => detail.degradedLiveMode) ? 1_000 : 4_000);
-      setSchedules(details.map((detail) => mapBackendSchedule(detail.schedule)));
-      setRuntimeSnapshots(
-        details.map((detail) =>
-          mapBackendRuntime(detail.runtime, mapBackendSchedule(detail.schedule)),
-        ),
-      );
-      setSessions(
-        details
-          .flatMap((detail) => detail.sessions)
-          .map(mapBackendSessionSummary)
-          .sort(
-            (left, right) =>
-              new Date(right.lastActivity).getTime() - new Date(left.lastActivity).getTime(),
-          ),
-      );
-      setAlerts(
-        details
-          .flatMap((detail) => detail.alerts)
-          .map(mapBackendAlert)
-          .sort(
-            (left, right) =>
-              new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
-          ),
-      );
-      setAuditLogs(details.flatMap((detail) => detail.auditLogs).map(mapBackendAuditLog));
-      setNotes(details.flatMap((detail) => detail.notes).map(mapBackendNote));
-      setViolationRules(
-        details.flatMap((detail) => detail.violationRules).map(mapBackendViolationRule),
-      );
+    if (summaries.length === 0) {
+      setSchedules([]);
+      setRuntimeSnapshots([]);
+      setSessions([]);
+      setAlerts([]);
+      setAuditLogs([]);
+      setNotes([]);
+      setViolationRules([]);
+      setPollIntervalMs(4_000);
       return;
     }
 
-    const loadedSchedules = await examRepository.getAllSchedules();
-    const [nextRuntimeSnapshots, allAttempts, nextAuditLogs, nextNotes] = await Promise.all([
-      syncRuntimeSnapshots(loadedSchedules),
-      studentAttemptRepository.getAllAttempts(),
-      examRepository.getAllAuditLogs(),
-      examRepository.getAllSessionNotes(),
-    ]);
+    const details = await Promise.all(
+      summaries.map((summary) =>
+        backendGet<{
+          schedule: Parameters<typeof mapBackendSchedule>[0];
+          runtime: Parameters<typeof mapBackendRuntime>[0];
+          sessions: Array<Parameters<typeof mapBackendSessionSummary>[0]>;
+          alerts: Array<Parameters<typeof mapBackendAlert>[0]>;
+          auditLogs: Array<Parameters<typeof mapBackendAuditLog>[0]>;
+          notes: Array<Parameters<typeof mapBackendNote>[0]>;
+          presence: Array<Parameters<typeof mapBackendProctorPresence>[0]>;
+          violationRules: Array<Parameters<typeof mapBackendViolationRule>[0]>;
+          degradedLiveMode: boolean;
+        }>(`/v1/proctor/sessions/${summary.schedule.id}`),
+      ),
+    );
 
-    const heartbeatEntries = await Promise.all(
-      allAttempts.map(async (attempt) => ({
-        attemptId: attempt.id,
-        timestamps: (await studentAttemptRepository.getHeartbeatEvents(attempt.id)).map(
-          (event) => event.timestamp,
-        ),
+    setPollIntervalMs(details.some((detail) => detail.degradedLiveMode) ? 1_000 : 4_000);
+    setSchedules(details.map((detail) => mapBackendSchedule(detail.schedule)));
+    setRuntimeSnapshots(
+      details.map((detail) => ({
+        ...mapBackendRuntime(detail.runtime, mapBackendSchedule(detail.schedule)),
+        proctorPresence: (detail.presence ?? []).map(mapBackendProctorPresence),
       })),
     );
-
-    const heartbeatMap = new Map(
-      heartbeatEntries.map((entry) => [entry.attemptId, entry.timestamps]),
+    setSessions(
+      details
+        .flatMap((detail) => detail.sessions)
+        .map(mapBackendSessionSummary)
+        .sort(
+          (left, right) =>
+            new Date(right.lastActivity).getTime() - new Date(left.lastActivity).getTime(),
+        ),
     );
-    const nextSessions = mapAttemptsToSessions(
-      allAttempts,
-      loadedSchedules,
-      nextRuntimeSnapshots,
-      nextAuditLogs,
-      heartbeatMap,
+    setAlerts(
+      details
+        .flatMap((detail) => detail.alerts)
+        .map(mapBackendAlert)
+        .sort(
+          (left, right) =>
+            new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime(),
+        ),
     );
-
-    setSchedules(loadedSchedules);
-    setAuditLogs(nextAuditLogs);
-    setNotes(nextNotes);
-    setSessions(nextSessions);
-    setAlerts(mapAuditLogsToAlerts(nextAuditLogs, nextSessions, allAttempts));
-  }, [syncRuntimeSnapshots]);
+    setAuditLogs(details.flatMap((detail) => detail.auditLogs).map(mapBackendAuditLog));
+    setNotes(details.flatMap((detail) => detail.notes).map(mapBackendNote));
+    setViolationRules(
+      details.flatMap((detail) => detail.violationRules).map(mapBackendViolationRule),
+    );
+  }, []);
 
   const loadSchedules = useCallback(async () => {
     setIsLoading(true);
@@ -592,9 +345,7 @@ export function useProctorRouteController(): ProctorRouteController {
 
   const evaluateViolationRules = useCallback(
     async (scheduleId: string, studentSessions: StudentSession[]) => {
-      const rules = isBackendProctoringEnabled()
-        ? violationRules.filter((rule) => rule.scheduleId === scheduleId)
-        : await examRepository.getViolationRulesByScheduleId(scheduleId);
+      const rules = violationRules.filter((rule) => rule.scheduleId === scheduleId);
       const activeRules = rules.filter((rule) => rule.isEnabled);
 
       if (activeRules.length === 0) {
@@ -629,24 +380,6 @@ export function useProctorRouteController(): ProctorRouteController {
 
           if (!shouldTrigger) {
             continue;
-          }
-
-          if (!isBackendProctoringEnabled()) {
-            await examRepository.saveAuditLog({
-              id: generateId('audit'),
-              timestamp: new Date().toISOString(),
-              actor: 'system',
-              actionType: 'AUTO_ACTION',
-              targetStudentId: session.id,
-              sessionId: scheduleId,
-              payload: {
-                ruleId: rule.id,
-                ruleAction: rule.action,
-                triggerType: rule.triggerType,
-                threshold: rule.threshold,
-                violationCount: session.violations.length,
-              },
-            });
           }
 
           if (rule.action === 'warn') {

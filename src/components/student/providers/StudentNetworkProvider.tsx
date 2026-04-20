@@ -11,7 +11,6 @@ import React, {
 import { saveStudentAuditEvent } from '@services/studentAuditService';
 import {
   getHeartbeatIntervalMs,
-  getHeartbeatLossTimeoutMs,
   getStudentIntegritySecurityPolicy,
   hasDeviceContinuityMismatch,
 } from '@services/studentIntegrityService';
@@ -59,9 +58,7 @@ export function StudentNetworkProvider({
   const [lastReconnectAt, setLastReconnectAt] = useState<string | null>(
     attemptState.attempt?.integrity.lastReconnectAt ?? null,
   );
-  const heartbeatLostRef = useRef(false);
   const missedHeartbeatsRef = useRef(0);
-  const lastHeartbeatTimeRef = useRef(Date.now());
 
   useEffect(() => {
     setLastDisconnectAt(attemptState.attempt?.integrity.lastDisconnectAt ?? null);
@@ -80,9 +77,11 @@ export function StudentNetworkProvider({
     }
     runtimeActions.setAttemptSyncState('offline');
     await attemptActions.recordNetworkStatus('offline', timestamp);
-    await attemptActions.recordHeartbeat('disconnect', {
-      reason: 'browser_offline',
-    });
+    await attemptActions
+      .recordHeartbeat('disconnect', {
+        reason: 'browser_offline',
+      })
+      .catch(() => {});
     await saveStudentAuditEvent(scheduleId, 'NETWORK_DISCONNECTED', {
       timestamp,
     }, attemptState.attemptId ?? undefined);
@@ -127,9 +126,11 @@ export function StudentNetworkProvider({
     runtimeActions.setBlockingReason('syncing_reconnect');
     runtimeActions.setAttemptSyncState('syncing_reconnect');
     await attemptActions.recordNetworkStatus('online', timestamp);
-    await attemptActions.recordHeartbeat('reconnect', {
-      reason: 'browser_online',
-    });
+    await attemptActions
+      .recordHeartbeat('reconnect', {
+        reason: 'browser_online',
+      })
+      .catch(() => {});
     await saveStudentAuditEvent(scheduleId, 'NETWORK_RECONNECTED', {
       timestamp,
     }, attemptState.attemptId ?? undefined);
@@ -215,120 +216,98 @@ export function StudentNetworkProvider({
 
   useEffect(() => {
     if (runtimeState.phase !== 'exam' || !attemptState.attempt) {
-      return;
-    }
-
-    const intervalId = window.setInterval(async () => {
-      const now = Date.now();
-      const timeSinceLastHeartbeat = now - lastHeartbeatTimeRef.current;
-      const intervalMs = getHeartbeatIntervalMs(policy);
-      
-      // If heartbeat was recorded (time since last heartbeat is reasonable), reset missed count
-      if (timeSinceLastHeartbeat < intervalMs * 2) {
-        missedHeartbeatsRef.current = 0;
-      } else {
-        missedHeartbeatsRef.current += 1;
-        
-        const warningThreshold = config?.security.heartbeatWarningThreshold ?? 2;
-        const hardBlockThreshold = config?.security.heartbeatHardBlockThreshold ?? 4;
-        
-        // Log warning at warning threshold
-        if (missedHeartbeatsRef.current === warningThreshold) {
-          void saveStudentAuditEvent(
-            scheduleId,
-            'HEARTBEAT_MISSED',
-            {
-              missedCount: missedHeartbeatsRef.current,
-              threshold: warningThreshold,
-            },
-            attemptState.attemptId ?? undefined,
-          );
-        }
-        
-        // Log and block at hard threshold
-        if (missedHeartbeatsRef.current >= hardBlockThreshold) {
-          runtimeActions.addViolation(
-            'HEARTBEAT_LOST',
-            'high',
-            `Heartbeat lost after ${missedHeartbeatsRef.current} missed beats.`,
-          );
-          runtimeActions.setBlockingReason('heartbeat_lost');
-          void saveStudentAuditEvent(
-            scheduleId,
-            'HEARTBEAT_LOST',
-            {
-              missedCount: missedHeartbeatsRef.current,
-              threshold: hardBlockThreshold,
-            },
-            attemptState.attemptId ?? undefined,
-          );
-        }
-      }
-      
-      lastHeartbeatTimeRef.current = now;
-      void attemptActions.recordHeartbeat('heartbeat');
-    }, getHeartbeatIntervalMs(policy));
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [attemptActions, attemptState.attempt, config?.security, policy, runtimeActions, runtimeState.phase, scheduleId]);
-
-  useEffect(() => {
-    if (runtimeState.phase !== 'exam') {
-      heartbeatLostRef.current = false;
       missedHeartbeatsRef.current = 0;
       return;
     }
 
-    let heartbeatLossTimer: number | null = null;
+    if (!isOnline) {
+      return;
+    }
 
-    const handleVisibilityChange = () => {
-      if (document.hidden) {
-        heartbeatLossTimer = window.setTimeout(() => {
-          if (heartbeatLostRef.current) {
+    let cancelled = false;
+    const intervalMs = getHeartbeatIntervalMs(policy);
+
+    const intervalId = window.setInterval(() => {
+      void (async () => {
+        try {
+          await attemptActions.recordHeartbeat('heartbeat');
+          if (cancelled) {
             return;
           }
 
-          heartbeatLostRef.current = true;
-          runtimeActions.addViolation(
-            'HEARTBEAT_LOST',
-            'high',
-            'Session heartbeat was lost while the exam was in the background.',
-          );
-          runtimeActions.setBlockingReason('heartbeat_lost');
-          void attemptActions.recordHeartbeat('lost', {
-            reason: 'visibility_timeout',
-          });
-          void saveStudentAuditEvent(scheduleId, 'HEARTBEAT_LOST', {
-            reason: 'visibility_timeout',
-          }, attemptState.attemptId ?? undefined);
-        }, getHeartbeatLossTimeoutMs(policy));
-        return;
-      }
+          missedHeartbeatsRef.current = 0;
 
-      if (heartbeatLossTimer) {
-        window.clearTimeout(heartbeatLossTimer);
-      }
+          if (runtimeState.blocking.reason === 'heartbeat_lost') {
+            runtimeActions.setBlockingReason(null);
+          }
+        } catch {
+          if (cancelled) {
+            return;
+          }
 
-      if (heartbeatLostRef.current && isOnline) {
-        heartbeatLostRef.current = false;
-        runtimeActions.setBlockingReason(null);
-        void attemptActions.recordHeartbeat('heartbeat', {
-          reason: 'visibility_restored',
-        });
-      }
-    };
+          missedHeartbeatsRef.current += 1;
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
+          const warningThreshold = config?.security.heartbeatWarningThreshold ?? 2;
+          const hardBlockThreshold = config?.security.heartbeatHardBlockThreshold ?? 4;
+
+          if (missedHeartbeatsRef.current === warningThreshold) {
+            void saveStudentAuditEvent(
+              scheduleId,
+              'HEARTBEAT_MISSED',
+              {
+                missedCount: missedHeartbeatsRef.current,
+                threshold: warningThreshold,
+                intervalSeconds: Math.round(intervalMs / 1_000),
+              },
+              attemptState.attemptId ?? undefined,
+            );
+          }
+
+          if (missedHeartbeatsRef.current >= hardBlockThreshold) {
+            runtimeActions.addViolation(
+              'HEARTBEAT_LOST',
+              'high',
+              `Heartbeat delivery failed after ${missedHeartbeatsRef.current} attempts.`,
+            );
+            runtimeActions.setBlockingReason('heartbeat_lost');
+            void attemptActions
+              .recordHeartbeat('lost', {
+                reason: 'delivery_failed',
+                missedCount: missedHeartbeatsRef.current,
+              })
+              .catch(() => {});
+            void saveStudentAuditEvent(
+              scheduleId,
+              'HEARTBEAT_LOST',
+              {
+                missedCount: missedHeartbeatsRef.current,
+                threshold: hardBlockThreshold,
+                intervalSeconds: Math.round(intervalMs / 1_000),
+              },
+              attemptState.attemptId ?? undefined,
+            );
+          }
+        }
+      })();
+    }, intervalMs);
 
     return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (heartbeatLossTimer) {
-        window.clearTimeout(heartbeatLossTimer);
-      }
+      cancelled = true;
+      window.clearInterval(intervalId);
     };
-  }, [attemptActions, attemptState.attemptId, isOnline, policy, runtimeActions, runtimeState.phase, scheduleId]);
+  }, [
+    attemptActions,
+    attemptState.attempt,
+    attemptState.attemptId,
+    config?.security.heartbeatHardBlockThreshold,
+    config?.security.heartbeatWarningThreshold,
+    isOnline,
+    policy,
+    runtimeActions,
+    runtimeState.blocking.reason,
+    runtimeState.phase,
+    scheduleId,
+  ]);
 
   const value = useMemo<StudentNetworkContextValue>(() => ({
     state: {

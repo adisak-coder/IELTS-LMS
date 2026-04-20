@@ -1,7 +1,23 @@
 import React, { useMemo, useState } from 'react';
 import { Bell, LayoutDashboard, LogOut, Search } from 'lucide-react';
 import { ProctorProps } from '../../features/proctor/contracts';
+import { useAuthSession } from '../../features/auth/authSession';
 import { ProctorDashboard } from './ProctorDashboard';
+
+function getInitials(name: string) {
+  const tokens = name.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) {
+    return 'P';
+  }
+
+  if (tokens.length === 1) {
+    return tokens[0]?.slice(0, 2).toUpperCase() ?? 'P';
+  }
+
+  const first = tokens[0]?.[0] ?? 'P';
+  const last = tokens[tokens.length - 1]?.[0] ?? '';
+  return `${first}${last}`.toUpperCase();
+}
 
 export function ProctorApp({
   schedules,
@@ -21,8 +37,15 @@ export function ProctorApp({
   onExtendCurrentSection,
   onCompleteExam,
 }: ProctorProps) {
+  const { session } = useAuthSession();
   const [searchQuery, setSearchQuery] = useState('');
   const unacknowledgedAlerts = useMemo(() => alerts.filter((alert) => !alert.isAcknowledged), [alerts]);
+  const proctorName =
+    session?.user.displayName?.trim() ||
+    session?.user.email ||
+    'Proctor';
+  const proctorId = session?.user.id;
+  const initials = getInitials(proctorName);
 
   return (
     <div className="flex h-screen w-full bg-gray-50 text-gray-900 font-sans overflow-hidden">
@@ -87,11 +110,11 @@ export function ProctorApp({
             </button>
             <div className="flex items-center gap-2 cursor-pointer">
               <div className="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm">
-                SK
+                {initials}
               </div>
               <div className="hidden md:block text-sm text-left">
-                <p className="font-medium text-gray-900 leading-none">Sarah K.</p>
-                <p className="text-xs text-gray-500 mt-1">Proctor</p>
+                <p className="font-medium text-gray-900 leading-none">{proctorName}</p>
+                <p className="text-xs text-gray-500 mt-1">{session?.user.role ?? 'proctor'}</p>
               </div>
             </div>
             <button
@@ -110,6 +133,8 @@ export function ProctorApp({
             runtimeSnapshots={runtimeSnapshots}
             sessions={sessions}
             alerts={alerts}
+            currentProctorId={proctorId}
+            currentProctorName={proctorName}
             searchQuery={searchQuery}
             railSelection="dashboard"
             auditLogs={auditLogs}

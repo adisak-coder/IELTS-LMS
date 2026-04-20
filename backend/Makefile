@@ -6,17 +6,16 @@ SHELL := /bin/bash
 .PHONY: db-up db-bootstrap db-down migrate api worker fmt clippy test load-test load-test-restart backup-rehearsal ops-check
 
 db-up:
-	$(COMPOSE) -f docker-compose.yml up -d postgres pgbouncer minio
-	bash ./scripts/dev-db-bootstrap.sh
+	$(COMPOSE) -f docker-compose.yml up -d tidb minio
 
 db-bootstrap:
-	bash ./scripts/dev-db-bootstrap.sh
+	@echo "No bootstrap required for TiDB local dev."
 
 db-down:
 	$(COMPOSE) -f docker-compose.yml down --remove-orphans
 
 migrate:
-	bash ./scripts/dev-db-bootstrap.sh
+	@echo "Run migrations via the app/worker against TiDB."
 
 api:
 	$(CARGO) run -p ielts-backend-api

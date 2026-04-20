@@ -39,4 +39,16 @@ describe('hydrateExamState', () => {
     expect(hydrated.reading.passages).toHaveLength(config.sections.reading.passageCount);
     expect(hydrated.listening.parts).toHaveLength(config.sections.listening.partCount);
   });
+
+  it('clamps invalid passage/part counts to avoid crashing hydration', () => {
+    const config = createDefaultConfig('Academic', 'Academic');
+    (config.sections.reading as any).passageCount = -5;
+    (config.sections.listening as any).partCount = Number.NaN;
+
+    expect(() => hydrateExamState({ config } as any)).not.toThrow();
+
+    const hydrated = hydrateExamState({ config } as any);
+    expect(hydrated.reading.passages.length).toBeGreaterThan(0);
+    expect(hydrated.listening.parts.length).toBeGreaterThan(0);
+  });
 });

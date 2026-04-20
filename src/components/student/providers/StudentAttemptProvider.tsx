@@ -8,7 +8,7 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
-import { backendPost, isBackendDeliveryEnabled } from '@services/backendBridge';
+import { backendPost } from '@services/backendBridge';
 import { buildStudentHeartbeatEvent } from '@services/studentIntegrityService';
 import { mapBackendStudentAttempt, studentAttemptRepository } from '@services/studentAttemptRepository';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
@@ -79,6 +79,23 @@ type ObservedSnapshot = {
 };
 
 const StudentAttemptContext = createContext<StudentAttemptContextValue | null>(null);
+
+function mergeViolationsById(
+  localViolations: Violation[],
+  remoteViolations: Violation[],
+): Violation[] {
+  const merged = new Map<string, Violation>();
+  for (const violation of localViolations) {
+    merged.set(violation.id, violation);
+  }
+  for (const violation of remoteViolations) {
+    merged.set(violation.id, violation);
+  }
+
+  return [...merged.values()].sort(
+    (left, right) => new Date(left.timestamp).getTime() - new Date(right.timestamp).getTime(),
+  );
+}
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -330,10 +347,33 @@ export function StudentAttemptProvider({
       return;
     }
 
-    if (
-      attemptRef.current?.id === attemptSnapshot.id &&
-      pendingMutationsRef.current.length > 0
-    ) {
+    if (attemptRef.current?.id === attemptSnapshot.id && pendingMutationsRef.current.length > 0) {
+      const currentAttempt = attemptRef.current;
+      if (!currentAttempt) {
+        return;
+      }
+      const mergedViolations = mergeViolationsById(
+        currentAttempt.violations ?? [],
+        attemptSnapshot.violations ?? [],
+      );
+
+      const mergedAttempt = mergeAttempt(currentAttempt, {
+        phase:
+          attemptSnapshot.proctorStatus === 'terminated' || attemptSnapshot.phase === 'post-exam'
+            ? 'post-exam'
+            : currentAttempt.phase,
+        proctorStatus: attemptSnapshot.proctorStatus,
+        proctorNote: attemptSnapshot.proctorNote,
+        proctorUpdatedAt: attemptSnapshot.proctorUpdatedAt,
+        proctorUpdatedBy: attemptSnapshot.proctorUpdatedBy,
+        lastWarningId: attemptSnapshot.lastWarningId ?? currentAttempt.lastWarningId,
+        lastAcknowledgedWarningId:
+          currentAttempt.lastAcknowledgedWarningId ?? attemptSnapshot.lastAcknowledgedWarningId,
+        violations: mergedViolations,
+      });
+
+      syncAttemptState(mergedAttempt);
+      observedRef.current = createObservedSnapshot(mergedAttempt);
       return;
     }
 
@@ -524,51 +564,36 @@ export function StudentAttemptProvider({
 
     const resolvedScheduleId = scheduleId ?? currentAttempt.scheduleId;
 
-    if (isBackendDeliveryEnabled()) {
-      try {
-        const persisted = await backendPost<any>(
-          `/v1/student/sessions/${resolvedScheduleId}/precheck`,
-          {
-            studentKey: currentAttempt.studentKey,
-            candidateId: currentAttempt.candidateId,
-            candidateName: currentAttempt.candidateName,
-            candidateEmail: currentAttempt.candidateEmail,
-            clientSessionId: getClientSessionId(resolvedScheduleId, currentAttempt.studentKey),
-            preCheck: result,
-            deviceFingerprintHash: currentAttempt.integrity.deviceFingerprintHash ?? undefined,
-          },
-          { retries: 0 },
-        );
-        const nextAttempt = mapBackendStudentAttempt(persisted);
-        // The pre-check POST is authoritative in runtime-backed delivery. Any locally queued
-        // mutations generated during the pre-check UI can be safely discarded to avoid replaying
-        // overlapping mutation sequences during bootstrap/polling races.
-        await studentAttemptRepository.clearPendingMutations(nextAttempt.id);
-        await studentAttemptRepository.saveAttempt(nextAttempt);
-        syncAttemptState(nextAttempt);
-      } catch (error) {
-        syncAttemptState(
-          mergeAttempt(currentAttempt, {
-            recovery: {
-              syncState: 'error',
-            },
-          }),
-        );
-        throw error instanceof Error ? error : new Error('Failed to save system check.');
-      }
-    } else {
-      await applyPatch(
+    try {
+      const persisted = await backendPost<any>(
+        `/v1/student/sessions/${resolvedScheduleId}/precheck`,
         {
-          integrity: {
-            preCheck: result,
-          },
+          studentKey: currentAttempt.studentKey,
+          candidateId: currentAttempt.candidateId,
+          candidateName: currentAttempt.candidateName,
+          candidateEmail: currentAttempt.candidateEmail,
+          clientSessionId: getClientSessionId(resolvedScheduleId, currentAttempt.studentKey),
+          preCheck: result,
+          deviceFingerprintHash: currentAttempt.integrity.deviceFingerprintHash ?? undefined,
         },
-        'precheck',
-        0,
-        {
-          completedAt: result.completedAt,
-        },
+        { retries: 0 },
       );
+      const nextAttempt = mapBackendStudentAttempt(persisted);
+      // The pre-check POST is authoritative in runtime-backed delivery. Any locally queued
+      // mutations generated during the pre-check UI can be safely discarded to avoid replaying
+      // overlapping mutation sequences during bootstrap/polling races.
+      await studentAttemptRepository.clearPendingMutations(nextAttempt.id);
+      await studentAttemptRepository.saveAttempt(nextAttempt);
+      syncAttemptState(nextAttempt);
+    } catch (error) {
+      syncAttemptState(
+        mergeAttempt(currentAttempt, {
+          recovery: {
+            syncState: 'error',
+          },
+        }),
+      );
+      throw error instanceof Error ? error : new Error('Failed to save system check.');
     }
 
     await saveStudentAuditEvent(resolvedScheduleId, 'PRECHECK_COMPLETED', {
@@ -627,22 +652,7 @@ export function StudentAttemptProvider({
       payload,
     );
     await studentAttemptRepository.saveHeartbeatEvent(heartbeatEvent);
-
-    await applyPatch(
-      {
-        integrity: {
-          lastHeartbeatAt: heartbeatEvent.timestamp,
-          lastHeartbeatStatus: type === 'lost' ? 'lost' : 'ok',
-        },
-      },
-      'heartbeat',
-      0,
-      {
-        type,
-        ...(payload ?? {}),
-      },
-    );
-  }, [applyPatch]);
+  }, []);
 
   const acknowledgeProctorWarning = useCallback(async (warningId: string) => {
     const currentAttempt = attemptRef.current;

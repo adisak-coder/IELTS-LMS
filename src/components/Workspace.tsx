@@ -120,7 +120,52 @@ export function Workspace({
     return <SpeakingWorkspace state={state} setState={(next) => void setState(next)} />;
   }
 
+  const buildNewPassage = (): Passage => ({
+    id: `p${Date.now()}`,
+    title: `Passage ${state.reading.passages.length + 1}`,
+    content: '',
+    blocks: [],
+    wordCount: 0,
+  });
+
+  const handlePassageAdd = () => {
+    const newPassage = buildNewPassage();
+    const newPassages = [...state.reading.passages, newPassage];
+    void setState({
+      ...state,
+      reading: { ...state.reading, passages: newPassages },
+      activePassageId: newPassage.id,
+    });
+  };
+
   if (!activePassage) {
+    if (state.reading.passages.length === 0) {
+      return (
+        <div className="flex-1 flex items-center justify-center bg-gray-50 p-8">
+          <div className="max-w-md w-full bg-white border border-gray-100 rounded-2xl shadow-sm p-6 space-y-3">
+            <h2 className="text-lg font-bold text-gray-900">Reading</h2>
+            <p className="text-sm text-gray-600">
+              No passages exist for this exam. Add a passage to continue building the reading module.
+            </p>
+            <button
+              type="button"
+              onClick={handlePassageAdd}
+              className="w-full px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors"
+              aria-label="Add passage"
+            >
+              Add Passage
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    const fallbackPassageId = state.reading.passages[0]?.id;
+    if (fallbackPassageId) {
+      void setState({ ...state, activePassageId: fallbackPassageId });
+      return <WorkspaceSkeleton progress={100} />;
+    }
+
     return null;
   }
 
@@ -135,17 +180,7 @@ export function Workspace({
     void setState({ ...state, activePassageId: passageId });
   };
 
-  const handlePassageAdd = () => {
-    const newPassage: Passage = {
-      id: `p${Date.now()}`,
-      title: `Passage ${state.reading.passages.length + 1}`,
-      content: '',
-      blocks: [],
-      wordCount: 0
-    };
-    const newPassages = [...state.reading.passages, newPassage];
-    void setState({ ...state, reading: { ...state.reading, passages: newPassages }, activePassageId: newPassage.id });
-  };
+  // handlePassageAdd declared above (used for empty state recovery).
 
   const handlePassageDelete = (passageId: string) => {
     const newPassages = state.reading.passages.filter(p => p.id !== passageId);

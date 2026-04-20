@@ -39,6 +39,7 @@ export function ExamConfigRoute() {
   }
 
   const config = controller.config;
+  const statusLabel = controller.exam?.status ? controller.exam.status.replace(/_/g, ' ') : 'draft';
 
   const renderTab = () => {
     switch (activeTab) {
@@ -69,7 +70,7 @@ export function ExamConfigRoute() {
               </div>
               <div className="flex items-center gap-2">
                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
-                  Draft
+                  {statusLabel}
                 </span>
               </div>
             </div>

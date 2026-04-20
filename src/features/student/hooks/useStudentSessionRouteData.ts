@@ -4,7 +4,6 @@ import { useAuthSession } from '../../auth/authSession';
 import { hydrateExamState } from '@services/examAdapterService';
 import {
   backendGet,
-  isBackendDeliveryEnabled,
   mapBackendExamVersion,
   mapBackendRuntime,
   mapBackendSchedule,
@@ -67,10 +66,14 @@ function loadStoredCandidateProfile(
     const studentName = typeof parsed.studentName === 'string' ? parsed.studentName.trim() : '';
     const email = typeof parsed.email === 'string' ? parsed.email.trim() : '';
 
-    return {
-      candidateName: studentName || undefined,
-      candidateEmail: email || undefined,
-    };
+    const profile: { candidateName?: string; candidateEmail?: string } = {};
+    if (studentName) {
+      profile.candidateName = studentName;
+    }
+    if (email) {
+      profile.candidateEmail = email;
+    }
+    return profile;
   } catch {
     return null;
   }
@@ -109,7 +112,6 @@ export function useStudentSessionRouteData(
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<ExamSessionRuntime | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const shouldUseBackendDelivery = isBackendDeliveryEnabled() || session?.user.role === 'student';
   const candidateId = useMemo(() => getStableCandidateId(scheduleId, studentId), [scheduleId, studentId]);
   const storedCandidateProfile = useMemo(
     () => (scheduleId ? loadStoredCandidateProfile(scheduleId, candidateId) : null),
@@ -152,7 +154,7 @@ export function useStudentSessionRouteData(
       return;
     }
 
-    if (shouldUseBackendDelivery && authStatus === 'loading') {
+    if (authStatus === 'loading') {
       return;
     }
 
@@ -164,85 +166,84 @@ export function useStudentSessionRouteData(
         throw new Error('Student identity not found');
       }
 
-      if (shouldUseBackendDelivery) {
-        const session = await backendGet<{
-          schedule: Parameters<typeof mapBackendSchedule>[0];
-          version: Parameters<typeof mapBackendExamVersion>[0];
-          runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-          attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-        }>(buildBackendSessionEndpoint(scheduleId, candidateId));
-        const scheduleEntity = mapBackendSchedule(session.schedule);
-        const version = mapBackendExamVersion(session.version);
-        const examState = hydrateExamState({
-          ...version.contentSnapshot,
-          config: version.configSnapshot,
-        } satisfies ExamState);
+      const session = await backendGet<{
+        schedule: Parameters<typeof mapBackendSchedule>[0];
+        version: Parameters<typeof mapBackendExamVersion>[0];
+        runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
+        attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
+      }>(buildBackendSessionEndpoint(scheduleId, candidateId));
+      const scheduleEntity = mapBackendSchedule(session.schedule);
+      const version = mapBackendExamVersion(session.version);
+      const examState = hydrateExamState({
+        ...version.contentSnapshot,
+        config: version.configSnapshot,
+      } satisfies ExamState);
 
-        setSchedule(scheduleEntity);
-        setState(examState);
-        setRuntimeSnapshot(
-          session.runtime ? mapBackendRuntime(session.runtime, scheduleEntity) : null,
+      setSchedule(scheduleEntity);
+      setState(examState);
+      setRuntimeSnapshot(
+        session.runtime ? mapBackendRuntime(session.runtime, scheduleEntity) : null,
+      );
+
+      if (session.attempt) {
+        const nextAttempt = mapBackendStudentAttempt(session.attempt);
+        const isSubmittedAttempt = Boolean(
+          (
+            session.attempt as {
+              submittedAt?: string | null | undefined;
+            }
+          ).submittedAt,
         );
-
-        if (session.attempt) {
-          const nextAttempt = mapBackendStudentAttempt(session.attempt);
-          const isSubmittedAttempt = Boolean(
-            (
-              session.attempt as {
-                submittedAt?: string | null | undefined;
-              }
-            ).submittedAt,
-          );
-          await studentAttemptRepository.saveAttempt(nextAttempt);
-          if (isSubmittedAttempt) {
-            setAttemptSnapshot(nextAttempt);
-          } else if (!hasAttemptCredential(nextAttempt.scheduleId, nextAttempt.id)) {
-            const hydratedAttempt = await studentAttemptRepository.getAttemptByScheduleId(
-              scheduleId,
-              nextAttempt.studentKey,
-            );
-            setAttemptSnapshot(hydratedAttempt ?? nextAttempt);
-          } else {
-            setAttemptSnapshot(nextAttempt);
-          }
-        } else {
-          const firstEnabledModule =
-            (['listening', 'reading', 'writing', 'speaking'] as const).find(
-              (module) => examState.config.sections[module].enabled,
-            ) ?? 'listening';
-          const createdAttempt = await studentAttemptRepository.createAttempt({
+        await studentAttemptRepository.saveAttempt(nextAttempt);
+        if (isSubmittedAttempt) {
+          setAttemptSnapshot(nextAttempt);
+        } else if (!hasAttemptCredential(nextAttempt.scheduleId, nextAttempt.id)) {
+          const hydratedAttempt = await studentAttemptRepository.getAttemptByScheduleId(
             scheduleId,
-            studentKey,
-            examId: scheduleEntity.examId,
-            examTitle: scheduleEntity.examTitle,
-            ...createCandidateProfile(candidateId, storedCandidateProfile),
-            currentModule:
-              (session.runtime
-                ? mapBackendRuntime(session.runtime, scheduleEntity).currentSectionKey
-                : null) ?? firstEnabledModule,
-          });
-          setAttemptSnapshot(createdAttempt);
+            nextAttempt.studentKey,
+          );
+          setAttemptSnapshot(hydratedAttempt ?? nextAttempt);
+        } else {
+          setAttemptSnapshot(nextAttempt);
         }
-
-        return;
+      } else {
+        const firstEnabledModule =
+          (['listening', 'reading', 'writing', 'speaking'] as const).find(
+            (module) => examState.config.sections[module].enabled,
+          ) ?? 'listening';
+        const createdAttempt = await studentAttemptRepository.createAttempt({
+          scheduleId,
+          studentKey,
+          examId: scheduleEntity.examId,
+          examTitle: scheduleEntity.examTitle,
+          ...createCandidateProfile(candidateId, storedCandidateProfile),
+          currentModule:
+            (session.runtime
+              ? mapBackendRuntime(session.runtime, scheduleEntity).currentSectionKey
+              : null) ?? firstEnabledModule,
+        });
+        setAttemptSnapshot(createdAttempt);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load exam data');
     } finally {
       setIsLoading(false);
     }
-  }, [authStatus, candidateId, scheduleId, shouldUseBackendDelivery, storedCandidateProfile, studentKey]);
+  }, [authStatus, candidateId, scheduleId, storedCandidateProfile, studentKey]);
 
   useEffect(() => {
     void loadStudentData();
   }, [loadStudentData]);
 
+  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 4_000 : 2_000;
+  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 8_000 : 6_000;
+
   useAsyncPolling(async () => {
     await refreshBackendSessionSnapshot();
   }, {
     enabled: Boolean(scheduleId && state && !error),
-    intervalMs: 1_000,
-    maxIntervalMs: 4_000,
+    intervalMs: pollIntervalMs,
+    maxIntervalMs: pollMaxIntervalMs,
   });
 
   return {

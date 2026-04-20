@@ -13,6 +13,7 @@ import { useBuilderRouteController } from '@builder/hooks/useBuilderRouteControl
 import { useUndoRedo } from '../../../hooks/useUndoRedo';
 import { useKeyboardShortcuts } from '../../../hooks/useKeyboardShortcuts';
 import type { ExamState, GradeHistoryEntry } from '../../../types';
+import { createLatestOnlyAsyncRunner, type LatestOnlyAsyncRunner } from '../../../utils/latestOnlyAsync';
 import {
   DEFAULT_LISTENING_BAND_TABLE,
   DEFAULT_READING_ACADEMIC_BAND_TABLE,
@@ -180,7 +181,13 @@ export function BuilderRoot() {
     return saved === 'true';
   });
   const [toasts, setToasts] = useState<GlobalToastItem[]>([]);
+  const [saveStatus, setSaveStatus] = useState<'unsaved' | 'saving' | 'saved' | 'error'>('saved');
   const currentStateRef = useRef<ExamState | null>(null);
+  const debouncedAutosaveRef = useRef<number | null>(null);
+  const pendingAutosaveStateRef = useRef<ExamState | null>(null);
+  const handleUpdateExamContentRef = useRef(handleUpdateExamContent);
+  const pushToastRef = useRef<(toast: Omit<GlobalToastItem, 'id'>) => void>(() => {});
+  const saveRunnerRef = useRef<LatestOnlyAsyncRunner<ExamState> | null>(null);
 
   useEffect(() => {
     if (examId !== initializedExamId) {
@@ -206,6 +213,10 @@ export function BuilderRoot() {
     currentStateRef.current = currentState;
   }, [currentState]);
 
+  useEffect(() => {
+    handleUpdateExamContentRef.current = handleUpdateExamContent;
+  }, [handleUpdateExamContent]);
+
   const pushToast = (toast: Omit<GlobalToastItem, 'id'>) => {
     setToasts((current) => [
       ...current,
@@ -220,20 +231,53 @@ export function BuilderRoot() {
     setToasts((current) => current.filter((toast) => toast.id !== id));
   };
 
-  const persistState = async (nextState: ExamState) => {
-    try {
-      await handleUpdateExamContent(nextState);
-    } catch {
-      pushToast({
-        variant: 'error',
-        title: 'Save failed',
-        message: 'Latest change could not be saved.',
-        actionLabel: 'Retry',
-        onAction: () => {
-          void persistState(nextState);
-        },
-      });
+  useEffect(() => {
+    pushToastRef.current = pushToast;
+  }, [pushToast]);
+
+  if (!saveRunnerRef.current) {
+    saveRunnerRef.current = createLatestOnlyAsyncRunner(async (nextState) => {
+      setSaveStatus('saving');
+      try {
+        await handleUpdateExamContentRef.current(nextState);
+        setSaveStatus('saved');
+      } catch (error) {
+        setSaveStatus('error');
+        pushToastRef.current({
+          variant: 'error',
+          title: 'Save failed',
+          message: error instanceof Error ? error.message : 'Latest change could not be saved.',
+          actionLabel: 'Retry',
+          onAction: () => {
+            const latest = currentStateRef.current;
+            if (latest) {
+              saveRunnerRef.current?.enqueue(latest);
+            }
+          },
+        });
+        throw error;
+      }
+    });
+  }
+
+  const scheduleAutosave = (nextState: ExamState) => {
+    pendingAutosaveStateRef.current = nextState;
+    setSaveStatus('unsaved');
+
+    if (debouncedAutosaveRef.current) {
+      window.clearTimeout(debouncedAutosaveRef.current);
     }
+
+    debouncedAutosaveRef.current = window.setTimeout(() => {
+      const pending = pendingAutosaveStateRef.current;
+      if (!pending) {
+        return;
+      }
+
+      saveRunnerRef.current?.enqueue(pending);
+      pendingAutosaveStateRef.current = null;
+      debouncedAutosaveRef.current = null;
+    }, 350);
   };
 
   const updateBuilderState = (
@@ -248,7 +292,7 @@ export function BuilderRoot() {
     const resolvedState = typeof nextState === 'function' ? nextState(baseState) : nextState;
     history.setState(resolvedState, label);
     currentStateRef.current = resolvedState;
-    void persistState(resolvedState);
+    scheduleAutosave(resolvedState);
   };
 
   const handleUndo = () => {
@@ -258,7 +302,7 @@ export function BuilderRoot() {
 
     history.undo();
     currentStateRef.current = history.undoState;
-    void persistState(history.undoState);
+    scheduleAutosave(history.undoState);
     pushToast({
       variant: 'info',
       title: 'Undo',
@@ -274,7 +318,7 @@ export function BuilderRoot() {
 
     history.redo();
     currentStateRef.current = history.redoState;
-    void persistState(history.redoState);
+    scheduleAutosave(history.redoState);
     pushToast({
       variant: 'info',
       title: 'Redo',
@@ -289,7 +333,20 @@ export function BuilderRoot() {
       return;
     }
 
-    await handleSaveDraft(nextState);
+    if (debouncedAutosaveRef.current) {
+      window.clearTimeout(debouncedAutosaveRef.current);
+      debouncedAutosaveRef.current = null;
+    }
+
+    pendingAutosaveStateRef.current = null;
+
+    saveRunnerRef.current?.enqueue(nextState);
+    await saveRunnerRef.current?.idle();
+
+    if (saveRunnerRef.current?.lastError) {
+      return;
+    }
+
     pushToast({
       variant: 'success',
       title: 'Saved',
@@ -593,7 +650,15 @@ export function BuilderRoot() {
           onSaveDraft={() => {
             void saveDraftNow();
           }}
-          saveStatusLabel="All changes saved"
+          saveStatusLabel={
+            saveStatus === 'saving'
+              ? 'Saving…'
+              : saveStatus === 'unsaved'
+                ? 'Unsaved changes'
+                : saveStatus === 'error'
+                  ? 'Save failed'
+                  : 'All changes saved'
+          }
         />
         <div className="flex flex-1 min-w-0 overflow-hidden">
           <Workspace state={currentState} setState={(next) => updateBuilderState(next, 'Update workspace')} />

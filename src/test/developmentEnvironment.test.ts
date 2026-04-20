@@ -29,28 +29,18 @@ describe('development environment wiring', () => {
     const backendEnv = readBackendFile('.env');
     const backendEnvExample = readBackendFile('.env.example');
     const makefile = readBackendFile('Makefile');
-    const pgbouncerUsers = readBackendFile('config/pgbouncer/userlist.txt');
 
-    expect(compose).toContain('"15432:5432"');
-    expect(compose).toContain('"16432:6432"');
-    expect(compose).toContain('PGBOUNCER_AUTH_FILE: /etc/pgbouncer/userlist.txt');
-    expect(compose).toContain('PGBOUNCER_POOL_MODE: session');
-    expect(compose).toContain('./config/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro');
+    expect(compose).toContain('pingcap/tidb');
+    expect(compose).toContain('"4000:4000"');
+    expect(compose).toContain('mysqladmin ping');
 
     for (const envFile of [backendEnv, backendEnvExample]) {
-      expect(envFile).toContain('DATABASE_URL=postgres://postgres:postgres@127.0.0.1:16432/ielts');
-      expect(envFile).toContain(
-        'DATABASE_DIRECT_URL=postgres://postgres:postgres@127.0.0.1:15432/ielts',
-      );
-      expect(envFile).toContain(
-        'DATABASE_MIGRATOR_URL=postgres://postgres:postgres@127.0.0.1:15432/ielts',
-      );
-      expect(envFile).toContain(
-        'DATABASE_WORKER_URL=postgres://postgres:postgres@127.0.0.1:16432/ielts',
-      );
+      expect(envFile).toContain('DATABASE_URL=mysql://root:root@127.0.0.1:4000/ielts');
+      expect(envFile).toContain('DATABASE_DIRECT_URL=mysql://root:root@127.0.0.1:4000/ielts');
+      expect(envFile).toContain('DATABASE_MIGRATOR_URL=mysql://root:root@127.0.0.1:4000/ielts');
+      expect(envFile).toContain('DATABASE_WORKER_URL=mysql://root:root@127.0.0.1:4000/ielts');
     }
 
-    expect(makefile).toContain('bash ./scripts/dev-db-bootstrap.sh');
-    expect(pgbouncerUsers).toContain('"postgres" "postgres"');
+    expect(makefile).toContain('docker-compose.yml up -d tidb minio');
   });
 });

@@ -197,6 +197,7 @@ export class ExamDeliveryService {
         {
           action: 'start_runtime',
         },
+        { retries: 0 },
       );
 
       return {
@@ -241,7 +242,7 @@ export class ExamDeliveryService {
       await backendPost(`/v1/proctor/sessions/${scheduleId}/attempts/${attemptId}/warn`, {
         actorId: actor,
         message,
-      });
+      }, { retries: 0 });
       return { success: true };
     } catch (error) {
       return {
@@ -263,7 +264,7 @@ export class ExamDeliveryService {
 
       await backendPost(`/v1/proctor/sessions/${scheduleId}/attempts/${attemptId}/pause`, {
         actorId: actor,
-      });
+      }, { retries: 0 });
       return { success: true };
     } catch (error) {
       return {
@@ -285,7 +286,7 @@ export class ExamDeliveryService {
 
       await backendPost(`/v1/proctor/sessions/${scheduleId}/attempts/${attemptId}/resume`, {
         actorId: actor,
-      });
+      }, { retries: 0 });
       return { success: true };
     } catch (error) {
       return {
@@ -307,7 +308,7 @@ export class ExamDeliveryService {
 
       await backendPost(`/v1/proctor/sessions/${scheduleId}/attempts/${attemptId}/terminate`, {
         actorId: actor,
-      });
+      }, { retries: 0 });
       return { success: true };
     } catch (error) {
       return {
@@ -331,6 +332,7 @@ export class ExamDeliveryService {
           action: 'pause_runtime',
           reason,
         },
+        { retries: 0 },
       );
 
       return {
@@ -357,6 +359,7 @@ export class ExamDeliveryService {
         {
           action: 'resume_runtime',
         },
+        { retries: 0 },
       );
 
       return {
@@ -385,6 +388,7 @@ export class ExamDeliveryService {
           actorId: actor,
           minutes,
         },
+        { retries: 0 },
       );
 
       return {
@@ -411,6 +415,7 @@ export class ExamDeliveryService {
         {
           actorId: actor,
         },
+        { retries: 0 },
       );
 
       return {
@@ -437,6 +442,7 @@ export class ExamDeliveryService {
         {
           actorId: actor,
         },
+        { retries: 0 },
       );
 
       return {
@@ -453,4 +459,3 @@ export class ExamDeliveryService {
 }
 
 export const examDeliveryService = new ExamDeliveryService();
-

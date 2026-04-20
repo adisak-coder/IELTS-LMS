@@ -1,7 +1,6 @@
 import {
   backendGet,
   backendPost,
-  isBackendDeliveryEnabled,
   rememberAttemptSchedule,
 } from './backendBridge';
 import type {
@@ -354,7 +353,7 @@ export interface IStudentAttemptRepository {
   getHeartbeatEvents(attemptId: string): Promise<StudentHeartbeatEvent[]>;
 }
 
-export class LocalStorageStudentAttemptRepository implements IStudentAttemptRepository {
+class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
   private getItem<T>(key: string): T[] {
     const item = localStorage.getItem(key);
     if (!item) {
@@ -476,6 +475,7 @@ export class LocalStorageStudentAttemptRepository implements IStudentAttemptRepo
         lastLocalMutationAt: null,
         lastPersistedAt: null,
         pendingMutationCount: 0,
+        serverAcceptedThroughSeq: 0,
         syncState: 'idle',
       },
       createdAt: now,
@@ -531,7 +531,7 @@ export class LocalStorageStudentAttemptRepository implements IStudentAttemptRepo
 }
 
 class BackendStudentAttemptRepository implements IStudentAttemptRepository {
-  constructor(private readonly cache: LocalStorageStudentAttemptRepository) {}
+  constructor(private readonly cache: LocalStorageStudentAttemptCache) {}
 
   private async cacheAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
     await this.cache.saveAttempt(attempt);
@@ -724,64 +724,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
   }
 }
 
-class HybridStudentAttemptRepository implements IStudentAttemptRepository {
-  constructor(
-    private readonly localRepository: LocalStorageStudentAttemptRepository,
-    private readonly backendRepository: BackendStudentAttemptRepository,
-  ) {}
-
-  private get activeRepository(): IStudentAttemptRepository {
-    return isBackendDeliveryEnabled() ? this.backendRepository : this.localRepository;
-  }
-
-  getAttemptByScheduleId(scheduleId: string, studentKey: string): Promise<StudentAttempt | null> {
-    return this.activeRepository.getAttemptByScheduleId(scheduleId, studentKey);
-  }
-
-  getAllAttempts(): Promise<StudentAttempt[]> {
-    return this.activeRepository.getAllAttempts();
-  }
-
-  getAttemptsByScheduleId(scheduleId: string): Promise<StudentAttempt[]> {
-    return this.activeRepository.getAttemptsByScheduleId(scheduleId);
-  }
-
-  saveAttempt(attempt: StudentAttempt): Promise<void> {
-    return this.activeRepository.saveAttempt(attempt);
-  }
-
-  submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
-    return this.activeRepository.submitAttempt(attempt);
-  }
-
-  createAttempt(seed: StudentAttemptSeed): Promise<StudentAttempt> {
-    return this.activeRepository.createAttempt(seed);
-  }
-
-  savePendingMutations(attemptId: string, mutations: StudentAttemptMutation[]): Promise<void> {
-    return this.activeRepository.savePendingMutations(attemptId, mutations);
-  }
-
-  getPendingMutations(attemptId: string): Promise<StudentAttemptMutation[]> {
-    return this.activeRepository.getPendingMutations(attemptId);
-  }
-
-  clearPendingMutations(attemptId: string): Promise<void> {
-    return this.activeRepository.clearPendingMutations(attemptId);
-  }
-
-  saveHeartbeatEvent(event: StudentHeartbeatEvent): Promise<void> {
-    return this.activeRepository.saveHeartbeatEvent(event);
-  }
-
-  getHeartbeatEvents(attemptId: string): Promise<StudentHeartbeatEvent[]> {
-    return this.activeRepository.getHeartbeatEvents(attemptId);
-  }
-}
-
-const localStorageStudentAttemptRepository = new LocalStorageStudentAttemptRepository();
-
-export const studentAttemptRepository = new HybridStudentAttemptRepository(
-  localStorageStudentAttemptRepository,
-  new BackendStudentAttemptRepository(localStorageStudentAttemptRepository),
+const studentAttemptCache = new LocalStorageStudentAttemptCache();
+export const studentAttemptRepository: IStudentAttemptRepository = new BackendStudentAttemptRepository(
+  studentAttemptCache,
 );

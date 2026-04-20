@@ -43,15 +43,16 @@ export function RequireAuth({ allowedRoles, children }: RequireAuthProps) {
   if (!session) {
     const studentPath = parseStudentPath(location.pathname);
     if (studentPath) {
-      // Allow check-in without auth, but require a session for active exam delivery routes.
-      const isEntryRoute = location.pathname === `/student/${studentPath.scheduleId}`;
-      if (isEntryRoute) {
+      // Allow student access when a route carries a registration/wcode segment.
+      // This enables `/student/:scheduleId/:wcode` delivery routes without requiring a web auth session.
+      if (studentPath.wcode && allowedRoles?.includes('student')) {
         return <>{children}</>;
       }
 
-      if (studentPath.wcode) {
-        const query = new URLSearchParams({ wcode: studentPath.wcode });
-        return <Navigate to={`/student/${studentPath.scheduleId}?${query.toString()}`} replace />;
+      // Allow check-in without auth for schedule entry routes.
+      const isEntryRoute = location.pathname === `/student/${studentPath.scheduleId}`;
+      if (isEntryRoute) {
+        return <>{children}</>;
       }
 
       return <Navigate to={`/student/${studentPath.scheduleId}`} replace />;

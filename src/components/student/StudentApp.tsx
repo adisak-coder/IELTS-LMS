@@ -17,6 +17,7 @@ import { StudentSpeaking } from './StudentSpeaking';
 import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
+import { shouldOfferTimeExtension } from './timeExtensionPolicy';
 import { useStudentAttempt } from './providers/StudentAttemptProvider';
 import { useStudentRuntime } from './providers/StudentRuntimeProvider';
 import { useStudentUI } from './providers/StudentUIProvider';
@@ -34,7 +35,7 @@ function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['
     case 'proctor_paused':
       return {
         title: 'Individual session paused',
-        message: 'Your proctor paused this session for manual review. Wait for resume instructions.',
+        message: 'This session is paused for review. Wait for resume instructions.',
         badge: 'Paused',
         contextLabel: 'Proctor Review',
       };
@@ -112,6 +113,7 @@ export function StudentApp() {
   const blockingCopy = getBlockingCopy(runtimeState.blocking.reason);
   const { setShowTimeExtensionRequest } = uiActions;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
+  const runtimeFinalSubmitRef = useRef<string | null>(null);
   const [warningOpen, setWarningOpen] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const [warningSeverity, setWarningSeverity] = useState<'medium' | 'high' | 'critical'>(
@@ -204,9 +206,12 @@ export function StudentApp() {
     runtimeState.phase,
     runtimeState.runtimeBacked,
   ]);
-  const shouldShowTimeExtension = !runtimeState.runtimeBacked && 
-    runtimeState.phase === 'exam' && 
-    runtimeState.displayTimeRemaining === 300;
+  const shouldShowTimeExtension = shouldOfferTimeExtension({
+    config: examState.config,
+    phase: runtimeState.phase,
+    runtimeBacked: runtimeState.runtimeBacked,
+    displayTimeRemaining: runtimeState.displayTimeRemaining,
+  });
 
   useEffect(() => {
     if (shouldShowTimeExtension) {
@@ -221,21 +226,16 @@ export function StudentApp() {
     }
   };
 
-  const submitRuntimeBackedAttempt = async () => {
-    await attemptActions.submitAttempt();
-    runtimeActions.setPhase('post-exam');
-  };
-
   const submitCurrentModule = async () => {
-    if (runtimeState.runtimeBacked) {
-      await submitRuntimeBackedAttempt();
-      return;
-    }
-
     runtimeActions.submitModule();
   };
 
   const handleModuleSubmit = async () => {
+    if (runtimeState.runtimeBacked) {
+      await attemptActions.submitAttempt();
+      return;
+    }
+
     if (runtimeState.submitRequiresConfirmation) {
       uiActions.setShowSubmitConfirm(true);
       return;
@@ -248,6 +248,34 @@ export function StudentApp() {
     uiActions.setShowSubmitConfirm(false);
     await submitCurrentModule();
   };
+
+  useEffect(() => {
+    if (!runtimeState.runtimeBacked) {
+      runtimeFinalSubmitRef.current = null;
+      return;
+    }
+
+    if (runtimeState.runtimeStatus !== 'completed') {
+      runtimeFinalSubmitRef.current = null;
+      return;
+    }
+
+    if (runtimeState.phase === 'post-exam') {
+      return;
+    }
+
+    const attemptId = attemptState.attemptId;
+    if (!attemptId) {
+      return;
+    }
+
+    if (runtimeFinalSubmitRef.current === attemptId) {
+      return;
+    }
+
+    runtimeFinalSubmitRef.current = attemptId;
+    void attemptActions.submitAttempt();
+  }, [attemptActions, attemptState.attemptId, runtimeState.runtimeBacked, runtimeState.runtimeStatus]);
 
   const handleAnswerChange = (questionId: string, answer: Parameters<typeof runtimeActions.setAnswer>[1]) => {
     runtimeActions.setAnswer(questionId, answer);
@@ -268,6 +296,29 @@ export function StudentApp() {
   const answeredCount = countAnsweredQuestions(runtimeState.allQuestions, runtimeState.answers);
   const totalQuestions = countQuestionSlots(runtimeState.allQuestions);
 
+  const blockingOverlay =
+    runtimeState.blocking.active && blockingCopy ? (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm p-4">
+        <div className="max-w-md w-full bg-white rounded-sm border border-gray-100 shadow-2xl p-6 md:p-8 text-center">
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-gray-500 mb-3">
+            {blockingCopy.contextLabel}
+          </p>
+          <h2 className="text-2xl font-black text-gray-900 mb-3">{blockingCopy.title}</h2>
+          <p className="text-sm text-gray-700 leading-6">
+            {runtimeState.proctorNote ?? blockingCopy.message}
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <div className="px-3 py-1 rounded-sm bg-gray-50 border border-gray-100 text-xs font-bold uppercase tracking-widest text-gray-700">
+              Remaining {formatRuntimeTime(runtimeState.blocking.timeRemaining)}
+            </div>
+            <div className="px-3 py-1 rounded-sm bg-amber-50 border border-amber-700 text-xs font-bold uppercase tracking-widest text-amber-900">
+              {blockingCopy.badge}
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
   if (runtimeState.phase === 'pre-check') {
     return (
       <div className="flex flex-col h-screen w-full bg-gray-50 font-sans text-gray-900">
@@ -284,6 +335,7 @@ export function StudentApp() {
             onExit={onExit}
           />
         </main>
+        {blockingOverlay}
       </div>
     );
   }
@@ -353,6 +405,7 @@ export function StudentApp() {
       </a>
       <StudentHeader
         onExit={onExit}
+        testTakerId={attemptState.attempt?.candidateId ?? undefined}
         timeRemaining={runtimeState.displayTimeRemaining}
         totalSectionTime={examState.config.sections[runtimeState.currentModule]?.duration * 60 || 0}
         onOpenAccessibility={() => uiActions.setShowAccessibility(true)}
@@ -408,27 +461,7 @@ export function StudentApp() {
         ) : null}
       </main>
 
-      {runtimeState.blocking.active && blockingCopy ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm p-4">
-          <div className="max-w-md w-full bg-white rounded-sm border border-gray-100 shadow-2xl p-6 md:p-8 text-center">
-            <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-gray-500 mb-3">
-              {blockingCopy.contextLabel}
-            </p>
-            <h2 className="text-2xl font-black text-gray-900 mb-3">{blockingCopy.title}</h2>
-            <p className="text-sm text-gray-700 leading-6">
-              {runtimeState.proctorNote ?? blockingCopy.message}
-            </p>
-            <div className="mt-6 flex items-center justify-center gap-3">
-              <div className="px-3 py-1 rounded-sm bg-gray-50 border border-gray-100 text-xs font-bold uppercase tracking-widest text-gray-700">
-                Remaining {formatRuntimeTime(runtimeState.blocking.timeRemaining)}
-              </div>
-              <div className="px-3 py-1 rounded-sm bg-amber-50 border border-amber-700 text-xs font-bold uppercase tracking-widest text-amber-900">
-                {blockingCopy.badge}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {blockingOverlay}
 
       {(runtimeState.currentModule === 'reading' ||
         runtimeState.currentModule === 'listening') ? (
@@ -457,32 +490,36 @@ export function StudentApp() {
         />
       ) : null}
 
-      <WarningOverlay
-        isOpen={warningOpen}
-        severity={warningSeverity}
-        message={warningMessage}
-        onAcknowledge={() => {
-          if (latestPendingWarning) {
-            void attemptActions.acknowledgeProctorWarning(latestPendingWarning.id);
-          }
-          setWarningOpen(false);
-        }}
-      />
+      {examState.config.progression.showWarnings ? (
+        <WarningOverlay
+          isOpen={warningOpen}
+          severity={warningSeverity}
+          message={warningMessage}
+          onAcknowledge={() => {
+            if (latestPendingWarning) {
+              void attemptActions.acknowledgeProctorWarning(latestPendingWarning.id);
+            }
+            setWarningOpen(false);
+          }}
+        />
+      ) : null}
 
-      <WarningOverlay
-        isOpen={shouldShowTabSwitchWarning}
-        severity={tabSwitchSeverity}
-        message={
-          latestTabSwitchViolation?.description ??
-          'Tab switching detected. You must remain on the examination page at all times.'
-        }
-        showCountdown={false}
-        onAcknowledge={() => {
-          if (latestTabSwitchViolation) {
-            setLastAcknowledgedSecurityViolationId(latestTabSwitchViolation.id);
+      {examState.config.progression.showWarnings ? (
+        <WarningOverlay
+          isOpen={shouldShowTabSwitchWarning}
+          severity={tabSwitchSeverity}
+          message={
+            latestTabSwitchViolation?.description ??
+            'Tab switching detected. You must remain on the examination page at all times.'
           }
-        }}
-      />
+          showCountdown={false}
+          onAcknowledge={() => {
+            if (latestTabSwitchViolation) {
+              setLastAcknowledgedSecurityViolationId(latestTabSwitchViolation.id);
+            }
+          }}
+        />
+      ) : null}
 
       <HelpModal isOpen={uiState.showHelp} onClose={() => uiActions.setShowHelp(false)} />
 

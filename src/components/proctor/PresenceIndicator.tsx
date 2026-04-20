@@ -6,9 +6,10 @@ interface PresenceIndicatorProps {
   proctorPresence: ProctorPresence[];
   currentProctorId: string;
   currentProctorName: string;
+  onJoin?: (() => void) | undefined;
 }
 
-export function PresenceIndicator({ proctorPresence, currentProctorId, currentProctorName }: PresenceIndicatorProps) {
+export function PresenceIndicator({ proctorPresence, currentProctorId, currentProctorName, onJoin }: PresenceIndicatorProps) {
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -72,14 +73,16 @@ export function PresenceIndicator({ proctorPresence, currentProctorId, currentPr
         </div>
       )}
 
-      {!isCurrentUserPresent && (
+      {!isCurrentUserPresent && onJoin ? (
         <button
+          type="button"
+          onClick={onJoin}
           className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-xs font-medium hover:bg-blue-200 transition-colors"
           title="Join session"
         >
           Join
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

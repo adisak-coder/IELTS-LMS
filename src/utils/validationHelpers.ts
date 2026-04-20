@@ -5,6 +5,17 @@ const isFiniteNumber = (value: number) => Number.isFinite(value);
 export function validateWordCountRanges(ranges: PassageWordCountStandards): string[] {
   const errors: string[] = [];
 
+  const values = [
+    ranges.optimalMin,
+    ranges.optimalMax,
+    ranges.warningMin,
+    ranges.warningMax,
+  ];
+  if (values.some((value) => !isFiniteNumber(value))) {
+    errors.push('Word count ranges must be finite numbers.');
+    return errors;
+  }
+
   if (ranges.optimalMin >= ranges.optimalMax) {
     errors.push('Optimal minimum must be less than optimal maximum.');
   }

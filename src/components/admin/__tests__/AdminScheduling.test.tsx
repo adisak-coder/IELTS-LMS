@@ -51,7 +51,7 @@ describe('AdminScheduling', () => {
       isPublished: true
     };
 
-    await examRepository.saveVersion(version);
+    vi.spyOn(examRepository, 'getVersionById').mockResolvedValue(version);
 
     const onCreateSchedule = vi.fn();
 
@@ -148,8 +148,11 @@ describe('AdminScheduling', () => {
       },
     };
 
-    await examRepository.saveVersion(versionOne);
-    await examRepository.saveVersion(versionTwo);
+    vi.spyOn(examRepository, 'getVersionById').mockImplementation(async (id: string) => {
+      if (id === 'ver-1') return versionOne;
+      if (id === 'ver-2') return versionTwo;
+      return null;
+    });
 
     render(
       <AdminScheduling

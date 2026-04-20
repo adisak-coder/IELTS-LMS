@@ -42,6 +42,7 @@ interface RuntimeReducerState {
   currentQuestionId: string | null;
   timeRemaining: number;
   elapsedTime: number;
+  submittedModules: ModuleType[];
   answers: Record<string, StudentAnswer | undefined>;
   writingAnswers: Record<string, string>;
   flags: Record<string, boolean>;
@@ -117,6 +118,7 @@ type RuntimeAction =
       nextQuestionId: string | null;
       snapshot: ExamSessionRuntime | null;
     }
+  | { type: 'hydrate_proctor'; snapshot: StudentAttempt }
   | { type: 'hydrate_attempt'; snapshot: StudentAttempt }
   | { type: 'set_phase'; phase: ExamPhase }
   | { type: 'set_current_module'; module: ModuleType; firstQuestionId: string | null }
@@ -155,10 +157,10 @@ function deriveBlockingState(
   waitingForCohortAdvance: boolean,
   proctorStatus: StudentAttempt['proctorStatus'],
   blockingReasonOverride: RuntimeReducerState['blockingReasonOverride'],
-  fallbackTimeRemaining: number,
+  timeRemainingSeconds: number,
 ): RuntimeBlockingState {
   const runtimeStatus = runtimeBacked ? runtimeSnapshot?.status ?? 'not_started' : null;
-  const timeRemaining = runtimeSnapshot?.currentSectionRemainingSeconds ?? fallbackTimeRemaining;
+  const timeRemaining = timeRemainingSeconds;
 
   if (blockingReasonOverride) {
     return {
@@ -183,7 +185,7 @@ function deriveBlockingState(
       active: false,
       reason: null,
       runtimeStatus: null,
-      timeRemaining: fallbackTimeRemaining,
+      timeRemaining,
     };
   }
 
@@ -282,6 +284,7 @@ function createInitialRuntimeState(
       (runtimeBacked ? getFirstQuestionIdForModule(examState, firstModule) : null),
     timeRemaining: runtimeBacked ? runtimeSnapshot?.currentSectionRemainingSeconds ?? 0 : 0,
     elapsedTime: 0,
+    submittedModules: [],
     answers: attemptSnapshot?.answers ?? {},
     writingAnswers: attemptSnapshot?.writingAnswers ?? {},
     flags: attemptSnapshot?.flags ?? {},
@@ -362,6 +365,33 @@ function runtimeReducer(
         currentQuestionId: nextQuestionId,
         timeRemaining: nextTimeRemaining,
         waitingForCohortAdvance: nextWaitingForCohortAdvance,
+      };
+    }
+    case 'hydrate_proctor': {
+      const nextProctorStatus = action.snapshot.proctorStatus;
+      const nextProctorNote = action.snapshot.proctorNote ?? null;
+      const mergedViolations = mergeViolations(action.snapshot.violations, state.violations);
+      const nextPhase =
+        nextProctorStatus === 'terminated' || action.snapshot.phase === 'post-exam'
+          ? 'post-exam'
+          : state.phase;
+
+      if (
+        state.phase === nextPhase &&
+        state.proctorStatus === nextProctorStatus &&
+        state.proctorNote === nextProctorNote &&
+        JSON.stringify(state.violations) === JSON.stringify(mergedViolations)
+      ) {
+        return state;
+      }
+
+      return {
+        ...state,
+        phase: nextPhase,
+        violations: mergedViolations,
+        fullscreenViolationCount: countFullscreenViolations(mergedViolations),
+        proctorStatus: nextProctorStatus,
+        proctorNote: nextProctorNote,
       };
     }
     case 'hydrate_attempt': {
@@ -485,6 +515,7 @@ function runtimeReducer(
           ...state,
           phase: 'post-exam',
           currentQuestionId: null,
+          submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
         };
       }
 
@@ -494,6 +525,7 @@ function runtimeReducer(
         currentQuestionId: action.nextQuestionId,
         timeRemaining: action.nextDurationSeconds,
         elapsedTime: 0,
+        submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
       };
     }
     case 'add_violation': {
@@ -561,6 +593,33 @@ export function StudentRuntimeProvider({
   const lastHydratedAttemptRef = useRef<string | null>(
     attemptSnapshot ? `${attemptSnapshot.id}:${attemptSnapshot.updatedAt}` : null,
   );
+  const lastHydratedProctorRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!attemptSnapshot) {
+      return;
+    }
+
+    const proctorFingerprint = [
+      attemptSnapshot.id,
+      attemptSnapshot.proctorUpdatedAt ?? '',
+      attemptSnapshot.proctorStatus,
+      attemptSnapshot.proctorNote ?? '',
+      attemptSnapshot.lastWarningId ?? '',
+      attemptSnapshot.lastAcknowledgedWarningId ?? '',
+      String(attemptSnapshot.violations.length),
+    ].join(':');
+
+    if (lastHydratedProctorRef.current === proctorFingerprint) {
+      return;
+    }
+
+    lastHydratedProctorRef.current = proctorFingerprint;
+    dispatch({
+      type: 'hydrate_proctor',
+      snapshot: attemptSnapshot,
+    });
+  }, [attemptSnapshot]);
 
   useEffect(() => {
     if (!attemptSnapshot || runtimeState.phase === 'post-exam') {
@@ -649,27 +708,73 @@ export function StudentRuntimeProvider({
     ],
   );
   const runtimeStatus = runtimeBacked ? runtimeSnapshot?.status ?? 'not_started' : null;
-  const displayTimeRemaining = runtimeBacked
-    ? runtimeSnapshot?.currentSectionRemainingSeconds ?? runtimeState.timeRemaining
-    : runtimeState.phase === 'exam'
-      ? runtimeState.timeRemaining
-      : undefined;
+  const displayTimeRemaining =
+    runtimeState.phase === 'exam' ? runtimeState.timeRemaining : undefined;
   const submitRequiresConfirmation =
     !runtimeBacked &&
     runtimeState.phase === 'exam' &&
     (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening');
+
+  useEffect(() => {
+    if (!runtimeBacked) {
+      return;
+    }
+
+    if (runtimeState.phase !== 'exam' || runtimeState.timeRemaining <= 0) {
+      return;
+    }
+
+    if (blocking.active) {
+      return;
+    }
+
+    if (runtimeStatus !== 'live') {
+      return;
+    }
+
+    const activeSection = runtimeSnapshot?.currentSectionKey
+      ? runtimeSnapshot.sections.find(
+          (section) => section.sectionKey === runtimeSnapshot.currentSectionKey,
+        )
+      : null;
+    if (activeSection?.status === 'paused') {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      dispatch({ type: 'tick' });
+    }, 1_000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [
+    blocking.active,
+    runtimeBacked,
+    runtimeSnapshot,
+    runtimeState.phase,
+    runtimeState.timeRemaining,
+    runtimeStatus,
+  ]);
 
   const setPhase = useCallback((phase: ExamPhase) => {
     dispatch({ type: 'set_phase', phase });
   }, []);
 
   const setCurrentModule = useCallback((module: ModuleType) => {
+    if (
+      state.config.progression.lockAfterSubmit &&
+      runtimeState.submittedModules.includes(module)
+    ) {
+      return;
+    }
+
     dispatch({
       type: 'set_current_module',
       module,
       firstQuestionId: getFirstQuestionIdForModule(state, module),
     });
-  }, [state]);
+  }, [runtimeState.submittedModules, state]);
 
   const setCurrentQuestionId = useCallback((id: string | null) => {
     dispatch({ type: 'set_current_question_id', id });

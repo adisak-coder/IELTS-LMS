@@ -112,17 +112,21 @@ export function ProctoringProvider({
             violationType: type,
             count: violationCountsRef.current.high,
             threshold: highLimit,
-            action: 'pause',
+            action: config.progression.allowPause ? 'pause' : 'terminate',
           },
           attemptState.attemptId ?? undefined,
         );
-        runtimeActions.pauseExam();
+        if (config.progression.allowPause) {
+          runtimeActions.pauseExam();
+        } else {
+          runtimeActions.terminateExam();
+        }
         return;
       }
     }
     
     if (severity === 'medium') {
-      const mediumLimit = thresholds?.mediumLimit ?? 3;
+      const mediumLimit = thresholds?.mediumLimit ?? config.progression.warningThreshold ?? 3;
       if (violationCountsRef.current.medium >= mediumLimit) {
         runtimeActions.addViolation(type, severity, message);
         void saveStudentAuditEvent(
@@ -304,7 +308,6 @@ export function ProctoringProvider({
         }
 
         handleViolation('TAB_SWITCH', `Tab switching detected via ${eventType}. Exam terminated.`, 'critical');
-        runtimeActions.terminateExam();
       }, 500);
     };
 

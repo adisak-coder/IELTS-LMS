@@ -3,6 +3,7 @@ import { Wifi, Bell, Menu, Clock, CheckCircle, Loader2, Contrast, LayoutGrid } f
 
 interface StudentHeaderProps {
   onExit: () => void;
+  testTakerId?: string | undefined;
   timeRemaining?: number | undefined;
   elapsedTime?: number | undefined;
   totalSectionTime?: number | undefined;
@@ -14,6 +15,7 @@ interface StudentHeaderProps {
 
 export function StudentHeader({
   onExit,
+  testTakerId,
   timeRemaining,
   elapsedTime = 0,
   totalSectionTime = 0,
@@ -51,7 +53,9 @@ export function StudentHeader({
         </div>
         <div className="flex flex-col min-w-0 hidden sm:flex">
           <div className="font-bold text-[10px] md:text-[11px] text-gray-600 uppercase tracking-widest">Test taker ID</div>
-          <div className="text-xs md:text-sm font-bold text-gray-900 truncate">IELTS-PRO-2024-001</div>
+          <div className="text-xs md:text-sm font-bold text-gray-900 truncate">
+            {testTakerId ?? '—'}
+          </div>
         </div>
       </div>
       

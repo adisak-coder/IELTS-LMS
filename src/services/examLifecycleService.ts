@@ -101,6 +101,13 @@ function generateId(prefix: string): string {
 export class ExamLifecycleService {
   constructor(private repository: IExamRepository = examRepository) {}
 
+  private useBackendBuilder(): boolean {
+    // Production path: the default repository is backend-only.
+    // Unit tests can inject an in-memory mock repository; those should not
+    // attempt to hit backend endpoints.
+    return this.repository === examRepository;
+  }
+
   private async ensureBackendExamRevision(examId: string): Promise<number | null> {
     const cached = getExamRevision(examId);
     if (cached !== undefined) {
@@ -124,7 +131,7 @@ export class ExamLifecycleService {
     initialState: ExamState,
     owner: string = 'System'
   ): Promise<TransitionResult> {
-    if (isBackendBuilderEnabled()) {
+    if (this.useBackendBuilder()) {
       try {
         const slug = generateSlug(title);
         const createdExam = await backendPost<any>('/v1/exams', {
@@ -235,7 +242,7 @@ export class ExamLifecycleService {
     content: ExamState,
     actor: string = 'System'
   ): Promise<TransitionResult> {
-    if (isBackendBuilderEnabled()) {
+    if (this.useBackendBuilder()) {
       try {
         const revision = await this.ensureBackendExamRevision(examId);
         if (revision === null) {
@@ -248,6 +255,20 @@ export class ExamLifecycleService {
           revision,
         });
         const exam = await this.repository.getExamById(examId);
+        const desiredTitle = (content.config?.general?.title ?? content.title ?? '').trim();
+
+        if (exam && desiredTitle && exam.title !== desiredTitle) {
+          const nextRevision = getExamRevision(examId);
+          if (nextRevision === undefined) {
+            throw new Error('Missing exam revision after draft save.');
+          }
+
+          await backendPatch(`/v1/exams/${examId}`, {
+            title: desiredTitle,
+            revision: nextRevision,
+          });
+          await this.repository.getExamById(examId);
+        }
         const version = savedVersion ? mapBackendExamVersion(savedVersion) : null;
 
         return {
@@ -348,7 +369,7 @@ export class ExamLifecycleService {
       return { success: false, error: 'Exam not found' };
     }
 
-    if (isBackendBuilderEnabled()) {
+    if (this.useBackendBuilder()) {
       if (toStatus === 'published') {
         return this.publishExam(examId, actor, notes);
       }
@@ -462,7 +483,7 @@ export class ExamLifecycleService {
     actor: string = 'System',
     publishNotes?: string
   ): Promise<TransitionResult> {
-    if (isBackendBuilderEnabled()) {
+    if (this.useBackendBuilder()) {
       try {
         const revision = await this.ensureBackendExamRevision(examId);
         if (revision === null) {
@@ -765,7 +786,7 @@ export class ExamLifecycleService {
     examId: string,
     actor: string = 'System'
   ): Promise<TransitionResult> {
-    if (isBackendBuilderEnabled()) {
+    if (this.useBackendBuilder()) {
       try {
         await backendDelete(`/v1/exams/${examId}`);
         return { success: true };
@@ -816,13 +837,39 @@ export class ExamLifecycleService {
    * Check if exam is ready for publication with comprehensive validation
    */
   async getPublishReadiness(examId: string): Promise<PublishReadiness> {
-    if (isBackendBuilderEnabled()) {
+    if (this.useBackendBuilder()) {
       try {
         const summary = await backendGet<{
           canPublish: boolean;
           errors: Array<{ field: string; message: string }>;
           warnings: Array<{ field: string; message: string }>;
         }>(`/v1/exams/${examId}/validation`);
+
+        let questionCounts = { reading: 0, listening: 0, total: 0 };
+        try {
+          const exam = await this.repository.getExamById(examId);
+          const versionId = exam?.currentDraftVersionId ?? exam?.currentPublishedVersionId ?? null;
+          if (versionId) {
+            const version = await this.repository.getVersionById(versionId);
+            if (version) {
+              const content = hydrateExamState(version.contentSnapshot);
+              const config = content.config;
+              const readingQuestions = config.sections.reading.enabled
+                ? getReadingTotalQuestions(content.reading.passages)
+                : 0;
+              const listeningQuestions = config.sections.listening.enabled
+                ? getListeningTotalQuestions(content.listening.parts)
+                : 0;
+              questionCounts = {
+                reading: readingQuestions,
+                listening: listeningQuestions,
+                total: readingQuestions + listeningQuestions,
+              };
+            }
+          }
+        } catch {
+          // Ignore local readiness failures in backend mode; retain summary.
+        }
 
         return {
           canPublish: summary.canPublish,
@@ -833,11 +880,7 @@ export class ExamLifecycleService {
           })),
           warnings: summary.warnings,
           missingFields: summary.errors.map((error) => error.field),
-          questionCounts: {
-            reading: 0,
-            listening: 0,
-            total: 0,
-          },
+          questionCounts,
         };
       } catch (error) {
         return {

@@ -69,11 +69,6 @@ const StudentSessionRoute = lazy(() =>
     default: module.StudentSessionRoute,
   })),
 );
-const StudentEntryRoute = lazy(() =>
-  import('../features/student/routes/StudentEntryRoute').then((module) => ({
-    default: module.StudentEntryRoute,
-  })),
-);
 const StudentRegistrationRoute = lazy(() =>
   import('../features/student/routes/StudentRegistrationRoute').then((module) => ({
     default: module.StudentRegistrationRoute,
@@ -253,14 +248,6 @@ export const appRoutes = [
             <ProctorRoot />
           </Suspense>
         ), ['admin', 'proctor']),
-      },
-      {
-        path: 'student/:scheduleId',
-        element: (
-          <Suspense fallback={<RouteLoadingFallback />}>
-            <StudentEntryRoute />
-          </Suspense>
-        ),
       },
       {
         path: 'student/:scheduleId/register',
