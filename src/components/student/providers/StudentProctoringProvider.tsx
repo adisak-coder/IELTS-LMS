@@ -81,7 +81,7 @@ export function ProctoringProvider({
     const thresholds = config.security.severityThresholds;
     
     // Check severity thresholds
-    if (severity === 'critical' || thresholds?.criticalAction === 'terminate') {
+    if (severity === 'critical') {
       // Always terminate on critical
       runtimeActions.addViolation(type, severity, message);
       void saveStudentAuditEvent(

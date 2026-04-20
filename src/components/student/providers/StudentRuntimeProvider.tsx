@@ -52,7 +52,7 @@ interface RuntimeReducerState {
   proctorNote: string | null;
   blockingReasonOverride: Exclude<
     BlockingReason,
-    'cohort_paused' | 'proctor_paused' | 'not_started' | 'waiting_for_runtime' | 'waiting_for_advance' | null
+    'cohort_paused' | 'not_started' | 'waiting_for_runtime' | 'waiting_for_advance' | null
   > | null;
   attemptSyncState: AttemptSyncState;
 }
@@ -86,6 +86,7 @@ interface RuntimeActions {
   startExam: () => void;
   addViolation: (type: string, severity: ViolationSeverity, description: string) => void;
   clearViolations: () => void;
+  pauseExam: () => void;
   terminateExam: () => void;
   setBlockingReason: (reason: RuntimeReducerState['blockingReasonOverride']) => void;
   setAttemptSyncState: (state: AttemptSyncState) => void;
@@ -699,6 +700,10 @@ export function StudentRuntimeProvider({
     dispatch({ type: 'clear_violations' });
   }, []);
 
+  const pauseExam = useCallback(() => {
+    dispatch({ type: 'set_blocking_reason', reason: 'proctor_paused' });
+  }, []);
+
   const terminateExam = useCallback(() => {
     dispatch({ type: 'terminate_exam' });
   }, []);
@@ -736,6 +741,7 @@ export function StudentRuntimeProvider({
       startExam,
       addViolation,
       clearViolations,
+      pauseExam,
       terminateExam,
       setBlockingReason,
       setAttemptSyncState,
@@ -747,6 +753,7 @@ export function StudentRuntimeProvider({
     allQuestions,
     blocking,
     clearViolations,
+    pauseExam,
     displayTimeRemaining,
     onExit,
     resetElapsedTime,

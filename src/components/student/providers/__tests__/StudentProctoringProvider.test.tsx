@@ -253,6 +253,90 @@ describe('StudentProctoringProvider', () => {
     expect(harness.result.current.runtime.state.violations).toHaveLength(1);
   });
 
+  it('does not terminate the exam for non-critical violations when severity thresholds are configured', () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: {
+        ...mockConfig.security,
+        severityThresholds: {
+          lowLimit: 5,
+          mediumLimit: 3,
+          highLimit: 2,
+          criticalAction: 'terminate',
+        },
+      },
+    });
+
+    act(() => {
+      harness.result.current.proctoring.handleViolation(
+        'FULLSCREEN_EXIT',
+        'Fullscreen exited',
+        'high',
+      );
+    });
+
+    expect(harness.result.current.runtime.state.phase).toBe('exam');
+  });
+
+  it('terminates the exam for critical violations', () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: {
+        ...mockConfig.security,
+        severityThresholds: {
+          lowLimit: 5,
+          mediumLimit: 3,
+          highLimit: 2,
+          criticalAction: 'terminate',
+        },
+      },
+    });
+
+    act(() => {
+      harness.result.current.proctoring.handleViolation(
+        'TEST_CRITICAL',
+        'Critical violation',
+        'critical',
+      );
+    });
+
+    expect(harness.result.current.runtime.state.phase).toBe('post-exam');
+  });
+
+  it('pauses the exam when high severity violations hit the configured threshold', () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: {
+        ...mockConfig.security,
+        severityThresholds: {
+          lowLimit: 5,
+          mediumLimit: 3,
+          highLimit: 2,
+          criticalAction: 'terminate',
+        },
+      },
+    });
+
+    expect(() => {
+      act(() => {
+        harness.result.current.proctoring.handleViolation(
+          'FULLSCREEN_EXIT',
+          'Fullscreen exited',
+          'high',
+        );
+        harness.result.current.proctoring.handleViolation(
+          'SECONDARY_SCREEN',
+          'Multiple screens detected',
+          'high',
+        );
+      });
+    }).not.toThrow();
+
+    expect(harness.result.current.runtime.state.phase).toBe('exam');
+    expect(harness.result.current.runtime.state.blocking.active).toBe(true);
+    expect(harness.result.current.runtime.state.blocking.reason).toBe('proctor_paused');
+  });
+
   it('logs a tab-switch warning when the tab is hidden', async () => {
     const harness = renderHarness({
       ...mockConfig,

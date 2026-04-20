@@ -168,6 +168,11 @@ test.describe('Student security guardrails (LRW)', () => {
       safeDispatch(window, 'blur');
     });
 
+    const tabSwitchOverlay = page.getByText(/Tab switching detected/i);
+    await expect(tabSwitchOverlay).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: 'I Understand' }).click();
+    await expect(tabSwitchOverlay).toBeHidden({ timeout: 10_000 });
+
     await expect
       .poll(
         () =>

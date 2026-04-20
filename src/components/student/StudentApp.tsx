@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   countAnsweredQuestions,
   countQuestionSlots,
@@ -49,7 +49,7 @@ function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['
       return {
         title: 'Waiting for cohort advance',
         message:
-          'You submitted early. Your section is locked until the cohort advances.',
+          'Your section is locked until the cohort advances.',
         badge: 'Locked',
         contextLabel: 'Cohort Runtime',
       };
@@ -111,11 +111,14 @@ export function StudentApp() {
   const { state: uiState, actions: uiActions } = useStudentUI();
   const blockingCopy = getBlockingCopy(runtimeState.blocking.reason);
   const { setShowTimeExtensionRequest } = uiActions;
+  const autoSubmitFingerprintRef = useRef<string | null>(null);
   const [warningOpen, setWarningOpen] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const [warningSeverity, setWarningSeverity] = useState<'medium' | 'high' | 'critical'>(
     'medium',
   );
+  const [lastAcknowledgedSecurityViolationId, setLastAcknowledgedSecurityViolationId] =
+    useState<string | null>(null);
   const latestPendingWarning = useMemo(() => {
     const warnings =
       attemptState.attempt?.violations.filter((violation) => violation.type === 'PROCTOR_WARNING') ??
@@ -144,17 +147,63 @@ export function StudentApp() {
     );
     setWarningOpen(true);
   }, [latestPendingWarning]);
-  const autoSaveStatus =
-    runtimeState.attemptSyncState === 'saving'
-      ? 'saving'
-      : runtimeState.attemptSyncState === 'syncing_reconnect'
-        ? 'syncing'
-        : runtimeState.attemptSyncState === 'offline'
-          ? 'offline'
-          : runtimeState.attemptSyncState === 'saved'
-            ? 'saved'
-            : null;
 
+  const latestTabSwitchViolation = useMemo(() => {
+    if (runtimeState.phase !== 'exam') {
+      return null;
+    }
+
+    if (examState.config.security.tabSwitchRule !== 'warn') {
+      return null;
+    }
+
+    const tabSwitchViolations = runtimeState.violations.filter(
+      (violation) => violation.type === 'TAB_SWITCH',
+    );
+    return tabSwitchViolations[tabSwitchViolations.length - 1] ?? null;
+  }, [examState.config.security.tabSwitchRule, runtimeState.phase, runtimeState.violations]);
+
+  const shouldShowTabSwitchWarning =
+    Boolean(latestTabSwitchViolation) &&
+    latestTabSwitchViolation?.id !== lastAcknowledgedSecurityViolationId;
+
+  const tabSwitchSeverity =
+    latestTabSwitchViolation?.severity === 'high' || latestTabSwitchViolation?.severity === 'critical'
+      ? latestTabSwitchViolation.severity
+      : 'medium';
+
+  useEffect(() => {
+    if (!examState.config.progression.autoSubmit) {
+      autoSubmitFingerprintRef.current = null;
+      return;
+    }
+
+    if (runtimeState.phase !== 'exam') {
+      autoSubmitFingerprintRef.current = null;
+      return;
+    }
+
+    if (runtimeState.displayTimeRemaining !== 0) {
+      return;
+    }
+
+    const fingerprint = `${runtimeState.runtimeBacked ? 'runtime' : 'self'}:${runtimeState.currentModule}`;
+    if (autoSubmitFingerprintRef.current === fingerprint) {
+      return;
+    }
+
+    autoSubmitFingerprintRef.current = fingerprint;
+    void attemptActions.flushPending();
+    runtimeActions.submitModule();
+  }, [
+    attemptActions,
+    examState.config.progression.autoSubmit,
+    runtimeActions,
+    runtimeState.currentModule,
+    runtimeState.displayTimeRemaining,
+    runtimeState.phase,
+    runtimeState.runtimeBacked,
+  ]);
   const shouldShowTimeExtension = !runtimeState.runtimeBacked && 
     runtimeState.phase === 'exam' && 
     runtimeState.displayTimeRemaining === 300;
@@ -305,9 +354,7 @@ export function StudentApp() {
       <StudentHeader
         onExit={onExit}
         timeRemaining={runtimeState.displayTimeRemaining}
-        elapsedTime={runtimeState.elapsedTime}
         totalSectionTime={examState.config.sections[runtimeState.currentModule]?.duration * 60 || 0}
-        autoSaveStatus={autoSaveStatus}
         onOpenAccessibility={() => uiActions.setShowAccessibility(true)}
         onOpenNavigator={
           runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening'
@@ -419,6 +466,21 @@ export function StudentApp() {
             void attemptActions.acknowledgeProctorWarning(latestPendingWarning.id);
           }
           setWarningOpen(false);
+        }}
+      />
+
+      <WarningOverlay
+        isOpen={shouldShowTabSwitchWarning}
+        severity={tabSwitchSeverity}
+        message={
+          latestTabSwitchViolation?.description ??
+          'Tab switching detected. You must remain on the examination page at all times.'
+        }
+        showCountdown={false}
+        onAcknowledge={() => {
+          if (latestTabSwitchViolation) {
+            setLastAcknowledgedSecurityViolationId(latestTabSwitchViolation.id);
+          }
         }}
       />
 
