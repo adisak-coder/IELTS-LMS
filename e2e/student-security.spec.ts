@@ -85,7 +85,8 @@ test.describe('Student security guardrails (LRW)', () => {
     await enterRuntimeBackedExam(page, manifest.student.scheduleId, wcode);
 
     await page.evaluate(() => {
-      document.body.dispatchEvent(new Event('paste', { bubbles: true, cancelable: true }));
+      const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
     });
 
     await expect
@@ -153,12 +154,10 @@ test.describe('Student security guardrails (LRW)', () => {
 
     await enterRuntimeBackedExam(page, manifest.student.scheduleId, wcode);
 
-    // Force the `visibilitychange` handler to see a hidden document (headless browsers often don't
-    // emit real tab-switch signals consistently).
+    // Headless browsers don't always emit real tab-switch signals consistently.
+    // Dispatch a `blur` event directly to trigger the proctoring rule.
     await page.evaluate(() => {
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
-      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
-      document.dispatchEvent(new Event('visibilitychange'));
+      document.dispatchEvent(new Event('blur'));
     });
 
     await expect

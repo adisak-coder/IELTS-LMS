@@ -1,7 +1,7 @@
-import React, { useState, useMemo } from 'react';
-import { PassageLibraryItem, PassageLibraryQuery, Passage } from '../../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { PassageLibraryItem, Passage } from '../../types';
 import { passageLibraryService } from '../../services/passageLibraryService';
-import { Search, Filter, Grid, List, BookOpen, Clock, FileText, Plus } from 'lucide-react';
+import { Search, Filter, Grid, List, BookOpen, Clock, FileText } from 'lucide-react';
 
 interface PassageLibraryProps {
   onAddToExam: (passage: Passage) => void;
@@ -22,18 +22,77 @@ export function PassageLibrary({ onAddToExam, onClose }: PassageLibraryProps) {
   const [minWordCount, setMinWordCount] = useState<number | undefined>();
   const [maxWordCount, setMaxWordCount] = useState<number | undefined>();
 
-  const allPassages = useMemo(() => passageLibraryService.getAllPassages(), []);
-  const topics = useMemo(() => passageLibraryService.getTopics(), []);
-  const sources = useMemo(() => passageLibraryService.getSources(), []);
-  const tags = useMemo(() => passageLibraryService.getTags(), []);
+  const [allPassages, setAllPassages] = useState<PassageLibraryItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const items = await passageLibraryService.getAllPassages();
+        if (!cancelled) {
+          setAllPassages(items);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load passages.';
+        if (!cancelled) {
+          setLoadError(message);
+          setAllPassages([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const topics = useMemo(() => {
+    const unique = new Set<string>();
+    allPassages.forEach((item) => unique.add(item.metadata.topic));
+    return Array.from(unique).sort();
+  }, [allPassages]);
 
   const filteredPassages = useMemo(() => {
-    return passageLibraryService.queryPassages({
-      difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
-      topic: selectedTopic === 'all' ? undefined : selectedTopic,
-      searchTerm: searchTerm || undefined,
-      minWordCount,
-      maxWordCount
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return allPassages.filter((item) => {
+      if (selectedDifficulty !== 'all' && item.metadata.difficulty !== selectedDifficulty) {
+        return false;
+      }
+
+      if (selectedTopic !== 'all' && item.metadata.topic !== selectedTopic) {
+        return false;
+      }
+
+      if (minWordCount !== undefined && item.metadata.wordCount < minWordCount) {
+        return false;
+      }
+
+      if (maxWordCount !== undefined && item.metadata.wordCount > maxWordCount) {
+        return false;
+      }
+
+      if (normalizedSearch.length > 0) {
+        const titleMatch = item.passage.title.toLowerCase().includes(normalizedSearch);
+        const contentMatch = item.passage.content.toLowerCase().includes(normalizedSearch);
+        const topicMatch = item.metadata.topic.toLowerCase().includes(normalizedSearch);
+        const sourceMatch = item.metadata.source.toLowerCase().includes(normalizedSearch);
+        const tagMatch = item.metadata.tags.some((t) => t.toLowerCase().includes(normalizedSearch));
+        if (!titleMatch && !contentMatch && !topicMatch && !sourceMatch && !tagMatch) {
+          return false;
+        }
+      }
+
+      return true;
     });
   }, [allPassages, selectedDifficulty, selectedTopic, searchTerm, minWordCount, maxWordCount]);
 
@@ -139,7 +198,18 @@ export function PassageLibrary({ onAddToExam, onClose }: PassageLibraryProps) {
 
       {/* Passage List */}
       <div className="flex-1 overflow-auto p-4 bg-gray-50">
-        {filteredPassages.length === 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <FileText size={48} className="mb-4 text-gray-300" />
+            <p className="text-lg font-medium">Loading passages…</p>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <FileText size={48} className="mb-4 text-gray-300" />
+            <p className="text-lg font-medium">Couldn’t load passages</p>
+            <p className="text-sm">{loadError}</p>
+          </div>
+        ) : filteredPassages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <FileText size={48} className="mb-4 text-gray-300" />
             <p className="text-lg font-medium">No passages found</p>

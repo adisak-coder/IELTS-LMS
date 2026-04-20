@@ -10,8 +10,9 @@ import {
   backendPatch,
   backendPost,
 } from './backendBridge';
+import { logError } from '../app/error/errorLogger';
 
-type BackendQuestionBankItem = {
+type LegacyBackendQuestionBankItem = {
   id: string;
   block: QuestionBlock;
   metadata: {
@@ -28,18 +29,36 @@ type BackendQuestionBankItem = {
   revision: number;
 };
 
+type BackendQuestionBankItemV2 = {
+  id: string;
+  organizationId?: string | null | undefined;
+  questionType: string;
+  blockSnapshot: unknown;
+  difficulty: string;
+  topic: string;
+  tags: unknown;
+  usageCount: number;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+};
+
 const questionRevisions = new Map<string, number>();
 
 class BackendQuestionBank {
   async getAllQuestions(): Promise<QuestionBankItem[]> {
-    const items = await backendGet<BackendQuestionBankItem[]>('/v1/library/questions');
-    return items.map((item) => this.mapBackendItem(item));
+    const raw = await backendGet<unknown>('/v1/library/questions');
+    const items = this.coerceArray(raw, '/v1/library/questions');
+    return items
+      .map((item) => this.mapBackendItem(item))
+      .filter((value): value is QuestionBankItem => value !== null);
   }
 
   async getQuestion(id: string): Promise<QuestionBankItem | null> {
     try {
-      const item = await backendGet<BackendQuestionBankItem>(`/v1/library/questions/${id}`);
-      return this.mapBackendItem(item);
+      const raw = await backendGet<unknown>(`/v1/library/questions/${id}`);
+      return this.mapBackendItem(raw);
     } catch (error) {
       if (this.isNotFound(error)) return null;
       throw error;
@@ -47,26 +66,47 @@ class BackendQuestionBank {
   }
 
   async addQuestion(block: QuestionBlock, metadata: Omit<QuestionMetadata, 'id' | 'createdAt' | 'usageCount'>): Promise<QuestionBankItem> {
-    const item = await backendPost<BackendQuestionBankItem>('/v1/library/questions', {
-      block,
-      metadata: {
-        ...metadata,
-        createdAt: new Date().toISOString(),
-        usageCount: 0,
-      },
+    const raw = await backendPost<unknown>('/v1/library/questions', {
+      questionType: block.type,
+      blockSnapshot: block,
+      difficulty: metadata.difficulty,
+      topic: metadata.topic,
+      tags: metadata.tags,
     });
-    return this.mapBackendItem(item);
+    const mapped = this.mapBackendItem(raw);
+    if (!mapped) {
+      throw new Error('Backend returned an invalid question record');
+    }
+    return mapped;
   }
 
   async updateQuestion(id: string, updates: Partial<{ block: QuestionBlock; metadata: Partial<QuestionMetadata> }>): Promise<QuestionBankItem | null> {
     const revision = questionRevisions.get(id);
     if (revision === undefined) return null;
 
-    const item = await backendPatch<BackendQuestionBankItem>(`/v1/library/questions/${id}`, {
-      ...updates,
+    const patchBody: Record<string, unknown> = {
       revision,
-    });
-    return this.mapBackendItem(item);
+    };
+
+    if (updates.block) {
+      patchBody['questionType'] = updates.block.type;
+      patchBody['blockSnapshot'] = updates.block;
+    }
+
+    if (updates.metadata?.difficulty !== undefined) {
+      patchBody['difficulty'] = updates.metadata.difficulty;
+    }
+
+    if (updates.metadata?.topic !== undefined) {
+      patchBody['topic'] = updates.metadata.topic;
+    }
+
+    if (updates.metadata?.tags !== undefined) {
+      patchBody['tags'] = updates.metadata.tags;
+    }
+
+    const raw = await backendPatch<unknown>(`/v1/library/questions/${id}`, patchBody);
+    return this.mapBackendItem(raw);
   }
 
   async deleteQuestion(id: string): Promise<boolean> {
@@ -81,8 +121,7 @@ class BackendQuestionBank {
   }
 
   async queryQuestions(query: QuestionBankQuery): Promise<QuestionBankItem[]> {
-    const items = await backendGet<BackendQuestionBankItem[]>('/v1/library/questions');
-    let results = items.map((item) => this.mapBackendItem(item));
+    let results = await this.getAllQuestions();
 
     if (query.type) {
       results = results.filter(item => item.block.type === query.type);
@@ -116,7 +155,11 @@ class BackendQuestionBank {
   }
 
   async incrementUsageCount(id: string): Promise<void> {
-    await backendPatch(`/v1/library/questions/${id}/increment-usage`, {});
+    try {
+      await backendPatch(`/v1/library/questions/${id}/increment-usage`, {});
+    } catch {
+      // Some deployments don't implement this endpoint; usage count is best-effort.
+    }
   }
 
   async getTopics(): Promise<string[]> {
@@ -153,17 +196,43 @@ class BackendQuestionBank {
     throw new Error('Clear operation not supported for backend question bank');
   }
 
-  private mapBackendItem(item: BackendQuestionBankItem): QuestionBankItem {
-    questionRevisions.set(item.id, item.revision);
-    return {
-      id: item.id,
-      block: item.block,
-      metadata: {
-        ...item.metadata,
-        difficulty: item.metadata.difficulty as 'easy' | 'medium' | 'hard',
-        author: item.metadata.author ?? '',
-      },
-    };
+  private mapBackendItem(payload: unknown): QuestionBankItem | null {
+    if (this.isLegacyItem(payload)) {
+      questionRevisions.set(payload.id, payload.revision);
+      return {
+        id: payload.id,
+        block: payload.block,
+        metadata: {
+          ...payload.metadata,
+          difficulty: payload.metadata.difficulty as 'easy' | 'medium' | 'hard',
+          author: payload.metadata.author ?? '',
+        },
+      };
+    }
+
+    if (this.isV2Item(payload)) {
+      const block = this.coerceQuestionBlock(payload.blockSnapshot, payload.questionType);
+      questionRevisions.set(payload.id, payload.revision);
+      return {
+        id: payload.id,
+        block,
+        metadata: {
+          id: payload.id,
+          difficulty: this.normalizeDifficulty(payload.difficulty),
+          topic: payload.topic,
+          tags: this.coerceStringArray(payload.tags),
+          usageCount: payload.usageCount,
+          createdAt: payload.createdAt,
+          author: payload.createdBy ?? '',
+        },
+      };
+    }
+
+    logError(new Error('Unexpected backend question payload'), {
+      service: 'questionBankService',
+      kind: 'mapBackendItem',
+    });
+    return null;
   }
 
   private isNotFound(error: unknown): boolean {
@@ -173,6 +242,93 @@ class BackendQuestionBank {
       'statusCode' in error &&
       (error as { statusCode?: unknown }).statusCode === 404
     );
+  }
+
+  private isLegacyItem(value: unknown): value is LegacyBackendQuestionBankItem {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'id' in value &&
+      'block' in value &&
+      'metadata' in value &&
+      'revision' in value
+    );
+  }
+
+  private isV2Item(value: unknown): value is BackendQuestionBankItemV2 {
+    return (
+      typeof value === 'object' &&
+      value !== null &&
+      'id' in value &&
+      'questionType' in value &&
+      'blockSnapshot' in value &&
+      'difficulty' in value &&
+      'topic' in value &&
+      'tags' in value &&
+      'usageCount' in value &&
+      'createdBy' in value &&
+      'createdAt' in value &&
+      'revision' in value
+    );
+  }
+
+  private coerceArray(value: unknown, endpoint: string): unknown[] {
+    if (Array.isArray(value)) return value;
+
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'items' in value &&
+      Array.isArray((value as { items?: unknown }).items)
+    ) {
+      return (value as { items: unknown[] }).items;
+    }
+
+    logError(new Error('Expected array response from backend'), {
+      endpoint,
+      receivedType: value === null ? 'null' : typeof value,
+    });
+    return [];
+  }
+
+  private coerceStringArray(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value.filter((entry): entry is string => typeof entry === 'string');
+    }
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed.length === 0) return [];
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((entry): entry is string => typeof entry === 'string');
+        }
+      } catch {
+        return [];
+      }
+    }
+
+    return [];
+  }
+
+  private normalizeDifficulty(value: string): 'easy' | 'medium' | 'hard' {
+    if (value === 'easy' || value === 'medium' || value === 'hard') {
+      return value;
+    }
+    return 'medium';
+  }
+
+  private coerceQuestionBlock(snapshot: unknown, fallbackType: string): QuestionBlock {
+    if (typeof snapshot === 'object' && snapshot !== null) {
+      const typed = snapshot as Record<string, unknown>;
+      if (typeof typed['type'] !== 'string') {
+        typed['type'] = fallbackType;
+      }
+      return typed as unknown as QuestionBlock;
+    }
+
+    return { type: fallbackType as QuestionBlock['type'], id: `b${Date.now()}` } as QuestionBlock;
   }
 }
 

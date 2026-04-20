@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Search, Filter, Grid, List, Plus } from 'lucide-react';
 import { QuestionBankItem, QuestionBankQuery } from '../../types';
 import { questionBankService } from '../../services/questionBankService';
@@ -15,9 +15,76 @@ export function QuestionBankLibrary({ onSelectQuestion, onClose }: QuestionBankL
   const [query, setQuery] = useState<QuestionBankQuery>({});
   const [searchTerm, setSearchTerm] = useState('');
 
-  const questions = questionBankService.queryQuestions(query);
-  const topics = questionBankService.getTopics();
-  const tags = questionBankService.getTags();
+  const [allQuestions, setAllQuestions] = useState<QuestionBankItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const items = await questionBankService.getAllQuestions();
+        if (!cancelled) {
+          setAllQuestions(items);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load questions.';
+        if (!cancelled) {
+          setLoadError(message);
+          setAllQuestions([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const topics = useMemo(() => {
+    const unique = new Set<string>();
+    allQuestions.forEach((item) => unique.add(item.metadata.topic));
+    return Array.from(unique).sort();
+  }, [allQuestions]);
+
+  const questions = useMemo(() => {
+    let results = allQuestions;
+
+    if (query.type) {
+      results = results.filter((item) => item.block.type === query.type);
+    }
+
+    if (query.difficulty) {
+      results = results.filter((item) => item.metadata.difficulty === query.difficulty);
+    }
+
+    if (query.topic) {
+      results = results.filter((item) => item.metadata.topic === query.topic);
+    }
+
+    if (query.tags && query.tags.length > 0) {
+      results = results.filter((item) => query.tags!.some((tag) => item.metadata.tags.includes(tag)));
+    }
+
+    if (query.searchTerm) {
+      const term = query.searchTerm.toLowerCase();
+      results = results.filter((item) => {
+        const blockJson = JSON.stringify(item.block).toLowerCase();
+        const topicMatch = item.metadata.topic.toLowerCase().includes(term);
+        const tagMatch = item.metadata.tags.some((t) => t.toLowerCase().includes(term));
+        return blockJson.includes(term) || topicMatch || tagMatch;
+      });
+    }
+
+    return results;
+  }, [allQuestions, query]);
 
   const handleSearch = (term: string) => {
     setSearchTerm(term);
@@ -139,7 +206,18 @@ export function QuestionBankLibrary({ onSelectQuestion, onClose }: QuestionBankL
 
       {/* Question List */}
       <div className="flex-1 overflow-y-auto p-6">
-        {questions.length === 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <Search size={48} className="mb-4 text-gray-300" />
+            <p className="text-lg font-medium">Loading questions…</p>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <Search size={48} className="mb-4 text-gray-300" />
+            <p className="text-lg font-medium">Couldn’t load question bank</p>
+            <p className="text-sm">{loadError}</p>
+          </div>
+        ) : questions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <Search size={48} className="mb-4 text-gray-300" />
             <p className="text-lg font-medium">No questions found</p>

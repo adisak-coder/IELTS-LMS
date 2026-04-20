@@ -562,35 +562,61 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     }
 
     const startingSeq = mutationSequenceWatermarks.get(attempt.id) ?? 0;
-    const response = await backendPost<BackendMutationBatchResponse>(
-      `/v1/student/sessions/${attempt.scheduleId}/mutations:batch`,
-      {
-        attemptId: attempt.id,
-        studentKey: attempt.studentKey,
-        clientSessionId: getClientSessionId(attempt.scheduleId, attempt.studentKey),
-        mutations: pendingMutations.map((mutation, index) => ({
-          id: mutation.id,
-          seq: startingSeq + index + 1,
-          timestamp: mutation.timestamp,
-          mutationType: mutation.type,
-          payload: mutation.payload,
-        })),
-      },
-      {
-        headers: buildAttemptAuthorizationHeader(attempt),
-      },
-    );
+    try {
+      const response = await backendPost<BackendMutationBatchResponse>(
+        `/v1/student/sessions/${attempt.scheduleId}/mutations:batch`,
+        {
+          attemptId: attempt.id,
+          studentKey: attempt.studentKey,
+          clientSessionId: getClientSessionId(attempt.scheduleId, attempt.studentKey),
+          mutations: pendingMutations.map((mutation, index) => ({
+            id: mutation.id,
+            seq: startingSeq + index + 1,
+            timestamp: mutation.timestamp,
+            mutationType: mutation.type,
+            payload: mutation.payload,
+          })),
+        },
+        {
+          headers: buildAttemptAuthorizationHeader(attempt),
+        },
+      );
 
-    mutationSequenceWatermarks.set(attempt.id, response.serverAcceptedThroughSeq);
-    storeAttemptCredential(attempt, response.refreshedAttemptCredential);
-    await this.cache.saveAttempt(
-      mergeRecovery(mapBackendStudentAttempt(response.attempt), {
-        lastLocalMutationAt: attempt.recovery.lastLocalMutationAt,
-        lastPersistedAt: attempt.recovery.lastPersistedAt,
-        pendingMutationCount: pendingMutations.length,
-        syncState: attempt.recovery.syncState,
-      }),
-    );
+      mutationSequenceWatermarks.set(attempt.id, response.serverAcceptedThroughSeq);
+      storeAttemptCredential(attempt, response.refreshedAttemptCredential);
+      await this.cache.saveAttempt(
+        mergeRecovery(mapBackendStudentAttempt(response.attempt), {
+          lastLocalMutationAt: attempt.recovery.lastLocalMutationAt,
+          lastPersistedAt: attempt.recovery.lastPersistedAt,
+          pendingMutationCount: pendingMutations.length,
+          syncState: attempt.recovery.syncState,
+        }),
+      );
+    } catch (error) {
+      const statusCode = (error as { statusCode?: number }).statusCode;
+      const message = error instanceof Error ? error.message : '';
+      const isSequenceMismatch =
+        statusCode === 409 &&
+        message.toLowerCase().includes('mutation sequence must continue');
+
+      if (!isSequenceMismatch) {
+        throw error;
+      }
+
+      // Treat sequence mismatch as "server already accepted these mutations" and resync.
+      await this.cache.clearPendingMutations(attempt.id);
+      mutationSequenceWatermarks.delete(attempt.id);
+
+      const session = await backendGet<BackendStudentSessionContext>(
+        `/v1/student/sessions/${attempt.scheduleId}`,
+        { retries: 0 },
+      );
+      if (session.attempt) {
+        const refreshedAttempt = mapBackendStudentAttempt(session.attempt);
+        storeAttemptCredential(refreshedAttempt, session.attemptCredential);
+        await this.cache.saveAttempt(refreshedAttempt);
+      }
+    }
   }
 
   async submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {

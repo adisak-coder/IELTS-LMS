@@ -1,5 +1,5 @@
-import React, { useState, useMemo } from 'react';
-import { QuestionBankItem, QuestionBankQuery, QuestionBlock, QuestionType } from '../../types';
+import React, { useEffect, useMemo, useState } from 'react';
+import { QuestionBankItem, QuestionBlock, QuestionType } from '../../types';
 import { questionBankService } from '../../services/questionBankService';
 import { Search, Filter, Grid, List, BookOpen, Clock, TrendingUp, X } from 'lucide-react';
 
@@ -37,15 +37,67 @@ export function QuestionBankLibrary({ onSelectQuestion, onClose }: QuestionBankL
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'all'>('all');
   const [searchTerm, setSearchTerm] = useState('');
 
-  const allQuestions = useMemo(() => questionBankService.getAllQuestions(), []);
-  const topics = useMemo(() => questionBankService.getTopics(), []);
-  const tags = useMemo(() => questionBankService.getTags(), []);
+  const [allQuestions, setAllQuestions] = useState<QuestionBankItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      setIsLoading(true);
+      setLoadError(null);
+      try {
+        const items = await questionBankService.getAllQuestions();
+        if (!cancelled) {
+          setAllQuestions(items);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Failed to load questions.';
+        if (!cancelled) {
+          setLoadError(message);
+          setAllQuestions([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const topics = useMemo(() => {
+    const unique = new Set<string>();
+    allQuestions.forEach((item) => unique.add(item.metadata.topic));
+    return Array.from(unique).sort();
+  }, [allQuestions]);
 
   const filteredQuestions = useMemo(() => {
-    return questionBankService.queryQuestions({
-      type: selectedType === 'all' ? undefined : selectedType,
-      difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
-      searchTerm: searchTerm || undefined
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+
+    return allQuestions.filter((item) => {
+      if (selectedType !== 'all' && item.block.type !== selectedType) {
+        return false;
+      }
+
+      if (selectedDifficulty !== 'all' && item.metadata.difficulty !== selectedDifficulty) {
+        return false;
+      }
+
+      if (normalizedSearch.length > 0) {
+        const blockJson = JSON.stringify(item.block).toLowerCase();
+        const topicMatch = item.metadata.topic.toLowerCase().includes(normalizedSearch);
+        const tagMatch = item.metadata.tags.some((t) => t.toLowerCase().includes(normalizedSearch));
+        if (!blockJson.includes(normalizedSearch) && !topicMatch && !tagMatch) {
+          return false;
+        }
+      }
+
+      return true;
     });
   }, [allQuestions, selectedType, selectedDifficulty, searchTerm]);
 
@@ -144,7 +196,18 @@ export function QuestionBankLibrary({ onSelectQuestion, onClose }: QuestionBankL
 
       {/* Question List */}
       <div className="flex-1 overflow-auto p-4 bg-gray-50">
-        {filteredQuestions.length === 0 ? (
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <BookOpen size={48} className="mb-4 text-gray-300" />
+            <p className="text-lg font-medium">Loading questions…</p>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+            <BookOpen size={48} className="mb-4 text-gray-300" />
+            <p className="text-lg font-medium">Couldn’t load question bank</p>
+            <p className="text-sm">{loadError}</p>
+          </div>
+        ) : filteredQuestions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">
             <BookOpen size={48} className="mb-4 text-gray-300" />
             <p className="text-lg font-medium">No questions found</p>

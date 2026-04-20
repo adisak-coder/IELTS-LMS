@@ -50,6 +50,20 @@ test.describe('Student LRW workflow', () => {
     await expect(page.getByLabel('Answer for question 1')).toBeVisible({ timeout: 30_000 });
 
     await page.getByLabel('Answer for question 1').fill(manifest.student.expectedAnswer);
+    await expect
+      .poll(async () => {
+        const banner = page.getByRole('banner');
+        const saved = banner.getByText('Saved');
+        if (await saved.isVisible().catch(() => false)) {
+          return 'saved';
+        }
+        const saving = banner.getByText(/Saving|Syncing/i);
+        if (await saving.isVisible().catch(() => false)) {
+          return 'saving';
+        }
+        return 'unknown';
+      }, { timeout: 20_000 })
+      .toBe('saved');
     await page.getByRole('button', { name: 'Finish' }).click({ force: true });
 
     await expect(page.getByText(/Examination Complete!/i)).toBeVisible({ timeout: 30_000 });
