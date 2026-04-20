@@ -82,6 +82,7 @@ impl DeliveryService {
         schedule_id: Uuid,
         req: StudentPrecheckRequest,
     ) -> Result<StudentAttempt, DeliveryError> {
+        let has_device_fingerprint = req.device_fingerprint_hash.is_some();
         let schedule = self.load_schedule(schedule_id).await?;
         let version = self.load_version(schedule.published_version_id.clone()).await?;
         let runtime = self.load_runtime(schedule_id).await?;
@@ -157,7 +158,7 @@ impl DeliveryService {
         .bind(&updated.id)
         .bind(json!({
             "clientSessionId": req.client_session_id,
-            "hasDeviceFingerprint": req.device_fingerprint_hash.is_some()
+            "hasDeviceFingerprint": has_device_fingerprint
         }))
         .execute(&self.pool)
         .await?;
@@ -816,6 +817,8 @@ impl DeliveryService {
             .await?;
         let phase = determine_phase(runtime, false, false);
         let current_module = first_enabled_module(&version.config_snapshot);
+        let phase_for_insert = phase.clone();
+        let current_module_for_insert = current_module.clone();
         let now = Utc::now();
 
         let attempt_id = Uuid::new_v4();
@@ -842,8 +845,8 @@ impl DeliveryService {
         .bind(candidate_id)
         .bind(candidate_name)
         .bind(candidate_email)
-        .bind(phase)
-        .bind(current_module)
+        .bind(phase_for_insert)
+        .bind(current_module_for_insert)
         .bind(json!({}))
         .bind(json!({}))
         .bind(json!({}))
