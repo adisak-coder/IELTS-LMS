@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type BrowserContext, type Page } from '@playwright/test';
 import { readBackendE2EManifest } from './support/backendE2e';
 import {
   completePreCheckIfPresent,
@@ -27,48 +27,43 @@ async function enterRuntimeBackedExam(
 }
 
 async function hasViolation(
-  page: Page,
+  context: BrowserContext,
   scheduleId: string,
-  candidateId: string,
   violationType: string,
 ) {
-  return page.evaluate(
-    ({ scheduleId, candidateId, violationType }) => {
-      const raw = window.localStorage.getItem('ielts_student_attempts_v1');
-      if (!raw) {
-        return false;
-      }
-
-      let attempts: Array<Record<string, unknown>>;
-      try {
-        attempts = JSON.parse(raw) as Array<Record<string, unknown>>;
-      } catch {
-        return false;
-      }
-
-      for (let index = attempts.length - 1; index >= 0; index -= 1) {
-        const attempt = attempts[index];
-        if (!attempt) {
-          continue;
-        }
-
-        const sameSchedule = attempt.scheduleId === scheduleId;
-        const sameCandidate = attempt.candidateId === candidateId;
-        if (!sameSchedule || !sameCandidate) {
-          continue;
-        }
-
-        const violations = Array.isArray(attempt.violations)
-          ? (attempt.violations as Array<Record<string, unknown>>)
-          : [];
-
-        return violations.some((violation) => violation?.type === violationType);
-      }
-
+  try {
+    const response = await context.request.get(`/api/v1/student/sessions/${scheduleId}`);
+    if (!response.ok()) {
       return false;
-    },
-    { scheduleId, candidateId, violationType },
-  );
+    }
+
+    const payload = (await response.json()) as unknown;
+    const data =
+      typeof payload === 'object' && payload !== null && 'data' in payload
+        ? (payload as { data?: unknown }).data
+        : payload;
+    const attempt =
+      typeof data === 'object' && data !== null && 'attempt' in data
+        ? (data as { attempt?: unknown }).attempt
+        : null;
+
+    if (!attempt || typeof attempt !== 'object') {
+      return false;
+    }
+
+    const violationsSnapshot =
+      'violationsSnapshot' in attempt
+        ? (attempt as { violationsSnapshot?: unknown }).violationsSnapshot
+        : null;
+
+    const violations = Array.isArray(violationsSnapshot)
+      ? (violationsSnapshot as Array<Record<string, unknown>>)
+      : [];
+
+    return violations.some((violation) => violation?.type === violationType);
+  } catch {
+    return false;
+  }
 }
 
 test.describe('Student security guardrails (LRW)', () => {
@@ -86,16 +81,15 @@ test.describe('Student security guardrails (LRW)', () => {
 
     await page.evaluate(() => {
       const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
-      document.body.dispatchEvent(event);
+      document.dispatchEvent(event);
     });
 
     await expect
       .poll(
         () =>
           hasViolation(
-            page,
+            context,
             manifest.student.scheduleId,
-            wcode,
             'CLIPBOARD_BLOCKED',
           ),
         { timeout: 10_000 },
@@ -132,9 +126,8 @@ test.describe('Student security guardrails (LRW)', () => {
       .poll(
         () =>
           hasViolation(
-            page,
+            context,
             manifest.student.scheduleId,
-            wcode,
             'CONTEXT_MENU_BLOCKED',
           ),
         { timeout: 10_000 },
@@ -177,9 +170,8 @@ test.describe('Student security guardrails (LRW)', () => {
       .poll(
         () =>
           hasViolation(
-            page,
+            context,
             manifest.student.scheduleId,
-            wcode,
             'TAB_SWITCH',
           ),
         { timeout: 12_000 },
