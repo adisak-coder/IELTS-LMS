@@ -31,42 +31,22 @@ async function hasViolation(
   scheduleId: string,
   violationType: string,
 ) {
-  return page.evaluate(
-    ({ scheduleId, violationType }) => {
-      const raw = window.localStorage.getItem('ielts_student_attempts_v1');
-      if (!raw) {
+  return page.evaluate(async ({ scheduleId, violationType }) => {
+    try {
+      const response = await fetch(`/api/v1/student/sessions/${scheduleId}`);
+      if (!response.ok) {
         return false;
       }
-
-      let attempts: Array<Record<string, unknown>>;
-      try {
-        attempts = JSON.parse(raw) as Array<Record<string, unknown>>;
-      } catch {
+      const json = (await response.json()) as any;
+      const violations = json?.data?.attempt?.violationsSnapshot;
+      if (!Array.isArray(violations)) {
         return false;
       }
-
-      for (let index = attempts.length - 1; index >= 0; index -= 1) {
-        const attempt = attempts[index];
-        if (!attempt) {
-          continue;
-        }
-
-        const sameSchedule = attempt.scheduleId === scheduleId;
-        if (!sameSchedule) {
-          continue;
-        }
-
-        const violations = Array.isArray(attempt.violations)
-          ? (attempt.violations as Array<Record<string, unknown>>)
-          : [];
-
-        return violations.some((violation) => violation?.type === violationType);
-      }
-
+      return violations.some((violation: any) => violation?.type === violationType);
+    } catch {
       return false;
-    },
-    { scheduleId, violationType },
-  );
+    }
+  }, { scheduleId, violationType });
 }
 
 test.describe('Student security guardrails (LRW)', () => {
@@ -81,10 +61,17 @@ test.describe('Student security guardrails (LRW)', () => {
     const page = await context.newPage();
 
     await enterRuntimeBackedExam(page, manifest.student.scheduleId, wcode);
+    await page.waitForTimeout(1_500);
 
+    const answerField = page.getByLabel('Answer for question 1');
+    await answerField.click();
     await page.evaluate(() => {
+      const target = document.activeElement;
+      if (!target) {
+        return;
+      }
       const event = new ClipboardEvent('paste', { bubbles: true, cancelable: true });
-      document.dispatchEvent(event);
+      target.dispatchEvent(event);
     });
 
     await expect
@@ -111,6 +98,7 @@ test.describe('Student security guardrails (LRW)', () => {
     const page = await context.newPage();
 
     await enterRuntimeBackedExam(page, manifest.student.scheduleId, wcode);
+    await page.waitForTimeout(1_500);
 
     const answerField = page.getByLabel('Answer for question 1');
 
@@ -149,6 +137,7 @@ test.describe('Student security guardrails (LRW)', () => {
     const page = await context.newPage();
 
     await enterRuntimeBackedExam(page, manifest.student.scheduleId, wcode);
+    await page.waitForTimeout(1_500);
 
     // Headless browsers don't always emit real tab-switch signals consistently.
     // Dispatch a `blur` event directly to trigger the proctoring rule.

@@ -190,7 +190,8 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
     };
 
     const handleCopy = (event: ClipboardEvent) => {
-      const target = event.target as HTMLElement;
+      const target = event.target;
+      const targetElement = target instanceof HTMLElement ? target : null;
       
       // Log paste attempts with metadata
       if (event.type === 'paste') {
@@ -198,9 +199,9 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
           sessionId,
           'PASTE_BLOCKED',
           {
-            targetName: target.tagName || 'unknown',
-            targetType: target.getAttribute('type') || target.tagName,
-            isContentEditable: target.isContentEditable,
+            targetName: targetElement?.tagName ?? 'unknown',
+            targetType: targetElement?.getAttribute('type') ?? targetElement?.tagName ?? 'unknown',
+            isContentEditable: targetElement?.isContentEditable ?? false,
           },
           studentId,
         );

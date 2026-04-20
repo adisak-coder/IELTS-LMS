@@ -173,6 +173,41 @@ describe('StudentAttemptProvider', () => {
     expect(result.current.state.lastPersistedAt).not.toBeNull();
   });
 
+  it('queues violation mutations with the full violations snapshot expected by the backend', async () => {
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      result.current.actions.persistViolation({
+        id: 'violation-1',
+        type: 'TAB_SWITCH',
+        severity: 'medium',
+        timestamp: '2026-01-01T00:00:00.000Z',
+        description: 'Tab switching detected',
+      });
+    });
+
+    await waitFor(() => {
+      expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalled();
+    });
+
+    const pendingMutations = vi.mocked(studentAttemptRepository.savePendingMutations).mock.calls.at(-1)?.[1];
+    expect(pendingMutations).toHaveLength(1);
+    expect(pendingMutations?.[0]?.type).toBe('violation');
+    expect(pendingMutations?.[0]?.payload).toMatchObject({
+      violationId: 'violation-1',
+      violationType: 'TAB_SWITCH',
+      violations: [
+        {
+          id: 'violation-1',
+          type: 'TAB_SWITCH',
+          severity: 'medium',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          description: 'Tab switching detected',
+        },
+      ],
+    });
+  });
+
   it('reloads durable pending mutations on refresh', async () => {
     const pendingMutation: StudentAttemptMutation = {
       id: 'mutation-1',

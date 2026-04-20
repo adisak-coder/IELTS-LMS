@@ -82,6 +82,7 @@ export interface StudentAttempt {
     lastLocalMutationAt: string | null;
     lastPersistedAt: string | null;
     pendingMutationCount: number;
+    serverAcceptedThroughSeq: number;
     syncState: AttemptSyncState;
   };
   createdAt: string;

@@ -260,6 +260,7 @@ function normalizeAttempt(attempt: StudentAttempt): StudentAttempt {
       lastLocalMutationAt: attempt.recovery?.lastLocalMutationAt ?? null,
       lastPersistedAt: attempt.recovery?.lastPersistedAt ?? null,
       pendingMutationCount: attempt.recovery?.pendingMutationCount ?? 0,
+      serverAcceptedThroughSeq: attempt.recovery?.serverAcceptedThroughSeq ?? 0,
       syncState: attempt.recovery?.syncState ?? 'idle',
     },
   };
@@ -316,11 +317,20 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
       lastLocalMutationAt: payload.recovery?.lastLocalMutationAt ?? null,
       lastPersistedAt: payload.recovery?.lastPersistedAt ?? null,
       pendingMutationCount: payload.recovery?.pendingMutationCount ?? 0,
+      serverAcceptedThroughSeq: payload.recovery?.serverAcceptedThroughSeq ?? 0,
       syncState: payload.recovery?.syncState ?? 'idle',
     },
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
   });
+}
+
+function primeMutationSequenceWatermark(attempt: StudentAttempt): void {
+  const backendSeq = attempt.recovery.serverAcceptedThroughSeq ?? 0;
+  const current = mutationSequenceWatermarks.get(attempt.id);
+  if (current === undefined || backendSeq > current) {
+    mutationSequenceWatermarks.set(attempt.id, backendSeq);
+  }
 }
 
 export function hasAttemptCredential(scheduleId: string, attemptId: string): boolean {
@@ -525,6 +535,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
   private async cacheAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
     await this.cache.saveAttempt(attempt);
+    primeMutationSequenceWatermark(attempt);
     return attempt;
   }
 
@@ -551,6 +562,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
   async saveAttempt(attempt: StudentAttempt): Promise<void> {
     await this.cache.saveAttempt(attempt);
+    primeMutationSequenceWatermark(attempt);
 
     const pendingMutations = await this.cache.getPendingMutations(attempt.id);
     if (pendingMutations.length === 0) {
@@ -589,6 +601,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
           lastLocalMutationAt: attempt.recovery.lastLocalMutationAt,
           lastPersistedAt: attempt.recovery.lastPersistedAt,
           pendingMutationCount: pendingMutations.length,
+          serverAcceptedThroughSeq: response.serverAcceptedThroughSeq,
           syncState: attempt.recovery.syncState,
         }),
       );
@@ -614,6 +627,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       if (session.attempt) {
         const refreshedAttempt = mapBackendStudentAttempt(session.attempt);
         storeAttemptCredential(refreshedAttempt, session.attemptCredential);
+        primeMutationSequenceWatermark(refreshedAttempt);
         await this.cache.saveAttempt(refreshedAttempt);
       }
     }
@@ -702,7 +716,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     );
 
     storeAttemptCredential(attempt, response.refreshedAttemptCredential);
-    await this.cache.saveAttempt(mapBackendStudentAttempt(response.attempt));
+    await this.cacheAttempt(mapBackendStudentAttempt(response.attempt));
   }
 
   async getHeartbeatEvents(attemptId: string): Promise<StudentHeartbeatEvent[]> {

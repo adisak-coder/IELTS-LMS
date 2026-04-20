@@ -490,6 +490,7 @@ export function StudentAttemptProvider({
       {
         violationId: violation.id,
         violationType: violation.type,
+        violations: nextViolations,
       },
     );
   }, [applyPatch]);
