@@ -112,11 +112,16 @@ impl GradingService {
                 .await?
                 .ok_or(GradingError::NotFound)?;
 
-        // Check authorization: user must have access to this schedule
-        // Note: GradingSession doesn't have organization_id field, using schedule_id directly
-        if !AuthorizationService::can_grade_submissions(ctx, session.schedule_id.clone(), session.schedule_id.clone()) {
-            return Err(GradingError::NotFound);
-        }
+        let schedule = sqlx::query_as::<_, ExamSchedule>("SELECT * FROM exam_schedules WHERE id = ?")
+            .bind(&session.schedule_id)
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(GradingError::NotFound)?;
+        Self::ensure_can_grade_schedule(
+            ctx,
+            &session.schedule_id,
+            schedule.organization_id.as_deref(),
+        )?;
 
         let submissions = sqlx::query_as::<_, StudentSubmission>(
             "SELECT * FROM student_submissions WHERE schedule_id = ? ORDER BY submitted_at DESC",
@@ -1018,6 +1023,7 @@ impl GradingService {
         .await?;
 
         for attempt in attempts {
+            let attempt_id = attempt.id.to_string();
             let submitted_at = attempt.submitted_at.unwrap_or_else(Utc::now);
             let section_statuses = json!({
                 "listening": "auto_graded",
@@ -1026,7 +1032,14 @@ impl GradingService {
                 "speaking": "pending"
             });
 
-            let submission_id = Uuid::new_v4().hyphenated();
+            let existing_submission_id = sqlx::query_scalar::<_, String>(
+                "SELECT id FROM student_submissions WHERE attempt_id = ?",
+            )
+            .bind(&attempt_id)
+            .fetch_optional(&self.pool)
+            .await?;
+            let submission_id = existing_submission_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
             sqlx::query(
                 r#"
                 INSERT INTO student_submissions (
@@ -1040,12 +1053,11 @@ impl GradingService {
                     student_name = VALUES(student_name),
                     student_email = VALUES(student_email),
                     cohort_name = VALUES(cohort_name),
-                    section_statuses = VALUES(section_statuses),
                     updated_at = VALUES(updated_at)
                 "#,
             )
-            .bind(submission_id)
-            .bind(attempt.id)
+            .bind(&submission_id)
+            .bind(&attempt_id)
             .bind(attempt.schedule_id)
             .bind(attempt.exam_id)
             .bind(attempt.published_version_id)
@@ -1058,10 +1070,12 @@ impl GradingService {
             .execute(&self.pool)
             .await?;
 
-            let submission = sqlx::query_as::<_, StudentSubmission>("SELECT * FROM student_submissions WHERE id = ?")
-                .bind(submission_id)
-                .fetch_one(&self.pool)
-                .await?;
+            let submission = sqlx::query_as::<_, StudentSubmission>(
+                "SELECT * FROM student_submissions WHERE attempt_id = ?",
+            )
+            .bind(&attempt_id)
+            .fetch_one(&self.pool)
+            .await?;
 
             self.ensure_section_submissions(&submission, &attempt.final_submission)
                 .await?;
@@ -1107,17 +1121,28 @@ impl GradingService {
                 SectionGradingStatus::Pending,
             ),
         ] {
-            let section_id = Uuid::new_v4().hyphenated();
+            let existing_section_id = sqlx::query_scalar::<_, String>(
+                "SELECT id FROM section_submissions WHERE submission_id = ? AND section = ?",
+            )
+            .bind(&submission.id)
+            .bind(section)
+            .fetch_optional(&self.pool)
+            .await?;
+            let section_id = existing_section_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+
             sqlx::query(
                 r#"
                 INSERT INTO section_submissions (
                     id, submission_id, section, answers, auto_grading_results, grading_status, submitted_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE answers = VALUES(answers)
+                ON DUPLICATE KEY UPDATE
+                    answers = VALUES(answers),
+                    auto_grading_results = COALESCE(auto_grading_results, VALUES(auto_grading_results)),
+                    submitted_at = VALUES(submitted_at)
                 "#,
             )
-            .bind(section_id)
+            .bind(&section_id)
             .bind(&submission.id)
             .bind(section)
             .bind(&payload)
@@ -1134,6 +1159,24 @@ impl GradingService {
             if section == "writing" {
                 let tasks = writing_task_entries(&writing_answers);
                 for (task_id, value) in tasks {
+                    let task_label = value
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&task_id);
+                    let prompt = value
+                        .get("prompt")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let student_text = value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let word_count = value
+                        .get("wordCount")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0)
+                        .clamp(0, i32::MAX as i64) as i32;
+
                     sqlx::query(
                         r#"
                         INSERT INTO writing_task_submissions (
@@ -1145,18 +1188,17 @@ impl GradingService {
                             task_label = VALUES(task_label),
                             prompt = VALUES(prompt),
                             student_text = VALUES(student_text),
-                            word_count = VALUES(word_count),
-                            annotations = VALUES(annotations)
+                            word_count = VALUES(word_count)
                         "#,
                     )
                     .bind(Uuid::new_v4().to_string())
-                    .bind(section_id)
+                    .bind(&section_id)
                     .bind(&submission.id)
                     .bind(&task_id)
-                    .bind(value.get("label"))
-                    .bind(value.get("prompt"))
-                    .bind(value.get("text"))
-                    .bind(value.get("wordCount"))
+                    .bind(task_label)
+                    .bind(prompt)
+                    .bind(student_text)
+                    .bind(word_count)
                     .bind(json!([]))
                     .bind(SectionGradingStatus::NeedsReview)
                     .bind(submitted_at)
@@ -1272,9 +1314,13 @@ fn writing_task_array(writing_answers: &Value) -> Value {
         writing_task_entries(writing_answers)
             .into_iter()
             .map(|(task_id, value)| {
+                let text_value = value
+                    .get("text")
+                    .cloned()
+                    .unwrap_or_else(|| value.clone());
                 json!({
                     "taskId": task_id,
-                    "text": value,
+                    "text": text_value,
                     "wordCount": word_count(&value)
                 })
             })
@@ -1283,28 +1329,110 @@ fn writing_task_array(writing_answers: &Value) -> Value {
 }
 
 fn writing_task_entries(writing_answers: &Value) -> Vec<(String, Value)> {
-    writing_answers
-        .as_object()
-        .map(|items| {
-            items
-                .iter()
-                .map(|(task_id, value)| {
-                    (
-                        task_id.clone(),
-                        value.clone(),
-                    )
-                })
-                .collect()
+    let Some(items) = writing_answers.as_object() else {
+        return vec![];
+    };
+
+    items
+        .iter()
+        .map(|(task_id, value)| {
+            let normalized = match value {
+                Value::Null => json!({
+                    "label": task_id,
+                    "prompt": "",
+                    "text": "",
+                    "wordCount": 0
+                }),
+                Value::String(text) => json!({
+                    "label": task_id,
+                    "prompt": "",
+                    "text": text,
+                    "wordCount": text.split_whitespace().count()
+                }),
+                Value::Object(_) => {
+                    let label = value
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .unwrap_or(task_id);
+                    let prompt = value
+                        .get("prompt")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let text = value
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let word_count = value
+                        .get("wordCount")
+                        .and_then(Value::as_i64)
+                        .unwrap_or_else(|| text.split_whitespace().count() as i64);
+                    json!({
+                        "label": label,
+                        "prompt": prompt,
+                        "text": text,
+                        "wordCount": word_count
+                    })
+                }
+                _ => json!({
+                    "label": task_id,
+                    "prompt": "",
+                    "text": "",
+                    "wordCount": 0
+                }),
+            };
+
+            (task_id.clone(), normalized)
         })
-        .unwrap_or_default()
+        .collect()
 }
 
 fn word_count(value: &Value) -> i32 {
-    value
-        .get("text")
-        .and_then(|v| v.as_str())
-        .map(|s| s.split_whitespace().count() as i32)
-        .unwrap_or(0)
+    match value {
+        Value::String(text) => text.split_whitespace().count() as i32,
+        _ => value
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.split_whitespace().count() as i32)
+            .unwrap_or(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn writing_task_array_supports_string_writing_answers() {
+        let writing_answers = json!({
+            "task1": "Hello world"
+        });
+
+        let tasks = writing_task_array(&writing_answers);
+        assert_eq!(
+            tasks,
+            json!([
+                {"taskId": "task1", "text": "Hello world", "wordCount": 2}
+            ])
+        );
+    }
+
+    #[test]
+    fn writing_task_entries_normalizes_string_payloads_for_downstream_inserts() {
+        let writing_answers = json!({
+            "task1": "Hello world"
+        });
+
+        let entries = writing_task_entries(&writing_answers);
+        assert_eq!(entries.len(), 1);
+
+        let (task_id, value) = &entries[0];
+        assert_eq!(task_id, "task1");
+        assert_eq!(value.get("text").and_then(Value::as_str), Some("Hello world"));
+        assert_eq!(value.get("label").and_then(Value::as_str), Some("task1"));
+        assert_eq!(value.get("prompt").and_then(Value::as_str), Some(""));
+        assert_eq!(value.get("wordCount").and_then(Value::as_i64), Some(2));
+    }
 }
 
 fn build_section_bands(section_drafts: &Value) -> Value {

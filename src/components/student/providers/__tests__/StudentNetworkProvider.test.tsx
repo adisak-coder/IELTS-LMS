@@ -106,6 +106,20 @@ function createAttemptSnapshot(): StudentAttempt {
 describe('StudentNetworkProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-02T00:00:00.000Z',
+        },
+      ]),
+    );
+
     vi.spyOn(studentAttemptRepository, 'saveAttempt').mockResolvedValue();
     vi.spyOn(studentAttemptRepository, 'savePendingMutations').mockResolvedValue();
     vi.spyOn(studentAttemptRepository, 'clearPendingMutations').mockResolvedValue();

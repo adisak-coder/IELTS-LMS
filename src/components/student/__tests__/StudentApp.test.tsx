@@ -79,6 +79,19 @@ describe('StudentApp runtime-backed mode', () => {
 
   it('submits the runtime-backed attempt through the repository when Finish is clicked', async () => {
     const user = userEvent.setup();
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-02T00:00:00.000Z',
+        },
+      ]),
+    );
+
     const submitState: ExamState = {
       title: 'Submit Exam',
       type: 'Academic',
@@ -213,6 +226,8 @@ describe('StudentApp runtime-backed mode', () => {
     const submitAttempt = vi
       .spyOn(studentAttemptRepository as any, 'submitAttempt')
       .mockResolvedValue(submittedAttempt);
+    vi.spyOn(studentAttemptRepository as any, 'saveAttempt').mockResolvedValue();
+    vi.spyOn(studentAttemptRepository as any, 'clearPendingMutations').mockResolvedValue();
 
     const attemptSnapshot: StudentAttempt = {
       id: 'attempt-1',

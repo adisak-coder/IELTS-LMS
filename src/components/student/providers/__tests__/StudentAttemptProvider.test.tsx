@@ -97,9 +97,26 @@ describe('StudentAttemptProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-02T00:00:00.000Z',
+        },
+      ]),
+    );
+
     vi.spyOn(studentAttemptRepository, 'saveAttempt').mockResolvedValue();
     vi.spyOn(studentAttemptRepository, 'savePendingMutations').mockResolvedValue();
     vi.spyOn(studentAttemptRepository, 'clearPendingMutations').mockResolvedValue();
+    vi.spyOn(studentAttemptRepository, 'submitAttempt').mockResolvedValue({
+      ...createAttemptSnapshot(),
+      phase: 'post-exam',
+    });
     vi.spyOn(studentAttemptRepository, 'saveHeartbeatEvent').mockResolvedValue();
     vi.spyOn(studentAttemptRepository, 'getHeartbeatEvents').mockResolvedValue([]);
     vi.spyOn(studentAttemptRepository, 'getPendingMutations').mockResolvedValue([]);
@@ -206,6 +223,114 @@ describe('StudentAttemptProvider', () => {
         },
       ],
     });
+  });
+
+  it('flushes pending mutations before submitting the attempt', async () => {
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'A');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
+    });
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+
+    await act(async () => {
+      await result.current.actions.submitAttempt();
+    });
+
+    expect(studentAttemptRepository.saveAttempt).toHaveBeenCalled();
+    expect(studentAttemptRepository.submitAttempt).toHaveBeenCalled();
+
+    const saveOrder = vi
+      .mocked(studentAttemptRepository.saveAttempt)
+      .mock.invocationCallOrder[0];
+    const submitOrder = vi
+      .mocked(studentAttemptRepository.submitAttempt)
+      .mock.invocationCallOrder[0];
+    expect(saveOrder).toBeLessThan(submitOrder);
+  });
+
+  it('does not submit the attempt when flushing pending mutations fails', async () => {
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+    vi.mocked(studentAttemptRepository.saveAttempt).mockRejectedValueOnce(new Error('persist failed'));
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'A');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
+    });
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+
+    await act(async () => {
+      await result.current.actions.submitAttempt();
+    });
+
+    expect(studentAttemptRepository.submitAttempt).not.toHaveBeenCalled();
+  });
+
+  it('does not drop pending mutations when the attempt credential is missing', async () => {
+    window.sessionStorage.clear();
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'A');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
+    });
+
+    let flushed = true;
+    await act(async () => {
+      flushed = await result.current.actions.flushPending();
+    });
+
+    expect(flushed).toBe(false);
+    expect(studentAttemptRepository.saveAttempt).not.toHaveBeenCalled();
+    expect(studentAttemptRepository.clearPendingMutations).not.toHaveBeenCalled();
+    expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
+    expect(result.current.state.attempt?.recovery.syncState).toBe('error');
   });
 
   it('reloads durable pending mutations on refresh', async () => {

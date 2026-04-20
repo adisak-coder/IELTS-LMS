@@ -10,7 +10,11 @@ import React, {
 } from 'react';
 import { backendPost } from '@services/backendBridge';
 import { buildStudentHeartbeatEvent } from '@services/studentIntegrityService';
-import { mapBackendStudentAttempt, studentAttemptRepository } from '@services/studentAttemptRepository';
+import {
+  hasAttemptCredential,
+  mapBackendStudentAttempt,
+  studentAttemptRepository,
+} from '@services/studentAttemptRepository';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
 import type { ModuleType, Violation } from '../../../types';
 import type {
@@ -263,61 +267,72 @@ export function StudentAttemptProvider({
     }
 
     const promise = (async () => {
-    const currentAttempt = attemptRef.current;
-    if (!currentAttempt) {
-      return true;
-    }
+      const currentAttempt = attemptRef.current;
+      if (!currentAttempt) {
+        return true;
+      }
 
-    if (!navigator.onLine) {
-      const offlineAttempt = mergeAttempt(currentAttempt, {
+      if (!navigator.onLine) {
+        const offlineAttempt = mergeAttempt(currentAttempt, {
+          recovery: {
+            syncState: 'offline',
+            pendingMutationCount: pendingMutationsRef.current.length,
+          },
+        });
+        syncAttemptState(offlineAttempt);
+        return false;
+      }
+
+      if (pendingMutationsRef.current.length === 0) {
+        setRuntimeAttemptSyncState(currentAttempt.recovery.syncState);
+        return true;
+      }
+
+      if (!hasAttemptCredential(currentAttempt.scheduleId, currentAttempt.id)) {
+        const erroredAttempt = mergeAttempt(currentAttempt, {
+          recovery: {
+            syncState: 'error',
+            pendingMutationCount: pendingMutationsRef.current.length,
+          },
+        });
+        syncAttemptState(erroredAttempt);
+        return false;
+      }
+
+      const savingAttempt = mergeAttempt(currentAttempt, {
         recovery: {
-          syncState: 'offline',
+          syncState: 'saving',
           pendingMutationCount: pendingMutationsRef.current.length,
         },
       });
-      syncAttemptState(offlineAttempt);
-      return false;
-    }
+      syncAttemptState(savingAttempt);
 
-    if (pendingMutationsRef.current.length === 0) {
-      setRuntimeAttemptSyncState(currentAttempt.recovery.syncState);
-      return true;
-    }
+      try {
+        const persistedAt = new Date().toISOString();
+        const persistedAttempt = mergeAttempt(savingAttempt, {
+          recovery: {
+            lastPersistedAt: persistedAt,
+            pendingMutationCount: 0,
+            syncState: 'saved',
+          },
+        });
 
-    const savingAttempt = mergeAttempt(currentAttempt, {
-      recovery: {
-        syncState: 'saving',
-        pendingMutationCount: pendingMutationsRef.current.length,
-      },
-    });
-    syncAttemptState(savingAttempt);
-
-    try {
-      const persistedAt = new Date().toISOString();
-      const persistedAttempt = mergeAttempt(savingAttempt, {
-        recovery: {
-          lastPersistedAt: persistedAt,
-          pendingMutationCount: 0,
-          syncState: 'saved',
-        },
-      });
-
-      await studentAttemptRepository.saveAttempt(persistedAttempt);
-      await studentAttemptRepository.clearPendingMutations(persistedAttempt.id);
-      pendingMutationsRef.current = [];
-      setPendingMutationCount(0);
-      syncAttemptState(persistedAttempt);
-      return true;
-    } catch {
-      const erroredAttempt = mergeAttempt(savingAttempt, {
-        recovery: {
-          syncState: navigator.onLine ? 'error' : 'offline',
-          pendingMutationCount: pendingMutationsRef.current.length,
-        },
-      });
-      syncAttemptState(erroredAttempt);
-      return false;
-    }
+        await studentAttemptRepository.saveAttempt(persistedAttempt);
+        await studentAttemptRepository.clearPendingMutations(persistedAttempt.id);
+        pendingMutationsRef.current = [];
+        setPendingMutationCount(0);
+        syncAttemptState(persistedAttempt);
+        return true;
+      } catch {
+        const erroredAttempt = mergeAttempt(savingAttempt, {
+          recovery: {
+            syncState: navigator.onLine ? 'error' : 'offline',
+            pendingMutationCount: pendingMutationsRef.current.length,
+          },
+        });
+        syncAttemptState(erroredAttempt);
+        return false;
+      }
     })();
 
     flushInFlightRef.current = promise;
@@ -686,10 +701,16 @@ export function StudentAttemptProvider({
       return;
     }
 
-    const submittedAttempt = await studentAttemptRepository.submitAttempt(currentAttempt);
+    const flushed = await flushPending();
+    if (!flushed) {
+      return;
+    }
+
+    const latestAttempt = attemptRef.current ?? currentAttempt;
+    const submittedAttempt = await studentAttemptRepository.submitAttempt(latestAttempt);
     runtimeActions.setPhase('post-exam');
     syncAttemptState(submittedAttempt);
-  }, [runtimeActions, syncAttemptState]);
+  }, [flushPending, runtimeActions, syncAttemptState]);
 
   const setDeviceFingerprintHash = useCallback(async (hash: string) => {
     await applyPatch(
