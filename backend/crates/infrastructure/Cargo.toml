@@ -43,3 +43,7 @@ path = "../../tests/integration/idempotency_smoke.rs"
 [[test]]
 name = "outbox_smoke"
 path = "../../tests/integration/outbox_smoke.rs"
+
+[[test]]
+name = "grading_enum_decode"
+path = "../../tests/integration/grading_enum_decode.rs"

@@ -19,7 +19,8 @@
     "build-storybook": "storybook build",
     "playwright": "playwright test",
     "playwright:ui": "playwright test --ui",
-    "playwright:debug": "playwright test --debug"
+    "playwright:debug": "playwright test --debug",
+    "e2e:prod-smoke": "playwright test --config playwright.prod-smoke.config.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
