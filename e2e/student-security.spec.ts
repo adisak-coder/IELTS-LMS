@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { readBackendE2EManifest } from './support/backendE2e';
 import {
   completePreCheckIfPresent,
@@ -27,43 +27,46 @@ async function enterRuntimeBackedExam(
 }
 
 async function hasViolation(
-  context: BrowserContext,
+  page: Page,
   scheduleId: string,
   violationType: string,
 ) {
-  try {
-    const response = await context.request.get(`/api/v1/student/sessions/${scheduleId}`);
-    if (!response.ok()) {
+  return page.evaluate(
+    ({ scheduleId, violationType }) => {
+      const raw = window.localStorage.getItem('ielts_student_attempts_v1');
+      if (!raw) {
+        return false;
+      }
+
+      let attempts: Array<Record<string, unknown>>;
+      try {
+        attempts = JSON.parse(raw) as Array<Record<string, unknown>>;
+      } catch {
+        return false;
+      }
+
+      for (let index = attempts.length - 1; index >= 0; index -= 1) {
+        const attempt = attempts[index];
+        if (!attempt) {
+          continue;
+        }
+
+        const sameSchedule = attempt.scheduleId === scheduleId;
+        if (!sameSchedule) {
+          continue;
+        }
+
+        const violations = Array.isArray(attempt.violations)
+          ? (attempt.violations as Array<Record<string, unknown>>)
+          : [];
+
+        return violations.some((violation) => violation?.type === violationType);
+      }
+
       return false;
-    }
-
-    const payload = (await response.json()) as unknown;
-    const data =
-      typeof payload === 'object' && payload !== null && 'data' in payload
-        ? (payload as { data?: unknown }).data
-        : payload;
-    const attempt =
-      typeof data === 'object' && data !== null && 'attempt' in data
-        ? (data as { attempt?: unknown }).attempt
-        : null;
-
-    if (!attempt || typeof attempt !== 'object') {
-      return false;
-    }
-
-    const violationsSnapshot =
-      'violationsSnapshot' in attempt
-        ? (attempt as { violationsSnapshot?: unknown }).violationsSnapshot
-        : null;
-
-    const violations = Array.isArray(violationsSnapshot)
-      ? (violationsSnapshot as Array<Record<string, unknown>>)
-      : [];
-
-    return violations.some((violation) => violation?.type === violationType);
-  } catch {
-    return false;
-  }
+    },
+    { scheduleId, violationType },
+  );
 }
 
 test.describe('Student security guardrails (LRW)', () => {
@@ -88,7 +91,7 @@ test.describe('Student security guardrails (LRW)', () => {
       .poll(
         () =>
           hasViolation(
-            context,
+            page,
             manifest.student.scheduleId,
             'CLIPBOARD_BLOCKED',
           ),
@@ -126,7 +129,7 @@ test.describe('Student security guardrails (LRW)', () => {
       .poll(
         () =>
           hasViolation(
-            context,
+            page,
             manifest.student.scheduleId,
             'CONTEXT_MENU_BLOCKED',
           ),
@@ -170,7 +173,7 @@ test.describe('Student security guardrails (LRW)', () => {
       .poll(
         () =>
           hasViolation(
-            context,
+            page,
             manifest.student.scheduleId,
             'TAB_SWITCH',
           ),
