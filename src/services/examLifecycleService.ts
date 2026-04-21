@@ -1754,6 +1754,49 @@ export class ExamLifecycleService {
   }
 
   /**
+   * Bulk delete multiple exams
+   * Returns per-item success/failure with reasons
+   */
+  async bulkDelete(
+    examIds: string[],
+    actor: string = 'System'
+  ): Promise<BulkOperationResult> {
+    const results: BulkOperationResult['results'] = [];
+
+    for (const examId of examIds) {
+      const exam = await this.repository.getExamById(examId);
+      if (!exam) {
+        results.push({
+          examId,
+          examTitle: 'Unknown',
+          success: false,
+          error: 'Exam not found',
+        });
+        continue;
+      }
+
+      const result = await this.deleteExam(examId, actor);
+      results.push({
+        examId,
+        examTitle: exam.title,
+        success: result.success,
+        error: result.error,
+      });
+    }
+
+    const succeeded = results.filter((r) => r.success).length;
+    const failed = results.filter((r) => !r.success).length;
+
+    return {
+      success: succeeded > 0,
+      total: examIds.length,
+      succeeded,
+      failed,
+      results,
+    };
+  }
+
+  /**
    * Bulk duplicate (clone) multiple exams
    * Returns per-item success/failure with reasons
    */

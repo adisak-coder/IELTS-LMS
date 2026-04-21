@@ -185,7 +185,8 @@ export function AdminExams({
   onBulkUnpublish,
   onBulkArchive,
   onBulkDuplicate,
-  onBulkExport
+  onBulkExport,
+  onBulkDelete
 }: AdminExamsProps) {
   // View state
   const [view, setView] = useState<'grid' | 'list'>('list');
@@ -392,6 +393,20 @@ export function AdminExams({
     if (!onBulkExport || selectedExamIds.size === 0) return;
     
     const result = await onBulkExport(Array.from(selectedExamIds));
+    setBulkOperationResult(result);
+    setShowBulkResult(true);
+    clearSelection();
+  };
+
+  const handleBulkDelete = async () => {
+    if (!onBulkDelete || selectedExamIds.size === 0) return;
+
+    const count = selectedExamIds.size;
+    if (!confirm(`Delete ${count} exam${count !== 1 ? 's' : ''}? This cannot be undone.`)) {
+      return;
+    }
+
+    const result = await onBulkDelete(Array.from(selectedExamIds));
     setBulkOperationResult(result);
     setShowBulkResult(true);
     clearSelection();
@@ -648,6 +663,7 @@ export function AdminExams({
           onBulkPublish={onBulkPublish ? handleBulkPublish : undefined}
           onBulkUnpublish={onBulkUnpublish ? handleBulkUnpublish : undefined}
           onBulkArchive={onBulkArchive ? handleBulkArchive : undefined}
+          onBulkDelete={onBulkDelete ? handleBulkDelete : undefined}
           onBulkDuplicate={onBulkDuplicate ? handleBulkDuplicate : undefined}
           onBulkExport={onBulkExport ? handleBulkExport : undefined}
         />

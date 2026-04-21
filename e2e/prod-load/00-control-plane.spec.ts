@@ -7,7 +7,12 @@ import {
   resolveProdCredsPath,
   resolveProdRuntimePath,
 } from '../support/prodData';
-import { computeScenarioAssignments, pollUntil, resolveProdRunContext } from '../support/prodOrchestration';
+import {
+  applyProdRosterOverrides,
+  computeScenarioAssignments,
+  pollUntil,
+  resolveProdRunContext,
+} from '../support/prodOrchestration';
 import { bootstrapExamAndSchedule, writeProdRuntimeOverride } from '../support/prodBootstrap';
 
 function buildRunId(): string {
@@ -190,14 +195,48 @@ async function waitForCheckedIn(page: Page, scheduleId: string, threshold: numbe
   );
 }
 
-async function tryClickIfEnabled(page: Page, name: string) {
-  const button = page.getByRole('button', { name });
+async function tryClickIfEnabled(page: Page, name: string | RegExp) {
+  const button = page.getByRole('button', { name }).first();
   const visible = await button.isVisible().catch(() => false);
   if (!visible) return false;
   const enabled = await button.isEnabled().catch(() => false);
   if (!enabled) return false;
   await button.click().catch(() => button.click({ force: true }));
   return true;
+}
+
+async function runtimeStatus(page: Page, scheduleId: string): Promise<string> {
+  const json = await proctorDetail(page, scheduleId);
+  return String(json?.data?.runtime?.status ?? '');
+}
+
+async function startCohortIfNotStarted(
+  page: Page,
+  scheduleId: string,
+  outputPath: (name: string) => string,
+) {
+  const startExam = page.getByRole('button', { name: /Start Exam/i }).first();
+  const already = await runtimeStatus(page, scheduleId).catch(() => '');
+  if (already === 'live' || already === 'paused' || already === 'completed') return;
+
+  await pollUntil(
+    async () => {
+      const status = await runtimeStatus(page, scheduleId).catch(() => '');
+      if (status === 'live' || status === 'paused' || status === 'completed') return status;
+
+      const visible = await startExam.isVisible().catch(() => false);
+      if (!visible) throw new Error('Start Exam button not visible');
+      const enabled = await startExam.isEnabled().catch(() => false);
+      if (!enabled) throw new Error('Start Exam button disabled');
+      return 'ready';
+    },
+    { timeoutMs: 10 * 60_000, intervalMs: 2000, description: 'wait Start Exam enabled or runtime started' },
+  ).catch(async (error) => {
+    await page.screenshot({ path: outputPath('start-exam-not-ready.png'), fullPage: true }).catch(() => {});
+    throw error;
+  });
+
+  await startExam.click().catch(() => startExam.click({ force: true }));
 }
 
 async function findStudentRow(page: Page, wcode: string) {
@@ -288,8 +327,19 @@ async function proctorAction(
 }
 
 async function createProctorPages(browser: Browser, creds: ReturnType<typeof readProdCreds>) {
+  const useEditorAsProctor = process.env['E2E_PROD_USE_EDITOR_AS_PROCTOR'] === 'true';
   const proctorPages: Page[] = [];
-  const target = readEffectiveProdTarget();
+  const target = applyProdRosterOverrides(readEffectiveProdTarget());
+
+  if (useEditorAsProctor) {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    await login(page, creds.editor.email, creds.editor.password);
+    await openProctorSchedule(page, target.scheduleId);
+    proctorPages.push(page);
+    return proctorPages;
+  }
+
   for (const proctor of target.proctors) {
     const match = creds.proctors.find((entry) => entry.email === proctor.email);
     if (!match) {
@@ -313,7 +363,7 @@ test.describe('Prod load: control plane', () => {
 
     const runId = buildRunId();
     const runtimeOutputPath = resolveProdRuntimePath();
-    const initialTarget = readEffectiveProdTarget();
+    const initialTarget = applyProdRosterOverrides(readEffectiveProdTarget());
 
     await ensureStaffCreds();
     const creds = readProdCreds();
@@ -324,10 +374,15 @@ test.describe('Prod load: control plane', () => {
       await login(editorBootstrapPage, creds.editor.email, creds.editor.password);
       await expect(editorBootstrapPage).toHaveURL(/\/admin\/exams$/, { timeout: 60_000 });
 
+      const startOffsetDefault = process.env['E2E_PROD_MINIMAL_SCENARIO'] === 'true' ? 0 : 1;
+      const startOffsetMinutes = Number(
+        process.env['E2E_PROD_BOOTSTRAP_START_OFFSET_MINUTES'] ?? `${startOffsetDefault}`,
+      );
       const bootstrapped = await bootstrapExamAndSchedule({
         request: editorBootstrapPage.request,
         page: editorBootstrapPage,
         runId,
+        startOffsetMinutes,
       });
 
       await writeProdRuntimeOverride({
@@ -340,8 +395,10 @@ test.describe('Prod load: control plane', () => {
       await editorBootstrapContext.close();
     }
 
-    const target = readEffectiveProdTarget();
-    await ensureProctorAssignments(target.scheduleId);
+    const target = applyProdRosterOverrides(readEffectiveProdTarget());
+    if (process.env['E2E_PROD_USE_EDITOR_AS_PROCTOR'] !== 'true') {
+      await ensureProctorAssignments(target.scheduleId);
+    }
     const assignments = computeScenarioAssignments(target);
 
     const editorContext = await browser.newContext();
@@ -349,23 +406,26 @@ test.describe('Prod load: control plane', () => {
     await login(editorPage, creds.editor.email, creds.editor.password);
     await expect(editorPage).toHaveURL(/\/admin\/exams$/, { timeout: 60_000 });
 
-    // Builder open + safe draft-only edit (edit then restore original).
-    await editorPage.goto(`/builder/${target.examId}`);
-    await expect(editorPage.getByRole('heading', { name: /Exam Configuration|Review & Publish/i })).toBeVisible({
-      timeout: 60_000,
-    });
+    const skipBuilder = process.env['E2E_PROD_SKIP_BUILDER'] === 'true';
+    if (!skipBuilder) {
+      // Builder open + safe draft-only edit (edit then restore original).
+      await editorPage.goto(`/builder/${target.examId}`);
+      await expect(editorPage.getByRole('heading', { name: /Exam Configuration|Review & Publish/i })).toBeVisible({
+        timeout: 60_000,
+      });
 
-    const summary = editorPage.getByLabel('Summary');
-    const canEditSummary = await summary.isVisible().catch(() => false);
-    if (canEditSummary) {
-      const original = await summary.inputValue().catch(() => '');
-      await summary.fill(`${original} `);
-      await summary.fill(original);
+      const summary = editorPage.getByLabel('Summary');
+      const canEditSummary = await summary.isVisible().catch(() => false);
+      if (canEditSummary) {
+        const original = await summary.inputValue().catch(() => '');
+        await summary.fill(`${original} `);
+        await summary.fill(original);
+      }
+      await tryClickIfEnabled(editorPage, 'Save Draft');
     }
-    await tryClickIfEnabled(editorPage, 'Save Draft');
 
     const proctorPages = await createProctorPages(browser, creds);
-    expect(proctorPages).toHaveLength(10);
+    expect(proctorPages).toHaveLength(target.proctors.length);
 
     // Wait for student check-in ramp before starting cohort.
     const thresholdOverride = process.env['E2E_PROD_CHECKED_IN_START_THRESHOLD'];
@@ -373,67 +433,85 @@ test.describe('Prod load: control plane', () => {
     await waitForCheckedIn(proctorPages[0]!, target.scheduleId, threshold);
 
     // Start cohort (if not already started).
-    await tryClickIfEnabled(proctorPages[0]!, 'Start Exam');
-
-    // Cohort pause/resume once (short pause).
-    await tryClickIfEnabled(proctorPages[0]!, 'Pause Cohort');
+    await startCohortIfNotStarted(proctorPages[0]!, target.scheduleId, (name) => testInfo.outputPath(name));
     await pollUntil(
       async () => {
-        const json = await proctorDetail(proctorPages[0]!, target.scheduleId);
-        const status = String(json?.data?.runtime?.status ?? '');
-        if (status !== 'paused') throw new Error(`runtime.status=${status}`);
+        const status = await runtimeStatus(proctorPages[0]!, target.scheduleId);
+        if (status !== 'live' && status !== 'paused' && status !== 'completed') {
+          throw new Error(`runtime.status=${status}`);
+        }
         return status;
       },
-      { timeoutMs: 60_000, intervalMs: 2000, description: 'runtime paused' },
-    );
-    await tryClickIfEnabled(proctorPages[0]!, 'Resume Cohort');
+      { timeoutMs: 120_000, intervalMs: 2000, description: 'runtime started' },
+    ).catch(async (error) => {
+      await proctorPages[0]!.screenshot({ path: testInfo.outputPath('start-runtime-failed.png'), fullPage: true }).catch(() => {});
+      throw error;
+    });
 
-    // Distributed interventions.
-    const terminateWcodes = target.students.slice(0, target.scenario.interventions.terminateCount).map((s) => s.wcode);
-    const warnWcodes = target.students
-      .slice(target.scenario.interventions.terminateCount, target.scenario.interventions.terminateCount + target.scenario.interventions.warnCount)
-      .map((s) => s.wcode);
-    const pauseWcodes = target.students
-      .slice(
-        target.scenario.interventions.terminateCount + target.scenario.interventions.warnCount,
-        target.scenario.interventions.terminateCount + target.scenario.interventions.warnCount + target.scenario.interventions.pauseResumeCount,
-      )
-      .map((s) => s.wcode);
-
-    expect(terminateWcodes.length).toBe(target.scenario.interventions.terminateCount);
-    expect(warnWcodes.length).toBe(target.scenario.interventions.warnCount);
-    expect(pauseWcodes.length).toBe(target.scenario.interventions.pauseResumeCount);
-
-    // Warns: proctor 1-5 each warns 2 students.
-    for (let i = 0; i < warnWcodes.length; i += 1) {
-      const proctorIndex = 1 + Math.floor(i / 2);
-      const page = proctorPages[proctorIndex]!;
-      await proctorAction(page, target.scheduleId, warnWcodes[i]!, 'warn');
+    const skipPauseResume = process.env['E2E_PROD_SKIP_COHORT_PAUSE'] === 'true';
+    if (!skipPauseResume) {
+      // Cohort pause/resume once (short pause).
+      await tryClickIfEnabled(proctorPages[0]!, /Pause Cohort/i);
+      await pollUntil(
+        async () => {
+          const status = await runtimeStatus(proctorPages[0]!, target.scheduleId);
+          if (status !== 'paused') throw new Error(`runtime.status=${status}`);
+          return status;
+        },
+        { timeoutMs: 60_000, intervalMs: 2000, description: 'runtime paused' },
+      );
+      await tryClickIfEnabled(proctorPages[0]!, /Resume Cohort/i);
     }
 
-    // Pause/resume: proctor 6-8 each handles 2.
-    for (let i = 0; i < pauseWcodes.length; i += 1) {
-      const proctorIndex = 6 + Math.floor(i / 2);
-      const page = proctorPages[proctorIndex]!;
-      await proctorAction(page, target.scheduleId, pauseWcodes[i]!, 'pause');
-      await proctorAction(page, target.scheduleId, pauseWcodes[i]!, 'resume');
-    }
+    const skipInterventions = process.env['E2E_PROD_SKIP_INTERVENTIONS'] === 'true';
+    if (!skipInterventions) {
+      // Distributed interventions.
+      const terminateWcodes = target.students.slice(0, target.scenario.interventions.terminateCount).map((s) => s.wcode);
+      const warnWcodes = target.students
+        .slice(target.scenario.interventions.terminateCount, target.scenario.interventions.terminateCount + target.scenario.interventions.warnCount)
+        .map((s) => s.wcode);
+      const pauseWcodes = target.students
+        .slice(
+          target.scenario.interventions.terminateCount + target.scenario.interventions.warnCount,
+          target.scenario.interventions.terminateCount + target.scenario.interventions.warnCount + target.scenario.interventions.pauseResumeCount,
+        )
+        .map((s) => s.wcode);
 
-    // Terminations: last proctor terminates both.
-    for (const wcode of terminateWcodes) {
-      await proctorAction(proctorPages[9]!, target.scheduleId, wcode, 'terminate');
+      expect(terminateWcodes.length).toBe(target.scenario.interventions.terminateCount);
+      expect(warnWcodes.length).toBe(target.scenario.interventions.warnCount);
+      expect(pauseWcodes.length).toBe(target.scenario.interventions.pauseResumeCount);
+
+      const pickProctor = (index: number) => proctorPages[index % proctorPages.length]!;
+
+      for (let i = 0; i < warnWcodes.length; i += 1) {
+        await proctorAction(pickProctor(i), target.scheduleId, warnWcodes[i]!, 'warn');
+      }
+      for (let i = 0; i < pauseWcodes.length; i += 1) {
+        const page = pickProctor(warnWcodes.length + i);
+        await proctorAction(page, target.scheduleId, pauseWcodes[i]!, 'pause');
+        await proctorAction(page, target.scheduleId, pauseWcodes[i]!, 'resume');
+      }
+      for (let i = 0; i < terminateWcodes.length; i += 1) {
+        await proctorAction(
+          pickProctor(warnWcodes.length + pauseWcodes.length + i),
+          target.scheduleId,
+          terminateWcodes[i]!,
+          'terminate',
+        );
+      }
     }
 
     // Alerts: acknowledge one if present.
-    await proctorPages[2]!.getByRole('tab', { name: 'Alerts' }).click().catch(() => {});
-    const firstAck = proctorPages[2]!.getByRole('button', { name: 'Acknowledge' }).first();
+    const alertsPage = proctorPages[Math.min(2, proctorPages.length - 1)]!;
+    await alertsPage.getByRole('tab', { name: 'Alerts' }).click().catch(() => {});
+    const firstAck = alertsPage.getByRole('button', { name: 'Acknowledge' }).first();
     if (await firstAck.isVisible().catch(() => false)) {
       await firstAck.click({ force: true });
-      const note = proctorPages[2]!.getByLabel('Acknowledgment note');
+      const note = alertsPage.getByLabel('Acknowledgment note');
       if (await note.isVisible().catch(() => false)) {
         await note.fill('E2E reviewed');
       }
-      await proctorPages[2]!.getByRole('button', { name: /Confirm Acknowledgment|Confirm/i }).click({ force: true });
+      await alertsPage.getByRole('button', { name: /Confirm Acknowledgment|Confirm/i }).click({ force: true });
     }
 
     // Editor post-run surface checks (results/analytics load).

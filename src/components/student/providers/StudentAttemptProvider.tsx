@@ -53,7 +53,7 @@ interface StudentAttemptActions {
     payload?: Record<string, unknown>,
   ) => Promise<void>;
   acknowledgeProctorWarning: (warningId: string) => Promise<void>;
-  submitAttempt: () => Promise<void>;
+  submitAttempt: () => Promise<boolean>;
   setDeviceFingerprintHash: (hash: string) => Promise<void>;
   flushPending: () => Promise<boolean>;
 }
@@ -695,21 +695,22 @@ export function StudentAttemptProvider({
     );
   }, [scheduleId, syncAttemptState]);
 
-  const submitAttempt = useCallback(async () => {
+  const submitAttempt = useCallback(async (): Promise<boolean> => {
     const currentAttempt = attemptRef.current;
     if (!currentAttempt) {
-      return;
+      return false;
     }
 
     const flushed = await flushPending();
     if (!flushed) {
-      return;
+      return false;
     }
 
     const latestAttempt = attemptRef.current ?? currentAttempt;
     const submittedAttempt = await studentAttemptRepository.submitAttempt(latestAttempt);
     runtimeActions.setPhase('post-exam');
     syncAttemptState(submittedAttempt);
+    return true;
   }, [flushPending, runtimeActions, syncAttemptState]);
 
   const setDeviceFingerprintHash = useCallback(async (hash: string) => {

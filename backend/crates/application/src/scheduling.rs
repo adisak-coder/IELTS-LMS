@@ -14,6 +14,8 @@ use sqlx::{FromRow, MySql, MySqlPool};
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
+use crate::delivery::{auto_submit_schedule_attempts_in_tx, DeliveryError};
+
 #[derive(Error, Debug)]
 pub enum SchedulingError {
     #[error("Database error: {0}")]
@@ -315,7 +317,7 @@ impl SchedulingService {
         schedule_id: Uuid,
     ) -> Result<ExamSessionRuntime, SchedulingError> {
         // Check authorization before accessing runtime
-        self.get_schedule(ctx, schedule_id).await?;
+        let schedule = self.get_schedule(ctx, schedule_id).await?;
 
         if let Some(runtime_row) = sqlx::query_as::<_, RuntimeRow>(
             "SELECT * FROM exam_session_runtimes WHERE schedule_id = ?",
@@ -324,6 +326,23 @@ impl SchedulingService {
         .fetch_optional(&self.pool)
         .await?
         {
+            if schedule.auto_stop
+                && schedule.status != ScheduleStatus::Cancelled
+                && schedule.status != ScheduleStatus::Completed
+                && Utc::now() >= schedule.end_time
+                && !matches!(runtime_row.status, RuntimeStatus::Completed | RuntimeStatus::Cancelled)
+            {
+                self.end_runtime(&system_actor(), schedule_id, "auto_stop")
+                    .await?;
+                let refreshed = sqlx::query_as::<_, RuntimeRow>(
+                    "SELECT * FROM exam_session_runtimes WHERE schedule_id = ?",
+                )
+                .bind(schedule_id.to_string())
+                .fetch_one(&self.pool)
+                .await?;
+                return self.hydrate_runtime(refreshed).await;
+            }
+
             return self.hydrate_runtime(runtime_row).await;
         }
 
@@ -346,7 +365,9 @@ impl SchedulingService {
                 self.pause_runtime(ctx, schedule_id, req.reason).await
             }
             RuntimeCommandAction::ResumeRuntime => self.resume_runtime(ctx, schedule_id).await,
-            RuntimeCommandAction::EndRuntime => self.end_runtime(ctx, schedule_id).await,
+            RuntimeCommandAction::EndRuntime => {
+                self.end_runtime(ctx, schedule_id, "proctor_complete").await
+            }
         }
     }
 
@@ -589,6 +610,7 @@ impl SchedulingService {
         &self,
         ctx: &ActorContext,
         schedule_id: Uuid,
+        completion_reason: &str,
     ) -> Result<ExamSessionRuntime, SchedulingError> {
         let runtime = sqlx::query_as::<_, RuntimeRow>(
             "SELECT * FROM exam_session_runtimes WHERE schedule_id = ?",
@@ -602,7 +624,7 @@ impl SchedulingService {
             runtime.status,
             RuntimeStatus::Completed | RuntimeStatus::Cancelled
         ) {
-            return self.get_runtime(ctx, schedule_id).await;
+            return self.hydrate_runtime(runtime).await;
         }
 
         let now = Utc::now();
@@ -634,12 +656,13 @@ impl SchedulingService {
             SET
                 status = ?,
                 actual_end_at = COALESCE(actual_end_at, NOW()),
-                completion_reason = COALESCE(completion_reason, 'proctor_complete'),
+                completion_reason = COALESCE(completion_reason, ?),
                 paused_at = NULL
             WHERE runtime_id = ?
             "#,
         )
         .bind(SectionRuntimeStatus::Completed)
+        .bind(completion_reason)
         .bind(runtime.id)
         .execute(&mut *tx)
         .await?;
@@ -651,6 +674,16 @@ impl SchedulingService {
         .bind(schedule_id.to_string())
         .execute(&mut *tx)
         .await?;
+
+        auto_submit_schedule_attempts_in_tx(tx.as_mut(), schedule_id, completion_reason)
+            .await
+            .map_err(|error| match error {
+                DeliveryError::Database(db) => SchedulingError::Database(db),
+                DeliveryError::Conflict(message)
+                | DeliveryError::Validation(message)
+                | DeliveryError::Internal(message) => SchedulingError::Validation(message),
+                DeliveryError::NotFound => SchedulingError::NotFound,
+            })?;
 
         insert_control_event(
             &mut tx,
@@ -665,7 +698,14 @@ impl SchedulingService {
 
         tx.commit().await?;
 
-        self.get_runtime(ctx, schedule_id).await
+        let refreshed = sqlx::query_as::<_, RuntimeRow>(
+            "SELECT * FROM exam_session_runtimes WHERE schedule_id = ?",
+        )
+        .bind(schedule_id.to_string())
+        .fetch_one(&self.pool)
+        .await?;
+
+        self.hydrate_runtime(refreshed).await
     }
 
     async fn hydrate_runtime(
@@ -1069,6 +1109,13 @@ impl From<RuntimeSectionRow> for RuntimeSectionState {
             projected_end_at: value.projected_end_at,
         }
     }
+}
+
+fn system_actor() -> ActorContext {
+    ActorContext::new(
+        Uuid::nil().to_string(),
+        ielts_backend_infrastructure::actor_context::ActorRole::Admin,
+    )
 }
 
 #[cfg(test)]

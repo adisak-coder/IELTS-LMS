@@ -22,10 +22,14 @@ function getInitials(name: string) {
 export function ProctorApp({
   schedules,
   runtimeSnapshots,
+  scheduleMetrics,
   sessions,
   alerts,
   auditLogs,
   notes,
+  connectionError,
+  selectedScheduleId,
+  onSelectScheduleId,
   onExit,
   onUpdateSessions,
   onUpdateAlerts,
@@ -94,6 +98,17 @@ export function ProctorApp({
               ></div>
               <span className="text-xs font-bold uppercase tracking-wider">Live</span>
             </div>
+            {connectionError ? (
+              <div
+                className="hidden sm:flex items-center gap-2 px-3 py-1 bg-red-50 text-red-700 rounded-full border border-red-100"
+                role="status"
+                aria-live="polite"
+                title={connectionError}
+              >
+                <div className="w-2 h-2 bg-red-500 rounded-full" aria-hidden="true"></div>
+                <span className="text-xs font-bold uppercase tracking-wider">Reconnecting</span>
+              </div>
+            ) : null}
             <button
               className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full"
               aria-label={`Notifications, ${unacknowledgedAlerts.length} unacknowledged`}
@@ -131,6 +146,7 @@ export function ProctorApp({
           <ProctorDashboard
             schedules={schedules}
             runtimeSnapshots={runtimeSnapshots}
+            scheduleMetrics={scheduleMetrics}
             sessions={sessions}
             alerts={alerts}
             currentProctorId={proctorId}
@@ -139,6 +155,8 @@ export function ProctorApp({
             railSelection="dashboard"
             auditLogs={auditLogs}
             notes={notes}
+            selectedScheduleId={selectedScheduleId}
+            onSelectScheduleId={onSelectScheduleId}
             onUpdateSessions={onUpdateSessions}
             onUpdateAlerts={onUpdateAlerts}
             onUpdateNotes={onUpdateNotes}

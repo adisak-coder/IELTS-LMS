@@ -77,7 +77,7 @@ describe('StudentApp runtime-backed mode', () => {
     expect(container).toBeInTheDocument();
   });
 
-  it('submits the runtime-backed attempt through the repository when Finish is clicked', async () => {
+  it('locks the UI when Finish is clicked in runtime-backed mode', async () => {
     const user = userEvent.setup();
     window.sessionStorage.clear();
     window.sessionStorage.setItem(
@@ -292,12 +292,11 @@ describe('StudentApp runtime-backed mode', () => {
     await user.click(screen.getByRole('button', { name: 'Finish' }));
 
     await waitFor(() => {
-      expect(submitAttempt).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Waiting for cohort advance/i)).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      expect(screen.getByText(/Examination Complete!/i)).toBeInTheDocument();
-    });
+    expect(submitAttempt).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Examination Complete!/i)).not.toBeInTheDocument();
   });
 
   it('shows a blocking tab-switch warning overlay when tab switching is detected', async () => {

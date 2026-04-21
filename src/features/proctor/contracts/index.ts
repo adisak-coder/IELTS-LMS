@@ -8,6 +8,14 @@
 import { ProctorAlert, SessionAuditLog, SessionNote, StudentSession } from '../../../types';
 import { ExamSchedule, ExamSessionRuntime } from '../../../types/domain';
 
+export interface ProctorScheduleMetrics {
+  studentCount: number;
+  activeCount: number;
+  alertCount: number;
+  violationCount: number;
+  degradedLiveMode: boolean;
+}
+
 /**
  * Props passed to ProctorRoot from parent (router)
  */
@@ -22,6 +30,9 @@ export interface ProctorData {
   
   // Runtime snapshots for live sessions
   runtimeSnapshots: ExamSessionRuntime[];
+
+  // Summary metrics keyed by scheduleId
+  scheduleMetrics: Record<string, ProctorScheduleMetrics>;
   
   // Student sessions
   sessions: StudentSession[];
@@ -72,10 +83,18 @@ export interface ProctorProps {
   // From ProctorData
   schedules: ExamSchedule[];
   runtimeSnapshots: ExamSessionRuntime[];
+  scheduleMetrics: Record<string, ProctorScheduleMetrics>;
   sessions: StudentSession[];
   alerts: ProctorAlert[];
   auditLogs: SessionAuditLog[];
   notes: SessionNote[];
+
+  // Optional connection status (non-fatal if stale data exists)
+  connectionError?: string | null | undefined;
+
+  // Cohort selection (controlled)
+  selectedScheduleId: string | null;
+  onSelectScheduleId: (scheduleId: string | null) => void;
   
   // From ProctorOperationCallbacks
   onExit: () => void;

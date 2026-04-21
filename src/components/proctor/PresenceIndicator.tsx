@@ -10,6 +10,26 @@ interface PresenceIndicatorProps {
 }
 
 export function PresenceIndicator({ proctorPresence, currentProctorId, currentProctorName, onJoin }: PresenceIndicatorProps) {
+  const uniquePresence = (() => {
+    const byProctorId = new Map<string, ProctorPresence>();
+    for (const entry of proctorPresence) {
+      const existing = byProctorId.get(entry.proctorId);
+      if (!existing) {
+        byProctorId.set(entry.proctorId, entry);
+        continue;
+      }
+
+      const existingMs = new Date(existing.lastHeartbeat).getTime();
+      const nextMs = new Date(entry.lastHeartbeat).getTime();
+      if (Number.isFinite(nextMs) && (!Number.isFinite(existingMs) || nextMs > existingMs)) {
+        byProctorId.set(entry.proctorId, entry);
+      }
+    }
+    return [...byProctorId.values()].sort(
+      (left, right) => new Date(right.lastHeartbeat).getTime() - new Date(left.lastHeartbeat).getTime(),
+    );
+  })();
+
   const getInitials = (name: string) => {
     return name
       .split(' ')
@@ -32,7 +52,7 @@ export function PresenceIndicator({ proctorPresence, currentProctorId, currentPr
     return date.toLocaleDateString();
   };
 
-  const activeProctors = proctorPresence.filter(p => {
+  const activeProctors = uniquePresence.filter(p => {
     const lastHeartbeat = new Date(p.lastHeartbeat);
     const now = new Date();
     const diffMs = now.getTime() - lastHeartbeat.getTime();

@@ -76,6 +76,7 @@ export interface BulkOperationCallbacks {
   onBulkArchive?: (examIds: string[]) => Promise<BulkOperationResult>;
   onBulkDuplicate?: (examIds: string[]) => Promise<BulkOperationResult>;
   onBulkExport?: (examIds: string[]) => Promise<BulkOperationResult>;
+  onBulkDelete?: (examIds: string[]) => Promise<BulkOperationResult>;
 }
 
 /**
@@ -124,6 +125,7 @@ export interface AdminExamsProps {
   onBulkArchive?: (examIds: string[]) => Promise<BulkOperationResult>;
   onBulkDuplicate?: (examIds: string[]) => Promise<BulkOperationResult>;
   onBulkExport?: (examIds: string[]) => Promise<BulkOperationResult>;
+  onBulkDelete?: (examIds: string[]) => Promise<BulkOperationResult>;
 }
 
 /**

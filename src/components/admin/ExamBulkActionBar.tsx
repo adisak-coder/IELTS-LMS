@@ -3,7 +3,7 @@
  * Extracted from AdminExams to reduce component complexity
  */
 
-import { CheckCircle, XCircle, Archive, Copy, Download } from 'lucide-react';
+import { CheckCircle, XCircle, Archive, Copy, Download, Trash2 } from 'lucide-react';
 
 interface ExamBulkActionBarProps {
   selectedCount: number;
@@ -11,6 +11,7 @@ interface ExamBulkActionBarProps {
   onBulkPublish?: (() => Promise<void>) | undefined;
   onBulkUnpublish?: (() => Promise<void>) | undefined;
   onBulkArchive?: (() => Promise<void>) | undefined;
+  onBulkDelete?: (() => Promise<void>) | undefined;
   onBulkDuplicate?: (() => Promise<void>) | undefined;
   onBulkExport?: (() => Promise<void>) | undefined;
 }
@@ -21,6 +22,7 @@ export function ExamBulkActionBar({
   onBulkPublish,
   onBulkUnpublish,
   onBulkArchive,
+  onBulkDelete,
   onBulkDuplicate,
   onBulkExport
 }: ExamBulkActionBarProps) {
@@ -63,6 +65,15 @@ export function ExamBulkActionBar({
           >
             <Archive size={14} />
             Archive
+          </button>
+        )}
+        {onBulkDelete && (
+          <button
+            onClick={onBulkDelete}
+            className="flex items-center gap-1 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded text-sm font-medium transition-colors"
+          >
+            <Trash2 size={14} />
+            Delete
           </button>
         )}
         {onBulkDuplicate && (

@@ -253,6 +253,76 @@ describe('ExamLifecycleService - Phase 3: Versioning', () => {
     });
   });
 
+  describe('deleteExam', () => {
+    it('deletes a draft exam and records an audit event', async () => {
+      const initialState = createMockExamState();
+      const created = await service.createExam('Delete Me', 'Academic', initialState, 'TestUser');
+
+      expect(created.success).toBe(true);
+      const examId = created.exam!.id;
+
+      const deleted = await service.deleteExam(examId, 'Admin');
+      expect(deleted.success).toBe(true);
+
+      expect(mockRepo.getStoredExams().some((e) => e.id === examId)).toBe(false);
+
+      const events = mockRepo.getStoredEvents();
+      expect(events.length).toBeGreaterThan(0);
+      expect(events.some((e) => e.examId === examId && (e.payload as any)?.deleted === true)).toBe(true);
+    });
+
+    it('rejects deletion of published exams', async () => {
+      const initialState = createMockExamState();
+      const created = await service.createExam('Published Exam', 'Academic', initialState, 'TestUser');
+      const examId = created.exam!.id;
+
+      const exam = await mockRepo.getExamById(examId);
+      expect(exam).toBeTruthy();
+      if (exam) {
+        exam.status = 'published';
+        await mockRepo.saveExam(exam);
+      }
+
+      const deleted = await service.deleteExam(examId, 'Admin');
+      expect(deleted.success).toBe(false);
+      expect(deleted.error).toMatch(/cannot delete/i);
+      expect(mockRepo.getStoredExams().some((e) => e.id === examId)).toBe(true);
+    });
+  });
+
+  describe('bulkDelete', () => {
+    it('deletes eligible exams and reports per-item failures', async () => {
+      const initialState = createMockExamState();
+
+      const a = await service.createExam('Draft A', 'Academic', initialState, 'TestUser');
+      const b = await service.createExam('Published B', 'Academic', initialState, 'TestUser');
+
+      const aId = a.exam!.id;
+      const bId = b.exam!.id;
+
+      const bExam = await mockRepo.getExamById(bId);
+      expect(bExam).toBeTruthy();
+      if (bExam) {
+        bExam.status = 'published';
+        await mockRepo.saveExam(bExam);
+      }
+
+      const result = await service.bulkDelete([aId, bId, 'missing'], 'Admin');
+
+      expect(result.total).toBe(3);
+      expect(result.succeeded).toBe(1);
+      expect(result.failed).toBe(2);
+      expect(result.success).toBe(true);
+
+      expect(mockRepo.getStoredExams().some((e) => e.id === aId)).toBe(false);
+      expect(mockRepo.getStoredExams().some((e) => e.id === bId)).toBe(true);
+
+      const missingRow = result.results.find((r) => r.examId === 'missing');
+      expect(missingRow?.success).toBe(false);
+      expect(missingRow?.error).toMatch(/not found/i);
+    });
+  });
+
   describe('cloneExam', () => {
     it('should create a new exam with cloned content', async () => {
       const initialState = createMockExamState();

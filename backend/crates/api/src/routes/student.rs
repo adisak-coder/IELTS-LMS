@@ -31,7 +31,7 @@ pub async fn get_student_session(
     Extension(request_id): Extension<RequestId>,
     principal: AuthenticatedUser,
     Path(schedule_id): Path<Uuid>,
-    Query(_query): Query<StudentSessionQuery>,
+    Query(query): Query<StudentSessionQuery>,
 ) -> Result<ApiResponse<StudentSessionContext>, ApiError> {
     principal.require_one_of(&[
         UserRole::Student,
@@ -49,9 +49,55 @@ pub async fn get_student_session(
         None
     };
     
-    let session = service
+    let mut session = service
         .get_session_context(schedule_id, wcode, access.legacy_student_key.clone(), None)
         .await?;
+
+    if query.refresh_attempt_credential.unwrap_or(false) {
+        let attempt = session.attempt.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "NOT_FOUND",
+                "Student attempt not found for this session.",
+            )
+        })?;
+
+        let fallback_client_session_id = attempt
+            .integrity
+            .get("clientSessionId")
+            .and_then(|value| value.as_str())
+            .map(ToOwned::to_owned);
+
+        let client_session_id = query
+            .client_session_id
+            .clone()
+            .or(fallback_client_session_id)
+            .ok_or_else(|| {
+                ApiError::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "VALIDATION_ERROR",
+                    "clientSessionId is required to refresh attempt credentials.",
+                )
+            })?;
+
+        let auth_service = AuthService::new(state.db_pool(), state.config.clone());
+        session.attempt_credential = Some(
+            auth_service
+                .issue_attempt_token(
+                    &ielts_backend_application::auth::AuthenticatedSession {
+                        user: principal.user.clone(),
+                        session: principal.session.clone(),
+                    },
+                    schedule_id.to_string(),
+                    attempt.id.clone(),
+                    client_session_id,
+                    None,
+                    None,
+                )
+                .await
+                .map_err(map_auth_error)?,
+        );
+    }
     state
         .telemetry
         .observe_db_operation("delivery.get_session_context", started.elapsed());

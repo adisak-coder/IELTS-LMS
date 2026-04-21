@@ -414,6 +414,7 @@ pub struct ProctorSessionSummary {
     pub student_count: i64,
     pub active_count: i64,
     pub alert_count: i64,
+    pub violation_count: i64,
     pub degraded_live_mode: bool,
 }
 

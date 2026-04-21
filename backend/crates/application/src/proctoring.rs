@@ -16,6 +16,7 @@ use sqlx::{FromRow, MySql, MySqlPool};
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
+use crate::delivery::{auto_submit_schedule_attempts_in_tx, DeliveryError};
 use crate::scheduling::{SchedulingError, SchedulingService};
 
 #[derive(Error, Debug)]
@@ -95,6 +96,16 @@ impl ProctoringService {
             .bind(&schedule.id)
             .fetch_one(&self.pool)
             .await?;
+            let violation_count: i64 = sqlx::query_scalar(
+                r#"
+                SELECT COUNT(*)
+                FROM student_violation_events
+                WHERE schedule_id = ?
+                "#,
+            )
+            .bind(&schedule.id)
+            .fetch_one(&self.pool)
+            .await?;
             let degraded = live_mode
                 .snapshot(live_mode_enabled, Some(schedule_id_uuid))
                 .await?;
@@ -105,6 +116,7 @@ impl ProctoringService {
                 student_count,
                 active_count,
                 alert_count,
+                violation_count,
                 degraded_live_mode: degraded.degraded,
             });
         }
@@ -198,9 +210,33 @@ impl ProctoringService {
             }
         }
 
-        let now = Utc::now();
         match req.action {
-            PresenceAction::Join | PresenceAction::Heartbeat => {
+            PresenceAction::Join => {
+                // Join should refresh joined_at so proctors can see when someone re-opened the cohort.
+                sqlx::query(
+                    r#"
+                    INSERT INTO proctor_presence (
+                        id, schedule_id, proctor_id, proctor_name, status,
+                        joined_at, last_heartbeat_at, left_at
+                    )
+                    VALUES (?, ?, ?, ?, 'active', NOW(), NOW(), NULL)
+                    ON DUPLICATE KEY UPDATE
+                        proctor_name = VALUES(proctor_name),
+                        status = 'active',
+                        joined_at = VALUES(joined_at),
+                        last_heartbeat_at = VALUES(last_heartbeat_at),
+                        left_at = NULL
+                    "#,
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(schedule_id.to_string())
+                .bind(proctor_id)
+                .bind(proctor_name)
+                .execute(&self.pool)
+                .await?;
+            }
+            PresenceAction::Heartbeat => {
+                // Heartbeat should not reset joined_at.
                 sqlx::query(
                     r#"
                     INSERT INTO proctor_presence (
@@ -596,6 +632,17 @@ impl ProctoringService {
         .bind(schedule_id.to_string())
         .execute(&mut *tx)
         .await?;
+
+        auto_submit_schedule_attempts_in_tx(tx.as_mut(), schedule_id, "proctor_complete")
+            .await
+            .map_err(|error| match error {
+                DeliveryError::Database(db) => ProctoringError::Database(db),
+                DeliveryError::Conflict(message) | DeliveryError::Validation(message) | DeliveryError::Internal(message) => {
+                    ProctoringError::Validation(message)
+                }
+                DeliveryError::NotFound => ProctoringError::NotFound,
+            })?;
+
         insert_control_event(
             &mut tx,
             runtime.id.into_uuid(),

@@ -73,6 +73,8 @@ pub struct StudentHeartbeatEvent {
 pub struct StudentSessionQuery {
     pub student_key: Option<String>,
     pub candidate_id: Option<String>,
+    pub refresh_attempt_credential: Option<bool>,
+    pub client_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

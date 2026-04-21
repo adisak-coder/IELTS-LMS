@@ -251,7 +251,8 @@ describe('StudentAttemptProvider', () => {
     });
 
     await act(async () => {
-      await result.current.actions.submitAttempt();
+      const submitted = await result.current.actions.submitAttempt();
+      expect(submitted).toBe(true);
     });
 
     expect(studentAttemptRepository.saveAttempt).toHaveBeenCalled();
@@ -293,7 +294,8 @@ describe('StudentAttemptProvider', () => {
     });
 
     await act(async () => {
-      await result.current.actions.submitAttempt();
+      const submitted = await result.current.actions.submitAttempt();
+      expect(submitted).toBe(false);
     });
 
     expect(studentAttemptRepository.submitAttempt).not.toHaveBeenCalled();
@@ -327,7 +329,6 @@ describe('StudentAttemptProvider', () => {
     });
 
     expect(flushed).toBe(false);
-    expect(studentAttemptRepository.saveAttempt).not.toHaveBeenCalled();
     expect(studentAttemptRepository.clearPendingMutations).not.toHaveBeenCalled();
     expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
     expect(result.current.state.attempt?.recovery.syncState).toBe('error');

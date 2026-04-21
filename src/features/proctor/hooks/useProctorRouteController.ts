@@ -18,6 +18,7 @@ import type {
 } from '../../../types';
 import type { ExamSchedule, ExamSessionRuntime } from '../../../types/domain';
 import type { ProctorPresence } from '../../../types/domain';
+import type { ProctorScheduleMetrics } from '../contracts';
 
 function mapBackendSessionSummary(payload: {
   attemptId: string;
@@ -176,7 +177,10 @@ export interface ProctorRouteController {
   notes: SessionNote[];
   runtimeSnapshots: ExamSessionRuntime[];
   schedules: ExamSchedule[];
+  scheduleMetrics: Record<string, ProctorScheduleMetrics>;
   sessions: StudentSession[];
+  selectedScheduleId: string | null;
+  setSelectedScheduleId: Dispatch<SetStateAction<string | null>>;
   violationRules: ViolationRule[];
   handleCompleteExam: (scheduleId: string) => Promise<void>;
   handleEndSectionNow: (scheduleId: string) => Promise<void>;
@@ -200,20 +204,32 @@ export function useProctorRouteController(): ProctorRouteController {
   const [auditLogs, setAuditLogs] = useState<SessionAuditLog[]>([]);
   const [notes, setNotes] = useState<SessionNote[]>([]);
   const [violationRules, setViolationRules] = useState<ViolationRule[]>([]);
+  const [scheduleMetrics, setScheduleMetrics] = useState<Record<string, ProctorScheduleMetrics>>(
+    {},
+  );
+  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pollIntervalMs, setPollIntervalMs] = useState(4_000);
+  const [hasHydrated, setHasHydrated] = useState(false);
 
   const loadMonitoringState = useCallback(async () => {
-    const summaries = await backendGet<Array<{
-      schedule: Parameters<typeof mapBackendSchedule>[0];
-      runtime: Parameters<typeof mapBackendRuntime>[0];
-      degradedLiveMode: boolean;
-    }>>('/v1/proctor/sessions');
+    const summaries = await backendGet<
+      Array<{
+        schedule: Parameters<typeof mapBackendSchedule>[0];
+        runtime: Parameters<typeof mapBackendRuntime>[0];
+        studentCount?: number | undefined;
+        activeCount?: number | undefined;
+        alertCount?: number | undefined;
+        violationCount?: number | undefined;
+        degradedLiveMode: boolean;
+      }>
+    >('/v1/proctor/sessions');
 
     if (summaries.length === 0) {
       setSchedules([]);
       setRuntimeSnapshots([]);
+      setScheduleMetrics({});
       setSessions([]);
       setAlerts([]);
       setAuditLogs([]);
@@ -223,30 +239,72 @@ export function useProctorRouteController(): ProctorRouteController {
       return;
     }
 
-    const details = await Promise.all(
-      summaries.map((summary) =>
-        backendGet<{
-          schedule: Parameters<typeof mapBackendSchedule>[0];
-          runtime: Parameters<typeof mapBackendRuntime>[0];
-          sessions: Array<Parameters<typeof mapBackendSessionSummary>[0]>;
-          alerts: Array<Parameters<typeof mapBackendAlert>[0]>;
-          auditLogs: Array<Parameters<typeof mapBackendAuditLog>[0]>;
-          notes: Array<Parameters<typeof mapBackendNote>[0]>;
-          presence: Array<Parameters<typeof mapBackendProctorPresence>[0]>;
-          violationRules: Array<Parameters<typeof mapBackendViolationRule>[0]>;
-          degradedLiveMode: boolean;
-        }>(`/v1/proctor/sessions/${summary.schedule.id}`),
+    const metrics: Record<string, ProctorScheduleMetrics> = {};
+    for (const summary of summaries) {
+      metrics[summary.schedule.id] = {
+        studentCount: summary.studentCount ?? 0,
+        activeCount: summary.activeCount ?? 0,
+        alertCount: summary.alertCount ?? 0,
+        violationCount: summary.violationCount ?? 0,
+        degradedLiveMode: summary.degradedLiveMode,
+      };
+    }
+
+    setPollIntervalMs(summaries.some((summary) => summary.degradedLiveMode) ? 1_000 : 4_000);
+    setScheduleMetrics(metrics);
+    setSchedules(summaries.map((summary) => mapBackendSchedule(summary.schedule)));
+    setRuntimeSnapshots(
+      summaries.map((summary) => mapBackendRuntime(summary.runtime, mapBackendSchedule(summary.schedule))),
+    );
+
+    const detailScheduleIds = new Set<string>();
+    for (const summary of summaries) {
+      const status = summary.runtime?.status;
+      if (status === 'live' || status === 'paused') {
+        detailScheduleIds.add(summary.schedule.id);
+      }
+    }
+    if (selectedScheduleId) {
+      detailScheduleIds.add(selectedScheduleId);
+    }
+
+    type ProctorSessionDetailPayload = {
+      schedule: Parameters<typeof mapBackendSchedule>[0];
+      runtime: Parameters<typeof mapBackendRuntime>[0];
+      sessions: Array<Parameters<typeof mapBackendSessionSummary>[0]>;
+      alerts: Array<Parameters<typeof mapBackendAlert>[0]>;
+      auditLogs: Array<Parameters<typeof mapBackendAuditLog>[0]>;
+      notes: Array<Parameters<typeof mapBackendNote>[0]>;
+      presence: Array<Parameters<typeof mapBackendProctorPresence>[0]>;
+      violationRules: Array<Parameters<typeof mapBackendViolationRule>[0]>;
+      degradedLiveMode: boolean;
+    };
+
+    const detailResults = await Promise.allSettled(
+      [...detailScheduleIds].map((scheduleId) =>
+        backendGet<ProctorSessionDetailPayload>(`/v1/proctor/sessions/${scheduleId}`),
       ),
     );
 
-    setPollIntervalMs(details.some((detail) => detail.degradedLiveMode) ? 1_000 : 4_000);
-    setSchedules(details.map((detail) => mapBackendSchedule(detail.schedule)));
-    setRuntimeSnapshots(
-      details.map((detail) => ({
-        ...mapBackendRuntime(detail.runtime, mapBackendSchedule(detail.schedule)),
-        proctorPresence: (detail.presence ?? []).map(mapBackendProctorPresence),
-      })),
-    );
+    const details: ProctorSessionDetailPayload[] = [];
+    for (const result of detailResults) {
+      if (result.status === 'fulfilled') {
+        details.push(result.value);
+      }
+    }
+
+    setRuntimeSnapshots((current) => {
+      const bySchedule = new Map(current.map((runtime) => [runtime.scheduleId, runtime]));
+      for (const detail of details) {
+        const schedule = mapBackendSchedule(detail.schedule);
+        bySchedule.set(detail.schedule.id, {
+          ...mapBackendRuntime(detail.runtime, schedule),
+          proctorPresence: (detail.presence ?? []).map(mapBackendProctorPresence),
+        });
+      }
+      return [...bySchedule.values()];
+    });
+
     setSessions(
       details
         .flatMap((detail) => detail.sessions)
@@ -270,29 +328,38 @@ export function useProctorRouteController(): ProctorRouteController {
     setViolationRules(
       details.flatMap((detail) => detail.violationRules).map(mapBackendViolationRule),
     );
-  }, []);
+  }, [selectedScheduleId]);
 
-  const loadSchedules = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
-
+  const refresh = useCallback(async () => {
     try {
       await loadMonitoringState();
+      setHasHydrated(true);
+      setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load proctor data');
-    } finally {
-      setIsLoading(false);
+      throw loadError;
     }
   }, [loadMonitoringState]);
 
   useEffect(() => {
-    void loadSchedules();
-  }, [loadSchedules]);
+    void refresh().finally(() => {
+      setIsLoading(false);
+    });
+  }, [refresh]);
 
-  useAsyncPolling(loadMonitoringState, {
-    enabled: !isLoading && !error,
+  useEffect(() => {
+    if (!hasHydrated || !selectedScheduleId) {
+      return;
+    }
+
+    void refresh();
+  }, [hasHydrated, refresh, selectedScheduleId]);
+
+  useAsyncPolling(refresh, {
+    enabled: true,
     intervalMs: pollIntervalMs,
-    maxIntervalMs: 4_000,
+    maxIntervalMs: Math.max(pollIntervalMs * 8, 30_000),
+    runImmediately: false,
   });
 
   const handleStartScheduledSession = useCallback(
@@ -409,7 +476,10 @@ export function useProctorRouteController(): ProctorRouteController {
     notes,
     runtimeSnapshots,
     schedules,
+    scheduleMetrics,
     sessions,
+    selectedScheduleId,
+    setSelectedScheduleId,
     violationRules,
     handleCompleteExam,
     handleEndSectionNow,
@@ -417,7 +487,7 @@ export function useProctorRouteController(): ProctorRouteController {
     handlePauseCohort,
     handleResumeCohort,
     handleStartScheduledSession,
-    reload: loadSchedules,
+    reload: refresh,
     setAlerts,
     setNotes,
     setSessions,

@@ -59,6 +59,23 @@ export function ExamsRoute() {
     return examLifecycleService.bulkExport(examIds, 'Admin');
   };
 
+  const handleBulkDelete = async (examIds: string[]) => {
+    const result = await examLifecycleService.bulkDelete(examIds, 'Admin');
+    if (result.succeeded > 0) {
+      await refreshLocalExamData();
+    }
+    return result;
+  };
+
+  const handleDeleteExam = async (examId: string) => {
+    const result = await examLifecycleService.deleteExam(examId, 'Admin');
+    if (!result.success) {
+      alert(result.error ?? 'Failed to delete exam');
+      return;
+    }
+    await refreshLocalExamData();
+  };
+
   const handleCreateExam = async (
     title: string,
     type: 'Academic' | 'General Training',
@@ -94,6 +111,8 @@ export function ExamsRoute() {
       onBulkArchive={handleBulkArchive}
       onBulkDuplicate={handleBulkDuplicate}
       onBulkExport={handleBulkExport}
+      onBulkDelete={handleBulkDelete}
+      onDeleteExam={handleDeleteExam}
     />
   );
 }

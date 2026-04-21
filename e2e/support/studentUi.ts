@@ -209,16 +209,55 @@ export async function completePreCheckIfPresent(page: Page) {
   }
 
   const acknowledgement = page.getByRole('checkbox', { name: /I understand Safari/i });
-  const acknowledgementVisible = await acknowledgement.isVisible().catch(() => false);
-  if (acknowledgementVisible) {
-    await acknowledgement.check();
+  const continueButton = page.getByRole('button', { name: 'Continue' });
+  const waitingForStart = page.getByRole('heading', { name: /Waiting for start/i });
+  const startExam = page.getByRole('button', { name: 'Start Exam' });
+  const answerField = page.getByLabel(/Answer for question/i).first();
+  const writingEditor = page.locator('[contenteditable="true"]').first();
+  const stepIndicator = page.getByText(/Step\\s+\\d+\\s+of\\s+\\d+/i).first();
+
+  const timeoutMs = Number(process.env['E2E_PROD_PRECHECK_SAVE_TIMEOUT_MS'] ?? '120000');
+
+  const attempts = 5;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (!(await compatibilityCheck.isVisible().catch(() => false))) return;
+    if (await waitingForStart.isVisible().catch(() => false)) return;
+    if (await startExam.isVisible().catch(() => false)) return;
+    if (await answerField.isVisible().catch(() => false)) return;
+    if (await writingEditor.isVisible().catch(() => false)) return;
+
+    if (await acknowledgement.isVisible().catch(() => false)) {
+      await acknowledgement.check().catch(() => {});
+    }
+
+    await expect(continueButton).toBeEnabled({ timeout: 60_000 });
+    const stepBefore = (await stepIndicator.textContent().catch(() => ''))?.trim() ?? '';
+
+    // In production, a transient fullscreen/permission overlay can intercept pointer events.
+    // Force-click to progress once the button is enabled.
+    await continueButton.click({ force: true });
+
+    await expect
+      .poll(
+        async () => {
+          if (await waitingForStart.isVisible().catch(() => false)) return 'waiting';
+          if (await startExam.isVisible().catch(() => false)) return 'lobby';
+          if (await answerField.isVisible().catch(() => false)) return 'answer';
+          if (await writingEditor.isVisible().catch(() => false)) return 'writing';
+          if (!(await compatibilityCheck.isVisible().catch(() => false))) return 'detached';
+
+          const stepAfter = (await stepIndicator.textContent().catch(() => ''))?.trim() ?? '';
+          if (stepAfter && stepBefore && stepAfter !== stepBefore) return 'step_changed';
+
+          return 'pending';
+        },
+        { timeout: Math.max(30_000, timeoutMs) },
+      )
+      .not.toBe('pending');
   }
 
-  await expect(page.getByRole('button', { name: 'Continue' })).toBeEnabled();
-  // In production, a transient fullscreen/permission overlay can intercept pointer events.
-  // Force-click to progress once the button is enabled.
-  await page.getByRole('button', { name: 'Continue' }).click({ force: true });
-  await compatibilityCheck.waitFor({ state: 'detached', timeout: 30_000 }).catch(() => {});
+  // Still stuck in compatibility check after repeated continues.
+  throw new Error('Precheck did not complete after repeated Continue clicks.');
 }
 
 export async function startLobbyIfPresent(page: Page) {

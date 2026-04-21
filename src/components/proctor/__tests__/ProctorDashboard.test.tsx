@@ -14,6 +14,25 @@ describe('ProctorDashboard runtime controls', () => {
     vi.useRealTimers();
   });
 
+  type DashboardProps = React.ComponentProps<typeof ProctorDashboard>;
+
+  function DashboardHarness({
+    scheduleMetrics = {},
+    ...props
+  }: Omit<DashboardProps, 'selectedScheduleId' | 'onSelectScheduleId' | 'scheduleMetrics'> & {
+    scheduleMetrics?: DashboardProps['scheduleMetrics'];
+  }) {
+    const [selectedScheduleId, onSelectScheduleId] = React.useState<string | null>(null);
+    return (
+      <ProctorDashboard
+        {...props}
+        scheduleMetrics={scheduleMetrics}
+        selectedScheduleId={selectedScheduleId}
+        onSelectScheduleId={onSelectScheduleId}
+      />
+    );
+  }
+
   const baseSchedule: ExamSchedule = {
     id: 'sched-1',
     examId: 'exam-1',
@@ -72,7 +91,7 @@ describe('ProctorDashboard runtime controls', () => {
 
   it('disables start before a scheduled cohort is ready', () => {
     render(
-      <ProctorDashboard
+      <DashboardHarness
         schedules={[baseSchedule]}
         runtimeSnapshots={[]}
         sessions={[]}
@@ -93,7 +112,7 @@ describe('ProctorDashboard runtime controls', () => {
 
   it('shows an overrun warning when runtime extends past the scheduled window', () => {
     render(
-      <ProctorDashboard
+      <DashboardHarness
         schedules={[{ ...baseSchedule, status: 'live', startTime: '2026-01-01T00:00:00.000Z' }]}
         runtimeSnapshots={[liveRuntime]}
         sessions={[]}
@@ -115,7 +134,7 @@ describe('ProctorDashboard runtime controls', () => {
 
   it('opens student detail in a full-page split view with roster rail', () => {
     render(
-      <ProctorDashboard
+      <DashboardHarness
         schedules={[{ ...baseSchedule, status: 'live', startTime: '2026-01-01T00:00:00.000Z' }]}
         runtimeSnapshots={[liveRuntime]}
         sessions={[
@@ -223,14 +242,14 @@ describe('ProctorDashboard runtime controls', () => {
       onCompleteExam: vi.fn(),
     };
 
-    const { rerender } = render(<ProctorDashboard {...baseProps} railSelection="dashboard" />);
+    const { rerender } = render(<DashboardHarness {...baseProps} railSelection="dashboard" />);
 
     fireEvent.click(screen.getByRole('button', { name: /monitor mock exam for cohort cohort a/i }));
 
-    rerender(<ProctorDashboard {...baseProps} railSelection="notes" />);
+    rerender(<DashboardHarness {...baseProps} railSelection="notes" />);
     expect(screen.getByText(/jane roe incident note/i)).toBeTruthy();
 
-    rerender(<ProctorDashboard {...baseProps} railSelection="audit" />);
+    rerender(<DashboardHarness {...baseProps} railSelection="audit" />);
     expect(screen.getByText(/student_warn/i)).toBeTruthy();
   });
 });

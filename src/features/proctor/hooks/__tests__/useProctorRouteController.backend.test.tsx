@@ -1,11 +1,19 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { examDeliveryService } from '@services/examDeliveryService';
 import { useProctorRouteController } from '../useProctorRouteController';
 
 const originalFetch = global.fetch;
 
 function jsonResponse(data: unknown) {
   return new Response(JSON.stringify({ success: true, data }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function jsonFailure(message: string) {
+  return new Response(JSON.stringify({ success: false, error: { message } }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
@@ -270,5 +278,281 @@ describe('useProctorRouteController backend mode', () => {
       '/api/v1/proctor/sessions/sched-1',
       expect.objectContaining({ method: 'GET' }),
     );
+  });
+
+  it('evaluates enabled violation rules, dispatches actions, and reloads monitoring state (happy path)', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
+
+    const detail = buildDetail();
+    detail.sessions[0] = {
+      ...detail.sessions[0],
+      violations: [
+        {
+          id: 'violation-1',
+          type: 'TAB_SWITCH',
+          severity: 'high',
+          timestamp: '2026-01-01T09:01:00.000Z',
+          description: 'Tab switch detected.',
+        },
+      ],
+    };
+    detail.violationRules = [
+      {
+        id: 'rule-warn',
+        scheduleId: 'sched-1',
+        triggerType: 'violation_count',
+        threshold: 1,
+        specificViolationType: null,
+        specificSeverity: null,
+        action: 'warn',
+        isEnabled: true,
+        createdAt: '2026-01-01T09:00:00.000Z',
+        createdBy: 'Admin',
+      },
+      {
+        id: 'rule-pause',
+        scheduleId: 'sched-1',
+        triggerType: 'specific_violation_type',
+        threshold: 1,
+        specificViolationType: 'TAB_SWITCH',
+        specificSeverity: null,
+        action: 'pause',
+        isEnabled: true,
+        createdAt: '2026-01-01T09:00:00.000Z',
+        createdBy: 'Admin',
+      },
+      {
+        id: 'rule-terminate',
+        scheduleId: 'sched-1',
+        triggerType: 'severity_threshold',
+        threshold: 1,
+        specificViolationType: null,
+        specificSeverity: 'high',
+        action: 'terminate',
+        isEnabled: true,
+        createdAt: '2026-01-01T09:00:00.000Z',
+        createdBy: 'Admin',
+      },
+    ];
+
+    const summaries = [
+      {
+        schedule: buildSchedule(),
+        runtime: buildRuntime(),
+        studentCount: 1,
+        activeCount: 1,
+        alertCount: 1,
+        degradedLiveMode: false,
+      },
+    ];
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(summaries))
+      .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(jsonResponse(summaries))
+      .mockResolvedValueOnce(jsonResponse(detail));
+    global.fetch = fetchMock as typeof fetch;
+
+    const warnSpy = vi
+      .spyOn(examDeliveryService, 'warnStudent')
+      .mockResolvedValue({ success: true });
+    const pauseSpy = vi
+      .spyOn(examDeliveryService, 'pauseStudentAttempt')
+      .mockResolvedValue({ success: true });
+    const terminateSpy = vi
+      .spyOn(examDeliveryService, 'terminateStudentAttempt')
+      .mockResolvedValue({ success: true });
+
+    const { result } = renderHook(() => useProctorRouteController());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.sessions).toHaveLength(1);
+      expect(result.current.violationRules).toHaveLength(3);
+    });
+
+    await act(async () => {
+      await result.current.evaluateViolationRules('sched-1', result.current.sessions);
+    });
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      'attempt-1',
+      'Auto-warning triggered by violation_count',
+      'system',
+    );
+    expect(pauseSpy).toHaveBeenCalledTimes(1);
+    expect(pauseSpy).toHaveBeenCalledWith('attempt-1', 'system');
+    expect(terminateSpy).toHaveBeenCalledTimes(1);
+    expect(terminateSpy).toHaveBeenCalledWith('attempt-1', 'system');
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/v1/proctor/sessions',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      4,
+      '/api/v1/proctor/sessions/sched-1',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('skips evaluation and avoids reload when no enabled rules exist (worst case)', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
+
+    const detail = buildDetail();
+    detail.violationRules = [
+      {
+        id: 'rule-disabled',
+        scheduleId: 'sched-1',
+        triggerType: 'violation_count',
+        threshold: 1,
+        specificViolationType: null,
+        specificSeverity: null,
+        action: 'warn',
+        isEnabled: false,
+        createdAt: '2026-01-01T09:00:00.000Z',
+        createdBy: 'Admin',
+      },
+    ];
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            schedule: buildSchedule(),
+            runtime: buildRuntime(),
+            studentCount: 1,
+            activeCount: 1,
+            alertCount: 0,
+            degradedLiveMode: false,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonResponse(detail));
+    global.fetch = fetchMock as typeof fetch;
+
+    const warnSpy = vi
+      .spyOn(examDeliveryService, 'warnStudent')
+      .mockResolvedValue({ success: true });
+    const pauseSpy = vi
+      .spyOn(examDeliveryService, 'pauseStudentAttempt')
+      .mockResolvedValue({ success: true });
+    const terminateSpy = vi
+      .spyOn(examDeliveryService, 'terminateStudentAttempt')
+      .mockResolvedValue({ success: true });
+
+    const { result } = renderHook(() => useProctorRouteController());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    await act(async () => {
+      await result.current.evaluateViolationRules('sched-1', result.current.sessions);
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(pauseSpy).not.toHaveBeenCalled();
+    expect(terminateSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads state even when thresholds are not met, without dispatching actions (worst case)', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
+
+    const detail = buildDetail();
+    detail.violationRules = [
+      {
+        id: 'rule-high-threshold',
+        scheduleId: 'sched-1',
+        triggerType: 'violation_count',
+        threshold: 2,
+        specificViolationType: null,
+        specificSeverity: null,
+        action: 'warn',
+        isEnabled: true,
+        createdAt: '2026-01-01T09:00:00.000Z',
+        createdBy: 'Admin',
+      },
+    ];
+
+    const summaries = [
+      {
+        schedule: buildSchedule(),
+        runtime: buildRuntime(),
+        studentCount: 1,
+        activeCount: 1,
+        alertCount: 0,
+        degradedLiveMode: false,
+      },
+    ];
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(summaries))
+      .mockResolvedValueOnce(jsonResponse(detail))
+      .mockResolvedValueOnce(jsonResponse(summaries))
+      .mockResolvedValueOnce(jsonResponse(detail));
+    global.fetch = fetchMock as typeof fetch;
+
+    const warnSpy = vi
+      .spyOn(examDeliveryService, 'warnStudent')
+      .mockResolvedValue({ success: true });
+
+    const { result } = renderHook(() => useProctorRouteController());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.sessions).toHaveLength(1);
+    });
+
+    await act(async () => {
+      await result.current.evaluateViolationRules('sched-1', result.current.sessions);
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('ignores failed session detail fetches and still hydrates schedule summaries (worst case)', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse([
+          {
+            schedule: buildSchedule(),
+            runtime: buildRuntime(),
+            studentCount: 1,
+            activeCount: 1,
+            alertCount: 0,
+            degradedLiveMode: false,
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(jsonFailure('detail down'));
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useProctorRouteController());
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    expect(result.current.error).toBeNull();
+    expect(result.current.schedules).toHaveLength(1);
+    expect(result.current.runtimeSnapshots).toHaveLength(1);
+    expect(result.current.sessions).toHaveLength(0);
+    expect(result.current.alerts).toHaveLength(0);
+    expect(result.current.auditLogs).toHaveLength(0);
+    expect(result.current.notes).toHaveLength(0);
+    expect(result.current.violationRules).toHaveLength(0);
   });
 });

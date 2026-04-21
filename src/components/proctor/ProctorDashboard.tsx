@@ -14,10 +14,12 @@ import { examDeliveryService } from '../../services/examDeliveryService';
 import { backendPost } from '../../services/backendBridge';
 import { useStudentFilters } from './hooks/useStudentFilters';
 import { logger } from '../../utils/logger';
+import type { ProctorScheduleMetrics } from '../../features/proctor/contracts';
 
 interface ProctorDashboardProps {
   schedules: ExamSchedule[];
   runtimeSnapshots: ExamSessionRuntime[];
+  scheduleMetrics: Record<string, ProctorScheduleMetrics>;
   sessions: StudentSession[];
   alerts: ProctorAlert[];
   currentProctorId?: string | undefined;
@@ -26,6 +28,8 @@ interface ProctorDashboardProps {
   railSelection?: 'dashboard' | 'alerts' | 'audit' | 'notes';
   auditLogs?: SessionAuditLog[];
   notes?: SessionNote[];
+  selectedScheduleId: string | null;
+  onSelectScheduleId: (scheduleId: string | null) => void;
   onUpdateSessions: (sessions: StudentSession[]) => void;
   onUpdateAlerts: (alerts: ProctorAlert[]) => void;
   onUpdateNotes?: (notes: SessionNote[]) => void;
@@ -40,6 +44,7 @@ interface ProctorDashboardProps {
 export const ProctorDashboard = React.memo(function ProctorDashboard({
   schedules,
   runtimeSnapshots,
+  scheduleMetrics,
   sessions,
   alerts,
   currentProctorId,
@@ -48,6 +53,8 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   railSelection = 'dashboard',
   auditLogs = [],
   notes = [],
+  selectedScheduleId,
+  onSelectScheduleId,
   onUpdateSessions,
   onUpdateAlerts,
   onUpdateNotes,
@@ -60,7 +67,6 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
 }: ProctorDashboardProps) {
   type CohortControlAction = 'start' | 'pause' | 'resume' | 'end_section' | 'extend_5' | 'extend_10' | 'complete';
 
-  const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -136,6 +142,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
       .map((schedule) => {
         const runtime = runtimeSnapshots.find((item) => item.scheduleId === schedule.id);
         const roster = enrichedSessions.filter((session) => session.scheduleId === schedule.id);
+        const metrics = scheduleMetrics[schedule.id];
+        const studentCount = metrics?.studentCount ?? roster.length;
+        const activeCount =
+          metrics?.activeCount ??
+          roster.filter((session) => session.status === 'active' || session.status === 'warned').length;
+        const violationCount =
+          metrics?.violationCount ??
+          roster.reduce((count, session) => count + session.violations.length, 0);
         return {
           id: schedule.id,
           scheduleId: schedule.id,
@@ -154,9 +168,9 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                   : 'not_started'),
           isReadyToStart: isScheduleReadyToStart(schedule, runtime, now),
           currentLiveSection: runtime?.currentSectionKey ?? null,
-          studentCount: roster.length,
-          activeCount: roster.filter((session) => session.status === 'active' || session.status === 'warned').length,
-          violationCount: roster.reduce((count, session) => count + session.violations.length, 0),
+          studentCount,
+          activeCount,
+          violationCount,
           status:
             schedule.status === 'cancelled'
               ? 'cancelled'
@@ -169,7 +183,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
         } satisfies ExamGroup;
       })
       .sort((a, b) => new Date(a.scheduledStartTime).getTime() - new Date(b.scheduledStartTime).getTime());
-  }, [enrichedSessions, runtimeSnapshots, schedules]);
+  }, [enrichedSessions, runtimeSnapshots, scheduleMetrics, schedules]);
 
   const selectedGroup = selectedScheduleId ? scheduleGroups.find((group) => group.scheduleId === selectedScheduleId) : undefined;
   const selectedRuntime = selectedScheduleId ? runtimeSnapshots.find((runtime) => runtime.scheduleId === selectedScheduleId) : undefined;
@@ -226,11 +240,11 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   }, [filteredSessions, railSelection, selectedScheduleId, selectedStudentId]);
 
   const handleSelectSchedule = useCallback((scheduleId: string | null) => {
-    setSelectedScheduleId(scheduleId);
+    onSelectScheduleId(scheduleId);
     setSelectedStudentId(null);
     setSelectedStudentIds(new Set());
     setIsSelectionMode(false);
-  }, []);
+  }, [onSelectScheduleId]);
 
   const handleSelectStudent = useCallback(
     (studentId: string | null) => {

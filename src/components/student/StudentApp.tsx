@@ -110,10 +110,12 @@ export function StudentApp() {
   const { state: runtimeState, actions: runtimeActions, examState, onExit } = useStudentRuntime();
   const { actions: attemptActions, state: attemptState } = useStudentAttempt();
   const { state: uiState, actions: uiActions } = useStudentUI();
+  const [finalSubmitStatus, setFinalSubmitStatus] = useState<'idle' | 'submitting' | 'retrying' | 'failed'>('idle');
   const blockingCopy = getBlockingCopy(runtimeState.blocking.reason);
   const { setShowTimeExtensionRequest } = uiActions;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeFinalSubmitRef = useRef<string | null>(null);
+  const finalSubmitInFlightRef = useRef<Promise<void> | null>(null);
   const [warningOpen, setWarningOpen] = useState(false);
   const [warningMessage, setWarningMessage] = useState('');
   const [warningSeverity, setWarningSeverity] = useState<'medium' | 'high' | 'critical'>(
@@ -185,6 +187,10 @@ export function StudentApp() {
       return;
     }
 
+    if (runtimeState.blocking.active) {
+      return;
+    }
+
     if (runtimeState.displayTimeRemaining !== 0) {
       return;
     }
@@ -195,12 +201,21 @@ export function StudentApp() {
     }
 
     autoSubmitFingerprintRef.current = fingerprint;
-    void attemptActions.flushPending();
-    runtimeActions.submitModule();
+    void (async () => {
+      const flushed = await attemptActions.flushPending();
+      if (!flushed) {
+        runtimeActions.setBlockingReason(navigator.onLine ? 'syncing_reconnect' : 'offline');
+        return;
+      }
+
+      runtimeActions.setBlockingReason(null);
+      runtimeActions.submitModule();
+    })();
   }, [
     attemptActions,
     examState.config.progression.autoSubmit,
     runtimeActions,
+    runtimeState.blocking.active,
     runtimeState.currentModule,
     runtimeState.displayTimeRemaining,
     runtimeState.phase,
@@ -232,7 +247,14 @@ export function StudentApp() {
 
   const handleModuleSubmit = async () => {
     if (runtimeState.runtimeBacked) {
-      await attemptActions.submitAttempt();
+      const flushed = await attemptActions.flushPending();
+      if (!flushed) {
+        runtimeActions.setBlockingReason(navigator.onLine ? 'syncing_reconnect' : 'offline');
+        return;
+      }
+
+      runtimeActions.setBlockingReason(null);
+      runtimeActions.submitModule();
       return;
     }
 
@@ -252,15 +274,24 @@ export function StudentApp() {
   useEffect(() => {
     if (!runtimeState.runtimeBacked) {
       runtimeFinalSubmitRef.current = null;
+      finalSubmitInFlightRef.current = null;
+      setFinalSubmitStatus('idle');
       return;
     }
 
     if (runtimeState.runtimeStatus !== 'completed') {
       runtimeFinalSubmitRef.current = null;
+      finalSubmitInFlightRef.current = null;
+      setFinalSubmitStatus('idle');
       return;
     }
 
     if (runtimeState.phase === 'post-exam') {
+      return;
+    }
+
+    if (attemptState.attempt?.phase === 'post-exam') {
+      setFinalSubmitStatus('idle');
       return;
     }
 
@@ -273,9 +304,46 @@ export function StudentApp() {
       return;
     }
 
-    runtimeFinalSubmitRef.current = attemptId;
-    void attemptActions.submitAttempt();
-  }, [attemptActions, attemptState.attemptId, runtimeState.runtimeBacked, runtimeState.runtimeStatus]);
+    if (finalSubmitInFlightRef.current) {
+      return;
+    }
+
+    finalSubmitInFlightRef.current = (async () => {
+      const maxAttempts = 6;
+      for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex += 1) {
+        setFinalSubmitStatus(attemptIndex === 0 ? 'submitting' : 'retrying');
+
+        try {
+          const submitted = await attemptActions.submitAttempt();
+          if (submitted) {
+            runtimeFinalSubmitRef.current = attemptId;
+            setFinalSubmitStatus('idle');
+            return;
+          }
+        } catch {
+          // ignore and retry
+        }
+
+        const backoffMs = Math.min(30_000, 1_000 * 2 ** attemptIndex);
+        await new Promise<void>((resolve) => {
+          window.setTimeout(() => resolve(), backoffMs);
+        });
+      }
+
+      setFinalSubmitStatus('failed');
+    })();
+
+    void finalSubmitInFlightRef.current.finally(() => {
+      finalSubmitInFlightRef.current = null;
+    });
+  }, [
+    attemptActions,
+    attemptState.attempt?.phase,
+    attemptState.attemptId,
+    runtimeState.phase,
+    runtimeState.runtimeBacked,
+    runtimeState.runtimeStatus,
+  ]);
 
   const handleAnswerChange = (questionId: string, answer: Parameters<typeof runtimeActions.setAnswer>[1]) => {
     runtimeActions.setAnswer(questionId, answer);
@@ -319,6 +387,39 @@ export function StudentApp() {
       </div>
     ) : null;
 
+  const finalSubmitOverlay =
+    runtimeState.runtimeBacked &&
+    runtimeState.runtimeStatus === 'completed' &&
+    runtimeState.phase !== 'post-exam' &&
+    attemptState.attempt?.phase !== 'post-exam' &&
+    finalSubmitStatus !== 'idle' ? (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/70 backdrop-blur-sm p-4">
+        <div className="max-w-md w-full bg-white rounded-sm border border-gray-100 shadow-2xl p-6 md:p-8 text-center">
+          <p className="text-[10px] font-bold uppercase tracking-[0.3em] text-gray-500 mb-3">
+            Submission
+          </p>
+          <h2 className="text-2xl font-black text-gray-900 mb-3">Submitting your exam</h2>
+          <p className="text-sm text-gray-700 leading-6">
+            {finalSubmitStatus === 'failed'
+              ? 'We could not confirm submission yet. Stay on this page and check your connection.'
+              : 'Please keep this page open while we finalize your submission.'}
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <div className="px-3 py-1 rounded-sm bg-gray-50 border border-gray-100 text-xs font-bold uppercase tracking-widest text-gray-700">
+              {finalSubmitStatus === 'submitting'
+                ? 'Submitting'
+                : finalSubmitStatus === 'retrying'
+                  ? 'Retrying'
+                  : 'Needs attention'}
+            </div>
+            <div className="px-3 py-1 rounded-sm bg-amber-50 border border-amber-700 text-xs font-bold uppercase tracking-widest text-amber-900">
+              Do not close
+            </div>
+          </div>
+        </div>
+      </div>
+    ) : null;
+
   if (runtimeState.phase === 'pre-check') {
     return (
       <div className="flex flex-col h-screen w-full bg-gray-50 font-sans text-gray-900">
@@ -336,6 +437,7 @@ export function StudentApp() {
           />
         </main>
         {blockingOverlay}
+        {finalSubmitOverlay}
       </div>
     );
   }
@@ -349,6 +451,7 @@ export function StudentApp() {
         <main id="main-content" role="main">
           <Lobby state={examState} onStart={runtimeActions.startExam} onExit={onExit} />
         </main>
+        {finalSubmitOverlay}
       </div>
     );
   }
@@ -368,6 +471,7 @@ export function StudentApp() {
             <Button onClick={onExit}>Exit Exam Platform</Button>
           </div>
         </main>
+        {finalSubmitOverlay}
       </div>
     );
   }
@@ -462,6 +566,7 @@ export function StudentApp() {
       </main>
 
       {blockingOverlay}
+      {finalSubmitOverlay}
 
       {(runtimeState.currentModule === 'reading' ||
         runtimeState.currentModule === 'listening') ? (
@@ -471,7 +576,7 @@ export function StudentApp() {
           onNavigate={runtimeActions.setCurrentQuestionId}
           answers={runtimeState.answers}
           flags={runtimeState.flags}
-          onToggleFlag={runtimeActions.toggleFlag}
+          onToggleFlag={handleFlagToggle}
           onSubmit={handleModuleSubmit}
         />
       ) : null}

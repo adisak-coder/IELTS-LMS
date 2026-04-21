@@ -1208,6 +1208,68 @@ fn submit_route_key(schedule_id: Uuid) -> String {
     format!("POST:/api/v1/student/sessions/{schedule_id}/submit")
 }
 
+pub(crate) async fn auto_submit_schedule_attempts_in_tx(
+    connection: &mut MySqlConnection,
+    schedule_id: Uuid,
+    completion_reason: &str,
+) -> Result<(), DeliveryError> {
+    let pending_attempts = sqlx::query_as::<_, StudentAttempt>(
+        "SELECT * FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL FOR UPDATE",
+    )
+    .bind(schedule_id.to_string())
+    .fetch_all(&mut *connection)
+    .await?;
+
+    if pending_attempts.is_empty() {
+        return Ok(());
+    }
+
+    let now = Utc::now();
+    for attempt in pending_attempts {
+        let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+        let final_submission = json!({
+            "submissionId": submission_id,
+            "submittedAt": now,
+            "answers": attempt.answers,
+            "writingAnswers": attempt.writing_answers,
+            "flags": attempt.flags,
+            "completionReason": completion_reason,
+            "autoSubmission": true
+        });
+        let recovery = merge_recovery(
+            attempt.recovery.clone(),
+            json!({
+                "lastPersistedAt": now,
+                "pendingMutationCount": 0,
+                "syncState": "saved"
+            }),
+        );
+
+        sqlx::query(
+            r#"
+            UPDATE student_attempts
+            SET
+                phase = ?,
+                recovery = ?,
+                final_submission = ?,
+                submitted_at = ?,
+                updated_at = NOW(),
+                revision = revision + 1
+            WHERE id = ?
+            "#,
+        )
+        .bind("post-exam")
+        .bind(recovery)
+        .bind(&final_submission)
+        .bind(now)
+        .bind(&attempt.id)
+        .execute(&mut *connection)
+        .await?;
+    }
+
+    Ok(())
+}
+
 #[derive(sqlx::FromRow)]
 struct AttemptRegistrationRow {
     registration_id: Hyphenated,

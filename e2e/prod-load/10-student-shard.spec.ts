@@ -1,6 +1,8 @@
 import { expect, test, type BrowserContext, type Page } from '@playwright/test';
+import fs from 'node:fs';
 import { readEffectiveProdTarget } from '../support/prodData';
 import {
+  applyProdRosterOverrides,
   computeArrivalJitterMs,
   computeScenarioAssignments,
   resolveProdRunContext,
@@ -22,6 +24,39 @@ import {
   waitForStudentSessionCookie,
 } from '../support/studentUi';
 import { makeProgressLogger } from '../support/prodProgress';
+
+async function waitForRuntimeOverrideIfBootstrapping() {
+  if (process.env['E2E_PROD_BOOTSTRAP'] !== 'true') return;
+
+  const shouldWait = process.env['E2E_PROD_WAIT_FOR_RUNTIME_OVERRIDE'] === 'true';
+  const shardIndex = Number(process.env['E2E_PROD_SHARD_INDEX'] ?? '0');
+  if (shardIndex === 0 && !shouldWait) return;
+
+  const runtimePath = process.env['E2E_PROD_RUNTIME_PATH'] ?? 'e2e/.generated/prod-runtime.json';
+  const resolved = runtimePath.startsWith('/') ? runtimePath : `${process.cwd()}/${runtimePath}`;
+  const timeoutMs = Number(process.env['E2E_PROD_BOOTSTRAP_RUNTIME_WAIT_TIMEOUT_MS'] ?? `${5 * 60_000}`);
+  const startedAt = Date.now();
+
+  const looksLikePlaceholder = (value: string) => /REPLACE_ME/i.test(value);
+
+  while (Date.now() - startedAt < timeoutMs) {
+    if (fs.existsSync(resolved)) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(resolved, 'utf8')) as any;
+        const scheduleId = String(raw?.scheduleId ?? '');
+        const examId = String(raw?.examId ?? '');
+        if (scheduleId && examId && !looksLikePlaceholder(scheduleId) && !looksLikePlaceholder(examId)) {
+          return;
+        }
+      } catch {
+        // ignore parse errors while the file is being written
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error(`Runtime override not ready after ${timeoutMs}ms. Looked for ${resolved}.`);
+}
 
 async function waitForExamSurface(page: Page) {
   const completeHeading = page.getByRole('heading', { name: /Examination Complete!/i });
@@ -65,7 +100,7 @@ async function waitForExamStart(page: Page) {
       if (await waiting.isVisible().catch(() => false)) return 'waiting';
       return 'pending';
     }, { timeout: timeoutMs })
-    .not.toBe('waiting');
+    .toMatch(/^(complete|answer|writing|finish|review)$/);
 }
 
 async function performViolationIfAssignedWith(
@@ -192,7 +227,8 @@ async function tryProgressAndSubmit(
 
 test.describe('Prod load: student shard', () => {
   test('students check in, wait, and complete the short load exam', async ({ browser }, testInfo) => {
-    const target = readEffectiveProdTarget();
+    await waitForRuntimeOverrideIfBootstrapping();
+    const target = applyProdRosterOverrides(readEffectiveProdTarget());
     const run = resolveProdRunContext(target);
     const assignments = computeScenarioAssignments(target);
     const progress = makeProgressLogger({ runId: run.runId, shardIndex: run.shardIndex, shardCount: run.shardCount });

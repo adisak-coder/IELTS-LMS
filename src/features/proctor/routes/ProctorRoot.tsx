@@ -20,7 +20,10 @@ export function ProctorRoot() {
     notes,
     runtimeSnapshots,
     schedules,
+    scheduleMetrics,
     sessions,
+    selectedScheduleId,
+    setSelectedScheduleId,
     handleCompleteExam,
     handleEndSectionNow,
     handleExtendCurrentSection,
@@ -37,7 +40,7 @@ export function ProctorRoot() {
     return <LoadingSurface label="Loading Proctor..." />;
   }
 
-  if (error) {
+  if (error && schedules.length === 0 && runtimeSnapshots.length === 0) {
     return (
       <ErrorSurface
         title="Loading Error"
@@ -54,10 +57,14 @@ export function ProctorRoot() {
     <ProctorApp
       schedules={schedules}
       runtimeSnapshots={runtimeSnapshots}
+      scheduleMetrics={scheduleMetrics}
       sessions={sessions}
       alerts={alerts}
       auditLogs={auditLogs}
       notes={notes}
+      connectionError={error}
+      selectedScheduleId={selectedScheduleId}
+      onSelectScheduleId={setSelectedScheduleId}
       onExit={() => navigate('/admin')}
       onUpdateSessions={setSessions}
       onUpdateAlerts={setAlerts}

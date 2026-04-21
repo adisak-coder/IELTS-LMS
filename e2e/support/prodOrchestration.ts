@@ -44,6 +44,73 @@ export function computeArrivalJitterMs(runId: string, wcode: string, rampSeconds
   return (hash % (rampSeconds * 1000)) | 0;
 }
 
+export function applyProdRosterOverrides(target: ProdTarget): ProdTarget {
+  const studentLimitRaw = process.env['E2E_PROD_STUDENT_LIMIT'];
+  const proctorLimitRaw = process.env['E2E_PROD_PROCTOR_LIMIT'];
+
+  const studentLimit = studentLimitRaw ? Number(studentLimitRaw) : target.students.length;
+  const proctorLimit = proctorLimitRaw ? Number(proctorLimitRaw) : target.proctors.length;
+
+  const students = target.students.slice(
+    0,
+    Number.isFinite(studentLimit) ? Math.max(1, studentLimit) : target.students.length,
+  );
+  const proctors = target.proctors.slice(
+    0,
+    Number.isFinite(proctorLimit) ? Math.max(1, proctorLimit) : target.proctors.length,
+  );
+
+  const clamp = (value: number, max: number) => Math.max(0, Math.min(value, max));
+  const maxStudents = students.length;
+
+  const adjustedScenario = {
+    ...target.scenario,
+    checkedInStartThreshold: clamp(target.scenario.checkedInStartThreshold, maxStudents),
+    invalidCheckInCount: clamp(target.scenario.invalidCheckInCount, maxStudents),
+    offlineToggleStudentCount: clamp(target.scenario.offlineToggleStudentCount, maxStudents),
+    violations: {
+      ...target.scenario.violations,
+      tabSwitchCount: clamp(target.scenario.violations.tabSwitchCount, maxStudents),
+      clipboardBlockedCount: clamp(target.scenario.violations.clipboardBlockedCount, maxStudents),
+      contextMenuBlockedCount: clamp(target.scenario.violations.contextMenuBlockedCount, maxStudents),
+    },
+    interventions: {
+      ...target.scenario.interventions,
+      terminateCount: clamp(target.scenario.interventions.terminateCount, maxStudents),
+      warnCount: clamp(target.scenario.interventions.warnCount, maxStudents),
+      pauseResumeCount: clamp(target.scenario.interventions.pauseResumeCount, maxStudents),
+    },
+  };
+
+  const minimalScenario = process.env['E2E_PROD_MINIMAL_SCENARIO'] === 'true';
+  const scenario = minimalScenario
+    ? {
+        ...adjustedScenario,
+        arrivalRampSeconds: Math.min(30, adjustedScenario.arrivalRampSeconds),
+        checkedInStartThreshold: clamp(3, maxStudents),
+        invalidCheckInCount: clamp(1, maxStudents),
+        offlineToggleStudentCount: clamp(0, maxStudents),
+        violations: {
+          tabSwitchCount: clamp(1, maxStudents),
+          clipboardBlockedCount: clamp(0, maxStudents),
+          contextMenuBlockedCount: clamp(0, maxStudents),
+        },
+        interventions: {
+          warnCount: clamp(1, maxStudents),
+          pauseResumeCount: clamp(0, maxStudents),
+          terminateCount: clamp(0, maxStudents),
+        },
+      }
+    : adjustedScenario;
+
+  return {
+    ...target,
+    students,
+    proctors,
+    scenario,
+  };
+}
+
 export function selectShardStudents(target: ProdTarget, shardIndex: number, shardCount: number) {
   return target.students.filter((_, index) => index % shardCount === shardIndex);
 }
@@ -147,4 +214,3 @@ export async function pollUntil<T>(
     `Timed out after ${opts.timeoutMs}ms${suffix}.${lastError ? ` Last error: ${String(lastError)}` : ''}`,
   );
 }
-

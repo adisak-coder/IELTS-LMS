@@ -1,5 +1,6 @@
 import React, { useEffect, type ReactNode } from 'react';
 import { useProctoring } from './StudentProctoringProvider';
+import { useStudentAttempt } from './StudentAttemptProvider';
 import { useStudentRuntime } from './StudentRuntimeProvider';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
 
@@ -47,11 +48,11 @@ function isEditingTarget(target: EventTarget | null) {
 
 export function KeyboardProvider({ children }: KeyboardProviderProps) {
   const { state: runtimeState, actions: runtimeActions } = useStudentRuntime();
+  const { state: attemptState } = useStudentAttempt();
   const { handleViolation } = useProctoring();
 
-  // Get session and student IDs from runtime state for audit logging
-  const sessionId = runtimeState.scheduleId;
-  const studentId = runtimeState.studentId;
+  const sessionId = attemptState.attempt?.scheduleId;
+  const studentId = attemptState.attemptId ?? undefined;
 
   useEffect(() => {
     const handleRestrictedInteraction = (
@@ -247,7 +248,13 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
       document.removeEventListener('dragstart', handleDragDrop);
       document.removeEventListener('drop', handleDragDrop);
     };
-  }, [handleViolation, runtimeActions, runtimeState]);
+  }, [
+    attemptState.attempt?.scheduleId,
+    attemptState.attemptId,
+    handleViolation,
+    runtimeActions,
+    runtimeState,
+  ]);
 
   return <>{children}</>;
 }
