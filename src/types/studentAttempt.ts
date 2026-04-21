@@ -72,6 +72,7 @@ export interface StudentAttempt {
   integrity: {
     preCheck: StudentPreCheckResult | null;
     deviceFingerprintHash: string | null;
+    clientSessionId: string | null;
     lastDisconnectAt: string | null;
     lastReconnectAt: string | null;
     lastHeartbeatAt: string | null;
@@ -83,6 +84,7 @@ export interface StudentAttempt {
     lastPersistedAt: string | null;
     pendingMutationCount: number;
     serverAcceptedThroughSeq: number;
+    clientSessionId: string | null;
     syncState: AttemptSyncState;
   };
   createdAt: string;

@@ -1,6 +1,7 @@
 import React from 'react';
 import { FlowChartBlock as FlowChartBlockType } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface FlowChartBlockProps {
   block: FlowChartBlockType;
@@ -26,7 +27,7 @@ export function FlowChartBlock({ block, startNum, endNum, updateBlock, deleteBlo
 
   const addStep = () => {
     const newStep = {
-      id: `s${Date.now()}`,
+      id: createId('step'),
       label: '',
       correctAnswer: ''
     };

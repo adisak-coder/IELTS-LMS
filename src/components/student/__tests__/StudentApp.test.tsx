@@ -440,7 +440,7 @@ describe('StudentApp runtime-backed mode', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(600);
+      await vi.advanceTimersByTimeAsync(900);
     });
 
     expect(screen.getByText(/Tab switching detected/i)).toBeInTheDocument();
@@ -569,6 +569,332 @@ describe('StudentApp runtime-backed mode', () => {
     });
 
     expect(screen.queryByText(/Examination Complete!/i)).not.toBeInTheDocument();
+  });
+
+  it('blocks submission when unansweredSubmissionPolicy is block', async () => {
+    const user = userEvent.setup();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+
+    const config = createDefaultConfig('Academic', 'Academic');
+    config.security.requireFullscreen = false;
+    config.security.detectSecondaryScreen = false;
+    config.progression.autoSubmit = false;
+    config.progression.unansweredSubmissionPolicy = 'block';
+    config.sections.listening.enabled = false;
+    config.sections.writing.enabled = false;
+    config.sections.speaking.enabled = false;
+
+    const examState: ExamState = {
+      title: 'Submit Exam',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'p1',
+      activeListeningPartId: 'l1',
+      config,
+      reading: {
+        passages: [
+          {
+            id: 'p1',
+            title: 'Passage 1',
+            content: 'Seeded passage',
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question using one word from the passage.',
+                questions: [
+                  {
+                    id: 'q1',
+                    prompt: 'Question 1',
+                    correctAnswer: 'seeded answer',
+                    answerRule: 'ONE_WORD',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: {
+        task1Prompt: 'Task 1 prompt',
+        task2Prompt: 'Task 2 prompt',
+      },
+      speaking: {
+        part1Topics: [],
+        cueCard: '',
+        part3Discussion: [],
+      },
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Submit Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'reading',
+      currentQuestionId: 'q1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      integrity: {
+        preCheck: null,
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        pendingMutationCount: 0,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    render(<StudentAppWrapper state={examState} onExit={() => {}} attemptSnapshot={attemptSnapshot} />);
+
+    await user.click(screen.getByRole('button', { name: 'Finish' }));
+
+    expect(screen.getByText(/must answer all questions/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Submit Section' })).toBeDisabled();
+    expect(screen.queryByText(/Examination Complete!/i)).not.toBeInTheDocument();
+  });
+
+  it('shows a confirmation when unansweredSubmissionPolicy is confirm and allows submitting with unanswered', async () => {
+    const user = userEvent.setup();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+
+    const config = createDefaultConfig('Academic', 'Academic');
+    config.security.requireFullscreen = false;
+    config.security.detectSecondaryScreen = false;
+    config.progression.autoSubmit = false;
+    config.progression.unansweredSubmissionPolicy = 'confirm';
+    config.sections.listening.enabled = false;
+    config.sections.writing.enabled = false;
+    config.sections.speaking.enabled = false;
+
+    const examState: ExamState = {
+      title: 'Submit Exam',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'p1',
+      activeListeningPartId: 'l1',
+      config,
+      reading: {
+        passages: [
+          {
+            id: 'p1',
+            title: 'Passage 1',
+            content: 'Seeded passage',
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question using one word from the passage.',
+                questions: [
+                  {
+                    id: 'q1',
+                    prompt: 'Question 1',
+                    correctAnswer: 'seeded answer',
+                    answerRule: 'ONE_WORD',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: {
+        task1Prompt: 'Task 1 prompt',
+        task2Prompt: 'Task 2 prompt',
+      },
+      speaking: {
+        part1Topics: [],
+        cueCard: '',
+        part3Discussion: [],
+      },
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Submit Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'reading',
+      currentQuestionId: 'q1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      integrity: {
+        preCheck: null,
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        pendingMutationCount: 0,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    render(<StudentAppWrapper state={examState} onExit={() => {}} attemptSnapshot={attemptSnapshot} />);
+
+    await user.click(screen.getByRole('button', { name: 'Finish' }));
+    expect(screen.getByText(/unanswered question/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Submit Section' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Submit Section' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Examination Complete!/i)).toBeInTheDocument();
+    });
+  });
+
+  it('submits immediately when unansweredSubmissionPolicy is allow even with unanswered', async () => {
+    const user = userEvent.setup();
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+
+    const config = createDefaultConfig('Academic', 'Academic');
+    config.security.requireFullscreen = false;
+    config.security.detectSecondaryScreen = false;
+    config.progression.autoSubmit = false;
+    config.progression.unansweredSubmissionPolicy = 'allow';
+    config.sections.listening.enabled = false;
+    config.sections.writing.enabled = false;
+    config.sections.speaking.enabled = false;
+
+    const examState: ExamState = {
+      title: 'Submit Exam',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'p1',
+      activeListeningPartId: 'l1',
+      config,
+      reading: {
+        passages: [
+          {
+            id: 'p1',
+            title: 'Passage 1',
+            content: 'Seeded passage',
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question using one word from the passage.',
+                questions: [
+                  {
+                    id: 'q1',
+                    prompt: 'Question 1',
+                    correctAnswer: 'seeded answer',
+                    answerRule: 'ONE_WORD',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: {
+        task1Prompt: 'Task 1 prompt',
+        task2Prompt: 'Task 2 prompt',
+      },
+      speaking: {
+        part1Topics: [],
+        cueCard: '',
+        part3Discussion: [],
+      },
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Submit Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'reading',
+      currentQuestionId: 'q1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      integrity: {
+        preCheck: null,
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        pendingMutationCount: 0,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    render(<StudentAppWrapper state={examState} onExit={() => {}} attemptSnapshot={attemptSnapshot} />);
+
+    await user.click(screen.getByRole('button', { name: 'Finish' }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Examination Complete!/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Confirm Submission/i)).not.toBeInTheDocument();
   });
 
   it('auto-submits the final self-paced module at 00:00 and shows the completion screen', async () => {

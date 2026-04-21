@@ -3,6 +3,7 @@ import { useProctoring } from './StudentProctoringProvider';
 import { useStudentAttempt } from './StudentAttemptProvider';
 import { useStudentRuntime } from './StudentRuntimeProvider';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
+import { useStudentUI } from './StudentUIProvider';
 
 interface KeyboardProviderProps {
   children: ReactNode;
@@ -48,7 +49,8 @@ function isEditingTarget(target: EventTarget | null) {
 
 export function KeyboardProvider({ children }: KeyboardProviderProps) {
   const { state: runtimeState, actions: runtimeActions, examState } = useStudentRuntime();
-  const { state: attemptState } = useStudentAttempt();
+  const { state: attemptState, actions: attemptActions } = useStudentAttempt();
+  const { actions: uiActions } = useStudentUI();
   const { handleViolation } = useProctoring();
 
   const sessionId = attemptState.attempt?.scheduleId;
@@ -115,7 +117,24 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
 
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
-        runtimeActions.submitModule();
+        void (async () => {
+          if (runtimeState.submitRequiresConfirmation) {
+            uiActions.setShowSubmitConfirm(true);
+            return;
+          }
+
+          if (runtimeState.runtimeBacked) {
+            const flushed = await attemptActions.flushPending();
+            if (!flushed) {
+              runtimeActions.setBlockingReason(navigator.onLine ? 'syncing_reconnect' : 'offline');
+              return;
+            }
+
+            runtimeActions.setBlockingReason(null);
+          }
+
+          runtimeActions.submitModule();
+        })();
         return;
       }
 
@@ -262,12 +281,14 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
       document.removeEventListener('drop', handleDragDrop);
     };
   }, [
+    attemptActions,
     attemptState.attempt?.scheduleId,
     attemptState.attemptId,
     examState.config.security.blockClipboard,
     handleViolation,
     runtimeActions,
     runtimeState,
+    uiActions,
   ]);
 
   return <>{children}</>;

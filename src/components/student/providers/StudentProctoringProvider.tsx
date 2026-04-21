@@ -276,6 +276,27 @@ export function ProctoringProvider({
     let lastTabSwitchTime = 0;
     let fullscreenReentryTimer: number | null = null;
     let secondaryScreenCheckTimer: number | null = null;
+    let closeSignalAt = 0;
+
+    const closeSignalWindowMs = 1_000;
+    const closeSignalDelayMs = 200;
+
+    const recordCloseSignal = (eventType: string) => {
+      if (runtimeState.phase !== 'exam') {
+        return;
+      }
+
+      closeSignalAt = Date.now();
+      void saveStudentAuditEvent(
+        scheduleId,
+        'BROWSER_CLOSE_DETECTED',
+        {
+          eventType,
+          timestamp: new Date().toISOString(),
+        },
+        attemptState.attemptId ?? undefined,
+      );
+    };
 
     const handleTabSwitch = (eventType: string) => {
       if (
@@ -315,15 +336,29 @@ export function ProctoringProvider({
       if (!document.hidden) {
         return;
       }
-      handleTabSwitch('visibilitychange');
+      window.setTimeout(() => {
+        if (Date.now() - closeSignalAt < closeSignalWindowMs) {
+          return;
+        }
+        handleTabSwitch('visibilitychange');
+      }, closeSignalDelayMs);
     };
 
     const handleBlur = () => {
-      handleTabSwitch('blur');
+      window.setTimeout(() => {
+        if (Date.now() - closeSignalAt < closeSignalWindowMs) {
+          return;
+        }
+        handleTabSwitch('blur');
+      }, closeSignalDelayMs);
     };
 
     const handlePageHide = () => {
-      handleTabSwitch('pagehide');
+      recordCloseSignal('pagehide');
+    };
+
+    const handleBeforeUnload = () => {
+      recordCloseSignal('beforeunload');
     };
 
     const handleFullscreenChange = async () => {
@@ -385,6 +420,7 @@ export function ProctoringProvider({
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleBlur);
     window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handleBeforeUnload);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
     if (runtimeState.phase === 'exam' && config.security.detectSecondaryScreen) {
@@ -397,6 +433,7 @@ export function ProctoringProvider({
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       if (tabSwitchDebounceTimer) {
         window.clearTimeout(tabSwitchDebounceTimer);
@@ -416,6 +453,8 @@ export function ProctoringProvider({
     runtimeActions,
     runtimeState.fullscreenViolationCount,
     runtimeState.phase,
+    attemptState.attemptId,
+    scheduleId,
   ]);
 
   return (

@@ -10,6 +10,7 @@ import { getBlockQuestionCount } from '../utils/examUtils';
 import { PassageListSidebar } from './passage/PassageListSidebar';
 import { PassageMetadataEditor } from './passage/PassageMetadataEditor';
 import { passageLibraryService } from '../services/passageLibraryService';
+import { createId } from '../utils/idUtils';
 import { TIMING } from '../constants/uiConstants';
 
 function WorkspaceSkeleton({ progress }: { progress: number }) {
@@ -121,7 +122,7 @@ export function Workspace({
   }
 
   const buildNewPassage = (): Passage => ({
-    id: `p${Date.now()}`,
+    id: createId('passage'),
     title: `Passage ${state.reading.passages.length + 1}`,
     content: '',
     blocks: [],
@@ -211,7 +212,7 @@ export function Workspace({
 
     // Create or update metadata
     const updatedMetadata: PassageMetadata = {
-      id: passage.metadata?.id || `pm-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      id: passage.metadata?.id || createId('passage_meta'),
       createdAt: passage.metadata?.createdAt || new Date().toISOString(),
       usageCount: passage.metadata?.usageCount || 0,
       lastUsedAt: passage.metadata?.lastUsedAt,

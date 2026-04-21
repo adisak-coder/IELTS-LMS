@@ -81,8 +81,12 @@ class BackendQuestionBank {
   }
 
   async updateQuestion(id: string, updates: Partial<{ block: QuestionBlock; metadata: Partial<QuestionMetadata> }>): Promise<QuestionBankItem | null> {
-    const revision = questionRevisions.get(id);
-    if (revision === undefined) return null;
+    let revision = questionRevisions.get(id);
+    if (revision === undefined) {
+      await this.getQuestion(id);
+      revision = questionRevisions.get(id);
+      if (revision === undefined) return null;
+    }
 
     const patchBody: Record<string, unknown> = {
       revision,

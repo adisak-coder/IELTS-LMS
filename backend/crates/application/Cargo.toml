@@ -36,3 +36,7 @@ path = "../../tests/integration/registration_flow.rs"
 [[test]]
 name = "revision_tracking"
 path = "../../tests/integration/revision_tracking.rs"
+
+[[test]]
+name = "submission_unanswered_policy"
+path = "../../tests/integration/submission_unanswered_policy.rs"

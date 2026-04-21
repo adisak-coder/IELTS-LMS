@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRight, ArrowLeftRight, Flag } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 interface StudentReadingProps {
   state: ExamState;
@@ -88,7 +89,7 @@ export function StudentReading({ state, answers, onAnswerChange, currentQuestion
           <h2 className="text-lg md:text-xl font-bold mb-4 md:mb-6">{activePassage.title}</h2>
           <div className="leading-relaxed text-gray-900 space-y-4 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:text-xl [&_h2]:font-bold [&_h3]:text-lg [&_h3]:font-bold [&_img]:max-w-full [&_img]:rounded-2xl [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6">
             {passageHasHtml ? (
-              <div dangerouslySetInnerHTML={{ __html: activePassage.content }} />
+              <div dangerouslySetInnerHTML={{ __html: sanitizeHtml(activePassage.content) }} />
             ) : (
               <div className="whitespace-pre-wrap">{activePassage.content}</div>
             )}

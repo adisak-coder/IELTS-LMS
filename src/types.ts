@@ -525,6 +525,7 @@ export interface ExamConfig {
     allowPause: boolean;
     showWarnings: boolean;
     warningThreshold: number;
+    unansweredSubmissionPolicy?: 'allow' | 'confirm' | 'block' | undefined;
   };
   delivery: {
     launchMode: 'proctor_start';

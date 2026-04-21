@@ -3,6 +3,7 @@ import { ExamState, ListeningPart, QuestionBlock } from '../../types';
 import { QuestionBuilderPane } from '../QuestionBuilderPane';
 import { Play, Square, Rewind, FastForward, Volume2, MapPin, Plus, Trash2, Link as LinkIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { normalizeAudioUrl } from '../../utils/audioUrl';
+import { createId } from '../../utils/idUtils';
 
 interface ListeningWorkspaceProps {
   state: ExamState;
@@ -122,7 +123,7 @@ export function ListeningWorkspace({ state, setState }: ListeningWorkspaceProps)
 
   const addPin = () => {
     const newPin = {
-      id: `pin${Date.now()}`,
+      id: createId('pin'),
       time: formatTime(currentTime),
       label: `Pin ${activePart.pins.length + 1}`
     };

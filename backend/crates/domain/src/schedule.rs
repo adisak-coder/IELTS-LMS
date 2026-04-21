@@ -443,6 +443,7 @@ pub struct ProctorPresenceRequest {
 pub struct ExtendSectionRequest {
     pub minutes: i32,
     pub reason: Option<String>,
+    pub expected_active_section_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -456,6 +457,7 @@ pub struct CompleteExamRequest {
 pub struct AttemptCommandRequest {
     pub message: Option<String>,
     pub reason: Option<String>,
+    pub expected_active_section_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

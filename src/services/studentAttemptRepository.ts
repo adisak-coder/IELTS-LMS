@@ -3,6 +3,7 @@ import {
   backendPost,
   rememberAttemptSchedule,
 } from './backendBridge';
+import type { ApiRequestConfig } from '../app/api/apiClient';
 import type {
   StudentAttempt,
   StudentAttemptMutation,
@@ -167,24 +168,86 @@ function buildAttemptAuthorizationHeader(
   };
 }
 
+function isUnauthorizedError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'statusCode' in error &&
+    (error as { statusCode?: unknown }).statusCode === 401
+  );
+}
+
+function isMissingAttemptCredentialError(error: unknown): boolean {
+  return error instanceof Error && error.message.toLowerCase().includes('missing attempt credential');
+}
+
 function getClientSessionStorageKey(scheduleId: string, studentKey: string): string {
   return `ielts-student-client-session:${scheduleId}:${studentKey}`;
 }
 
-function getClientSessionId(scheduleId: string, studentKey: string): string {
+function ensureClientSessionId(
+  scheduleId: string,
+  studentKey: string,
+  preferredId?: string | null,
+): string {
   if (typeof window === 'undefined') {
     return generateUuid();
   }
 
   const storageKey = getClientSessionStorageKey(scheduleId, studentKey);
   const stored = window.sessionStorage.getItem(storageKey);
+  const normalizedPreferred = preferredId?.trim() ?? '';
+  if (stored && normalizedPreferred && stored !== normalizedPreferred) {
+    // If the backend has recorded a clientSessionId for this attempt, treat it as authoritative
+    // and override any stale/mismatched sessionStorage value to prevent mutation sequence drift.
+    window.sessionStorage.setItem(storageKey, normalizedPreferred);
+    return normalizedPreferred;
+  }
+
   if (stored) {
     return stored;
   }
 
-  const nextId = generateUuid();
-  window.sessionStorage.setItem(storageKey, nextId);
-  return nextId;
+  if (normalizedPreferred) {
+    window.sessionStorage.setItem(storageKey, normalizedPreferred);
+    return normalizedPreferred;
+  }
+
+  const generated = generateUuid();
+  window.sessionStorage.setItem(storageKey, generated);
+  return generated;
+}
+
+export function ensureClientSessionIdForAttempt(attempt: StudentAttempt): string {
+  return ensureClientSessionId(
+    attempt.scheduleId,
+    attempt.studentKey,
+    attempt.recovery.clientSessionId ?? attempt.integrity.clientSessionId,
+  );
+}
+
+export async function refreshAttemptCredentialForAttempt(attempt: StudentAttempt): Promise<boolean> {
+  const clientSessionId = ensureClientSessionIdForAttempt(attempt);
+  const query = new URLSearchParams({
+    refreshAttemptCredential: 'true',
+    clientSessionId,
+  });
+
+  const session = await backendGet<BackendStudentSessionContext>(
+    `/v1/student/sessions/${attempt.scheduleId}?${query.toString()}`,
+    { retries: 0 },
+  );
+
+  if (!session.attemptCredential) {
+    return false;
+  }
+
+  storeAttemptCredential(attempt, session.attemptCredential);
+  return true;
+}
+
+function mutationWatermarkKey(attemptId: string, clientSessionId: string): string {
+  return `${attemptId}:${clientSessionId}`;
 }
 
 export function mapBackendStudentAttempt(payload: BackendStudentAttempt): StudentAttempt {
@@ -215,6 +278,10 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
     integrity: {
       preCheck: payload.integrity?.preCheck ?? null,
       deviceFingerprintHash: payload.integrity?.deviceFingerprintHash ?? null,
+      clientSessionId:
+        payload.integrity?.clientSessionId ??
+        payload.recovery?.clientSessionId ??
+        null,
       lastDisconnectAt: payload.integrity?.lastDisconnectAt ?? null,
       lastReconnectAt: payload.integrity?.lastReconnectAt ?? null,
       lastHeartbeatAt: payload.integrity?.lastHeartbeatAt ?? null,
@@ -226,6 +293,10 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
       lastPersistedAt: payload.recovery?.lastPersistedAt ?? null,
       pendingMutationCount: payload.recovery?.pendingMutationCount ?? 0,
       serverAcceptedThroughSeq: payload.recovery?.serverAcceptedThroughSeq ?? 0,
+      clientSessionId:
+        payload.recovery?.clientSessionId ??
+        payload.integrity?.clientSessionId ??
+        null,
       syncState: payload.recovery?.syncState ?? 'idle',
     },
     createdAt: payload.createdAt,
@@ -235,9 +306,15 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
 
 function primeMutationSequenceWatermark(attempt: StudentAttempt): void {
   const backendSeq = attempt.recovery.serverAcceptedThroughSeq ?? 0;
-  const current = mutationSequenceWatermarks.get(attempt.id);
+  const clientSessionId = attempt.recovery.clientSessionId ?? attempt.integrity.clientSessionId;
+  if (!clientSessionId) {
+    return;
+  }
+
+  const key = mutationWatermarkKey(attempt.id, clientSessionId);
+  const current = mutationSequenceWatermarks.get(key);
   if (current === undefined || backendSeq > current) {
-    mutationSequenceWatermarks.set(attempt.id, backendSeq);
+    mutationSequenceWatermarks.set(key, backendSeq);
   }
 }
 
@@ -374,6 +451,7 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
       integrity: {
         preCheck: null,
         deviceFingerprintHash: null,
+        clientSessionId: null,
         lastDisconnectAt: null,
         lastReconnectAt: null,
         lastHeartbeatAt: null,
@@ -385,6 +463,7 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
         lastPersistedAt: null,
         pendingMutationCount: 0,
         serverAcceptedThroughSeq: 0,
+        clientSessionId: null,
         syncState: 'idle',
       },
       createdAt: now,
@@ -442,6 +521,62 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
 class BackendStudentAttemptRepository implements IStudentAttemptRepository {
   constructor(private readonly cache: LocalStorageStudentAttemptCache) {}
 
+  private async refreshAttemptCredential(attempt: StudentAttempt): Promise<boolean> {
+    try {
+      return await refreshAttemptCredentialForAttempt(attempt);
+    } catch {
+      return false;
+    }
+  }
+
+  private async ensureAttemptCredential(attempt: StudentAttempt): Promise<boolean> {
+    if (hasAttemptCredential(attempt.scheduleId, attempt.id)) {
+      return true;
+    }
+
+    return this.refreshAttemptCredential(attempt);
+  }
+
+  private async postWithAttemptAuth<T>(
+    attempt: StudentAttempt,
+    endpoint: string,
+    body: unknown,
+    options?: Omit<ApiRequestConfig, 'headers'> & {
+      headers?: Record<string, string> | undefined;
+    },
+  ): Promise<T> {
+    const doPost = async (): Promise<T> =>
+      backendPost<T>(
+        endpoint,
+        body,
+        {
+          ...options,
+          headers: {
+            ...(options?.headers ?? {}),
+            ...buildAttemptAuthorizationHeader(attempt),
+          },
+        },
+      );
+
+    try {
+      return await doPost();
+    } catch (error) {
+      const shouldRetry = isUnauthorizedError(error) || isMissingAttemptCredentialError(error);
+      if (!shouldRetry) {
+        throw error;
+      }
+
+      const refreshed = isUnauthorizedError(error)
+        ? await this.refreshAttemptCredential(attempt)
+        : await this.ensureAttemptCredential(attempt);
+      if (!refreshed) {
+        throw error;
+      }
+
+      return doPost();
+    }
+  }
+
   private async cacheAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
     await this.cache.saveAttempt(attempt);
     primeMutationSequenceWatermark(attempt);
@@ -478,18 +613,21 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       return;
     }
 
-    if (!hasAttemptCredential(attempt.scheduleId, attempt.id)) {
+    if (!(await this.ensureAttemptCredential(attempt))) {
       return;
     }
 
-    const startingSeq = mutationSequenceWatermarks.get(attempt.id) ?? 0;
+    const clientSessionId = ensureClientSessionIdForAttempt(attempt);
+    const watermarkKey = mutationWatermarkKey(attempt.id, clientSessionId);
+    const startingSeq = mutationSequenceWatermarks.get(watermarkKey) ?? 0;
     try {
-      const response = await backendPost<BackendMutationBatchResponse>(
+      const response = await this.postWithAttemptAuth<BackendMutationBatchResponse>(
+        attempt,
         `/v1/student/sessions/${attempt.scheduleId}/mutations:batch`,
         {
           attemptId: attempt.id,
           studentKey: attempt.studentKey,
-          clientSessionId: getClientSessionId(attempt.scheduleId, attempt.studentKey),
+          clientSessionId,
           mutations: pendingMutations.map((mutation, index) => ({
             id: mutation.id,
             seq: startingSeq + index + 1,
@@ -498,12 +636,10 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
             payload: mutation.payload,
           })),
         },
-        {
-          headers: buildAttemptAuthorizationHeader(attempt),
-        },
+        undefined,
       );
 
-      mutationSequenceWatermarks.set(attempt.id, response.serverAcceptedThroughSeq);
+      mutationSequenceWatermarks.set(watermarkKey, response.serverAcceptedThroughSeq);
       storeAttemptCredential(attempt, response.refreshedAttemptCredential);
       await this.cache.saveAttempt(
         mergeStudentAttemptRecovery(mapBackendStudentAttempt(response.attempt), {
@@ -527,7 +663,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
       // Treat sequence mismatch as "server already accepted these mutations" and resync.
       await this.cache.clearPendingMutations(attempt.id);
-      mutationSequenceWatermarks.delete(attempt.id);
+      mutationSequenceWatermarks.delete(watermarkKey);
 
       const session = await backendGet<BackendStudentSessionContext>(
         `/v1/student/sessions/${attempt.scheduleId}`,
@@ -543,7 +679,12 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
   }
 
   async submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
-    const response = await backendPost<BackendSubmitResponse>(
+    if (!(await this.ensureAttemptCredential(attempt))) {
+      throw new Error('Missing attempt credential for student session.');
+    }
+
+    const response = await this.postWithAttemptAuth<BackendSubmitResponse>(
+      attempt,
       `/v1/student/sessions/${attempt.scheduleId}/submit`,
       {
         attemptId: attempt.id,
@@ -551,7 +692,6 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       },
       {
         headers: {
-          ...buildAttemptAuthorizationHeader(attempt),
           'Idempotency-Key': `student-submit-${attempt.id}`,
         },
         timeout: 60_000,
@@ -563,7 +703,11 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     storeAttemptCredential(attempt, response.refreshedAttemptCredential);
     await this.cache.saveAttempt(submittedAttempt);
     await this.cache.clearPendingMutations(attempt.id);
-    mutationSequenceWatermarks.set(attempt.id, Number.MAX_SAFE_INTEGER);
+    const clientSessionId = ensureClientSessionIdForAttempt(attempt);
+    mutationSequenceWatermarks.set(
+      mutationWatermarkKey(attempt.id, clientSessionId),
+      Number.MAX_SAFE_INTEGER,
+    );
     return submittedAttempt;
   }
 
@@ -575,7 +719,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         candidateId: seed.candidateId,
         candidateName: seed.candidateName,
         candidateEmail: seed.candidateEmail,
-        clientSessionId: getClientSessionId(seed.scheduleId, seed.studentKey),
+        clientSessionId: ensureClientSessionId(seed.scheduleId, seed.studentKey, null),
       },
     );
 
@@ -609,19 +753,22 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       return;
     }
 
-    const response = await backendPost<BackendHeartbeatResponse>(
+    if (!(await this.ensureAttemptCredential(attempt))) {
+      return;
+    }
+
+    const response = await this.postWithAttemptAuth<BackendHeartbeatResponse>(
+      attempt,
       `/v1/student/sessions/${event.scheduleId}/heartbeat`,
       {
         attemptId: event.attemptId,
         studentKey: attempt.studentKey,
-        clientSessionId: getClientSessionId(event.scheduleId, attempt.studentKey),
+        clientSessionId: ensureClientSessionIdForAttempt(attempt),
         eventType: event.type,
         payload: event.payload,
         clientTimestamp: event.timestamp,
       },
-      {
-        headers: buildAttemptAuthorizationHeader(attempt),
-      },
+      undefined,
     );
 
     storeAttemptCredential(attempt, response.refreshedAttemptCredential);

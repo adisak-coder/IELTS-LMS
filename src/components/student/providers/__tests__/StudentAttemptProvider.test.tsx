@@ -225,6 +225,29 @@ describe('StudentAttemptProvider', () => {
     });
   });
 
+  it('coalesces writing answer mutations by task id to avoid unbounded growth', async () => {
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      result.current.actions.persistWritingAnswer('task1', 'first');
+      result.current.actions.persistWritingAnswer('task1', 'second');
+    });
+
+    await waitFor(() => {
+      expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalled();
+    });
+
+    const pendingMutations = vi
+      .mocked(studentAttemptRepository.savePendingMutations)
+      .mock.calls.at(-1)?.[1];
+    expect(pendingMutations).toHaveLength(1);
+    expect(pendingMutations?.[0]?.type).toBe('writing_answer');
+    expect(pendingMutations?.[0]?.payload).toMatchObject({
+      taskId: 'task1',
+      value: 'second',
+    });
+  });
+
   it('flushes pending mutations before submitting the attempt', async () => {
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,

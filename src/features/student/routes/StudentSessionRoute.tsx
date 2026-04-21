@@ -39,12 +39,25 @@ export function StudentSessionRoute() {
 
   if (error) {
     const isInvalidAccessCode = error.toLowerCase().includes('invalid access code');
+    const isSessionExpired =
+      error.toLowerCase().includes('authentication is required') ||
+      error.toLowerCase().includes('unauthorized');
     return (
       <ErrorSurface
-        title={isInvalidAccessCode ? 'Access code invalid' : 'Loading Error'}
+        title={
+          isInvalidAccessCode
+            ? 'Access code invalid'
+            : isSessionExpired
+              ? 'Session expired'
+              : 'Loading Error'
+        }
         description={error}
-        actionLabel={isInvalidAccessCode ? 'Back to Check-in' : 'Retry'}
-        onAction={isInvalidAccessCode ? navigateToStudentCheckIn : () => void retry()}
+        actionLabel={isInvalidAccessCode || isSessionExpired ? 'Back to Check-in' : 'Retry'}
+        onAction={
+          isInvalidAccessCode || isSessionExpired
+            ? navigateToStudentCheckIn
+            : () => void retry()
+        }
       />
     );
   }

@@ -131,3 +131,27 @@ pub fn verify_attempt_token(
 
     Ok(claims)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{sign_attempt_token, verify_attempt_token, AttemptTokenClaims, AttemptTokenError};
+    use crate::config::AppConfig;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn rejects_expired_attempt_tokens() {
+        let config = AppConfig::default();
+        let now = Utc::now();
+        let claims = AttemptTokenClaims {
+            token_id: "token-1".to_owned(),
+            user_id: "user-1".to_owned(),
+            schedule_id: "schedule-1".to_owned(),
+            attempt_id: "attempt-1".to_owned(),
+            client_session_id: "client-1".to_owned(),
+            exp: now - Duration::seconds(1),
+        };
+
+        let token = sign_attempt_token(&config, &claims);
+        assert_eq!(verify_attempt_token(&config, &token), Err(AttemptTokenError::Expired));
+    }
+}

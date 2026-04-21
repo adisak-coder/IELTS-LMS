@@ -1,6 +1,7 @@
 import React from 'react';
 import { TableCompletionBlock as TableCompletionBlockType, AnswerRule } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface TableCompletionBlockProps {
   block: TableCompletionBlockType;
@@ -44,7 +45,7 @@ export function TableCompletionBlock({ block, startNum, endNum, updateBlock, del
 
   const addCell = () => {
     const newCell = {
-      id: `c${Date.now()}`,
+      id: createId('cell'),
       correctAnswer: '',
       row: 0,
       col: 0

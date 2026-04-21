@@ -8,6 +8,7 @@ use axum::{
 use chrono::{Duration, TimeZone, Utc};
 use futures_util::StreamExt;
 use serde_json::json;
+use sqlx::query_scalar;
 use tokio::net::TcpListener;
 use tokio_tungstenite::connect_async;
 use tower::ServiceExt;
@@ -372,6 +373,145 @@ async fn control_commands_extend_end_sections_and_complete_exam() {
     assert_eq!(complete.status(), StatusCode::OK);
     let complete_json = json_body(complete).await;
     assert_eq!(complete_json["data"]["status"], "completed");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn end_section_now_auto_submits_when_completing_final_section() {
+    let database = mysql::TestDatabase::new(PROCTOR_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Proctor,
+        "proctor@example.com",
+        "Test Proctor",
+    )
+    .await;
+    assign_staff_to_schedule(database.pool(), schedule_id, auth.user_id, "proctor").await;
+
+    bootstrap_attempt(database.pool(), schedule_id, "alice").await;
+
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &contract_actor(),
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: None,
+            },
+        )
+        .await
+        .expect("start runtime");
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let mut status = String::new();
+    for _ in 0..10 {
+        let end_section = app
+            .clone()
+            .oneshot(
+                auth.with_csrf(Request::builder())
+                    .method("POST")
+                    .uri(format!(
+                        "/api/v1/proctor/sessions/{}/control/end-section-now",
+                        schedule_id
+                    ))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::to_vec(&json!({ "reason": "Move on" })).unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(end_section.status(), StatusCode::OK);
+        let end_section_json = json_body(end_section).await;
+        status = end_section_json["data"]["status"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        if status == "completed" {
+            break;
+        }
+    }
+    assert_eq!(status, "completed");
+
+    let unsubmitted: i64 = query_scalar(
+        "SELECT COUNT(*) FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL",
+    )
+    .bind(schedule_id.to_string())
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(unsubmitted, 0);
+
+    let missing_final: i64 = query_scalar(
+        "SELECT COUNT(*) FROM student_attempts WHERE schedule_id = ? AND final_submission IS NULL",
+    )
+    .bind(schedule_id.to_string())
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(missing_final, 0);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn end_section_now_rejects_stale_expected_active_section_key() {
+    let database = mysql::TestDatabase::new(PROCTOR_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Proctor,
+        "proctor@example.com",
+        "Test Proctor",
+    )
+    .await;
+    assign_staff_to_schedule(database.pool(), schedule_id, auth.user_id, "proctor").await;
+
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &contract_actor(),
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: None,
+            },
+        )
+        .await
+        .expect("start runtime");
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let end_section = app
+        .oneshot(
+            auth.with_csrf(Request::builder())
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/proctor/sessions/{}/control/end-section-now",
+                    schedule_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "expectedActiveSectionKey": "not-a-section",
+                        "reason": "Double click"
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(end_section.status(), StatusCode::CONFLICT);
 
     database.shutdown().await;
 }

@@ -12,6 +12,7 @@ import {
 } from '../../utils/writingTaskUtils';
 import { WritingTaskPanel } from '../WritingTaskPanel';
 import { CHAR_HEIGHT_PX, WRITING } from '../../constants/uiConstants';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 const toDataUrl = (file: File) =>
   new Promise<string>((resolve) => {
@@ -381,7 +382,7 @@ export function WritingWorkspace({
                         contentEditable
                         onInput={() => handlePromptInput(task.id)}
                         className="p-6 text-lg text-gray-800 min-h-[200px] outline-none font-serif leading-relaxed prose prose-sm max-w-none"
-                        dangerouslySetInnerHTML={{ __html: taskContent.prompt }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeHtml(taskContent.prompt) }}
                       />
                     </div>
                   </div>

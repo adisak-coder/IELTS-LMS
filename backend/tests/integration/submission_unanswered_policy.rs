@@ -1,0 +1,265 @@
+#[path = "../support/mysql.rs"]
+mod mysql;
+
+use chrono::{Duration, TimeZone, Utc};
+use serde_json::json;
+use uuid::Uuid;
+
+use ielts_backend_application::{
+    builder::BuilderService, delivery::DeliveryError, delivery::DeliveryService,
+    scheduling::SchedulingService,
+};
+use ielts_backend_domain::{
+    attempt::{StudentBootstrapRequest, StudentPrecheckRequest, StudentSubmitRequest},
+    exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
+    schedule::{CreateScheduleRequest, RuntimeCommandAction, RuntimeCommandRequest},
+};
+use ielts_backend_infrastructure::actor_context::{ActorContext, ActorRole};
+
+const DELIVERY_MIGRATIONS: &[&str] = &[
+    "0001_roles.sql",
+    "0002_rls_helpers.sql",
+    "0003_exam_core.sql",
+    "0004_library_and_defaults.sql",
+    "0005_scheduling_and_access.sql",
+    "0006_delivery.sql",
+    "0010_auth_security.sql",
+];
+
+#[tokio::test]
+async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule_with_unanswered_block_policy(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let actor = ActorContext::new(Uuid::new_v4().to_string(), ActorRole::Admin);
+
+    let service = DeliveryService::new(database.pool().clone());
+    let student_key = format!("student-{}-alice", schedule_id);
+    let wcode = "W123456".to_owned();
+
+    let bootstrap = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key.clone(),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some(wcode.clone()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap");
+    let _attempt = bootstrap.attempt.expect("attempt");
+
+    service
+        .persist_precheck(
+            schedule_id,
+            StudentPrecheckRequest {
+                student_key: student_key.clone(),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some(wcode.clone()),
+                client_session_id: Uuid::new_v4().to_string(),
+                pre_check: json!({
+                    "completedAt": "2026-01-10T08:50:00Z",
+                    "checks": [{"id": "browser", "status": "pass"}]
+                }),
+                device_fingerprint_hash: Some("fp-alice".to_owned()),
+            },
+        )
+        .await
+        .expect("persist precheck");
+
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &actor,
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: None,
+            },
+        )
+        .await
+        .expect("start runtime");
+
+    let bootstrap_again = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key.clone(),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some(wcode.clone()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap after runtime start");
+    let attempt_after_runtime = bootstrap_again.attempt.expect("attempt after runtime");
+
+    let submit_err = service
+        .submit_attempt(
+            schedule_id,
+            StudentSubmitRequest {
+                attempt_id: attempt_after_runtime.id.clone(),
+                student_key: student_key.clone(),
+            },
+            None,
+        )
+        .await
+        .expect_err("submit should reject while live");
+
+    let DeliveryError::Validation(message) = submit_err else {
+        panic!("expected validation error, got: {submit_err:?}");
+    };
+    assert!(
+        message.to_lowercase().contains("must be answered"),
+        "unexpected message: {message}"
+    );
+
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &actor,
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::EndRuntime,
+                reason: None,
+            },
+        )
+        .await
+        .expect("end runtime");
+
+    let submitted = service
+        .submit_attempt(
+            schedule_id,
+            StudentSubmitRequest {
+                attempt_id: attempt_after_runtime.id.clone(),
+                student_key: student_key.clone(),
+            },
+            None,
+        )
+        .await
+        .expect("submit should allow after completed");
+
+    assert_eq!(submitted.attempt.phase, "post-exam");
+
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM session_audit_logs WHERE action_type = 'STUDENT_SUBMIT' AND target_student_id = ? ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&attempt_after_runtime.id)
+    .fetch_one(database.pool())
+    .await
+    .expect("audit payload");
+
+    assert!(payload.get("answerCompletion").is_some());
+
+    database.shutdown().await;
+}
+
+async fn seed_schedule_with_unanswered_block_policy(
+    pool: &sqlx::MySqlPool,
+) -> ielts_backend_domain::schedule::ExamSchedule {
+    let actor = ActorContext::new(Uuid::new_v4().to_string(), ActorRole::Admin);
+    let builder_service = BuilderService::new(pool.clone());
+    let exam = builder_service
+        .create_exam(
+            &actor,
+            CreateExamRequest {
+                slug: "cambridge-19-academic-unanswered-policy".to_owned(),
+                title: "Cambridge 19 Academic Unanswered Policy".to_owned(),
+                exam_type: ExamType::Academic.as_str().to_owned(),
+                visibility: Visibility::Organization.as_str().to_owned(),
+                organization_id: Some("org-1".to_owned()),
+            },
+        )
+        .await
+        .expect("seed exam");
+    let exam_id = exam.id.clone();
+
+    builder_service
+        .save_draft(
+            &actor,
+            exam_id.clone(),
+            SaveDraftRequest {
+                content_snapshot: json!({
+                    "reading": {
+                        "passages": [{
+                            "id": "reading-1",
+                            "title": "Passage 1",
+                            "content": "seeded",
+                            "blocks": [{
+                                "id": "reading-block-1",
+                                "type": "SHORT_ANSWER",
+                                "instruction": "Answer the question.",
+                                "questions": [{
+                                    "id": "q1",
+                                    "prompt": "Question 1",
+                                    "correctAnswer": "seeded answer",
+                                    "answerRule": "ONE_WORD"
+                                }]
+                            }]
+                        }]
+                    },
+                    "listening": { "parts": [] },
+                    "writing": { "tasks": [] },
+                    "speaking": { "part1Topics": [], "cueCard": "", "part3Discussion": [] }
+                }),
+                config_snapshot: json!({
+                    "sections": {
+                        "reading": {"enabled": true, "label": "Reading", "order": 1, "duration": 60, "gapAfterMinutes": 0},
+                        "listening": {"enabled": false, "label": "Listening", "order": 0, "duration": 30, "gapAfterMinutes": 0},
+                        "writing": {"enabled": false, "label": "Writing", "order": 2, "duration": 60, "gapAfterMinutes": 0},
+                        "speaking": {"enabled": false, "label": "Speaking", "order": 3, "duration": 15, "gapAfterMinutes": 0}
+                    },
+                    "progression": {
+                        "unansweredSubmissionPolicy": "block"
+                    }
+                }),
+                revision: exam.revision,
+            },
+        )
+        .await
+        .expect("save draft");
+
+    let exam_after_draft = builder_service
+        .get_exam(&actor, exam_id.clone())
+        .await
+        .expect("exam after draft");
+
+    let published_version = builder_service
+        .publish_exam(
+            &actor,
+            exam_id.clone(),
+            PublishExamRequest {
+                publish_notes: Some("ready for policy test".to_owned()),
+                revision: exam_after_draft.revision,
+            },
+        )
+        .await
+        .expect("publish exam");
+
+    SchedulingService::new(pool.clone())
+        .create_schedule(
+            &actor,
+            CreateScheduleRequest {
+                exam_id,
+                published_version_id: published_version.id,
+                cohort_name: "Policy Cohort".to_owned(),
+                institution: Some("IELTS Centre".to_owned()),
+                start_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+                end_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()
+                    + Duration::minutes(180),
+                auto_start: false,
+                auto_stop: false,
+            },
+        )
+        .await
+        .expect("create schedule")
+}

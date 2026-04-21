@@ -1,6 +1,7 @@
 import React from 'react';
 import { ShortAnswerBlock as ShortAnswerBlockType, AnswerRule } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface ShortAnswerBlockProps {
   block: ShortAnswerBlockType;
@@ -26,7 +27,7 @@ export function ShortAnswerBlock({ block, startNum, endNum, updateBlock, deleteB
 
   const addQuestion = () => {
     const newQuestion = {
-      id: `q${Date.now()}`,
+      id: createId('q'),
       prompt: '',
       correctAnswer: '',
       answerRule: 'TWO_WORDS' as AnswerRule

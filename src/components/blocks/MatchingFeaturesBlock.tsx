@@ -1,6 +1,7 @@
 import React from 'react';
 import { MatchingFeaturesBlock as MatchingFeaturesBlockType } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface MatchingFeaturesBlockProps {
   block: MatchingFeaturesBlockType;
@@ -30,7 +31,7 @@ export function MatchingFeaturesBlock({ block, startNum, endNum, updateBlock, de
 
   const addFeature = () => {
     const newFeature = {
-      id: `f${Date.now()}`,
+      id: createId('feat'),
       text: '',
       correctMatch: block.options[0] || ''
     };

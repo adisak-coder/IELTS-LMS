@@ -388,18 +388,41 @@ export function useProctorRouteController(): ProctorRouteController {
 
   const handleEndSectionNow = useCallback(
     async (scheduleId: string) => {
-      await examDeliveryService.endCurrentSectionNow(scheduleId, 'Proctor');
+      const runtime = runtimeSnapshots.find((candidate) => candidate.scheduleId === scheduleId);
+      const expectedActiveSectionKey = runtime?.activeSectionKey ?? runtime?.currentSectionKey ?? undefined;
+      const result = await examDeliveryService.endCurrentSectionNow(
+        scheduleId,
+        'Proctor',
+        expectedActiveSectionKey,
+      );
+      if (!result.success) {
+        setError(result.error ?? 'Failed to end section');
+      } else {
+        setError(null);
+      }
       await loadMonitoringState();
     },
-    [loadMonitoringState],
+    [loadMonitoringState, runtimeSnapshots],
   );
 
   const handleExtendCurrentSection = useCallback(
     async (scheduleId: string, minutes: number) => {
-      await examDeliveryService.extendCurrentSection(scheduleId, 'Proctor', minutes);
+      const runtime = runtimeSnapshots.find((candidate) => candidate.scheduleId === scheduleId);
+      const expectedActiveSectionKey = runtime?.activeSectionKey ?? runtime?.currentSectionKey ?? undefined;
+      const result = await examDeliveryService.extendCurrentSection(
+        scheduleId,
+        'Proctor',
+        minutes,
+        expectedActiveSectionKey,
+      );
+      if (!result.success) {
+        setError(result.error ?? 'Failed to extend section');
+      } else {
+        setError(null);
+      }
       await loadMonitoringState();
     },
-    [loadMonitoringState],
+    [loadMonitoringState, runtimeSnapshots],
   );
 
   const handleCompleteExam = useCallback(

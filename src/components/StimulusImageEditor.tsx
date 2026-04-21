@@ -6,6 +6,7 @@ import type {
   StimulusAnnotationTool,
   StimulusImageAsset,
 } from '../types';
+import { createId } from '../utils/idUtils';
 
 interface StimulusImageEditorProps {
   initialImage?: StimulusImageAsset;
@@ -28,7 +29,7 @@ const toolConfig: Array<{
 ];
 
 const createEmptyImage = (): StimulusImageAsset => ({
-  id: `stimulus-image-${Date.now()}`,
+  id: createId('img'),
   alt: 'Stimulus image',
   annotations: [],
   crop: {
@@ -122,7 +123,7 @@ export function StimulusImageEditor({
     const y = ((event.clientY - rect.top) / rect.height) * 100;
 
     const baseAnnotation: StimulusAnnotation = {
-      id: `annotation-${Date.now()}`,
+      id: createId('ann'),
       type: tool,
       x,
       y,

@@ -51,6 +51,7 @@ export function StudentFooter({
     (count, question) => count + getAnsweredSlotCount(question, answers),
     0,
   );
+  const hasUnanswered = totalQuestions > 0 && answeredCount < totalQuestions;
 
   return (
     <footer
@@ -65,16 +66,14 @@ export function StudentFooter({
               {answeredCount}/{totalQuestions}
             </span>
           </div>
-          {answeredCount === totalQuestions ? (
-            <Button
-              variant="primary"
-              size="sm"
-              className="min-w-[60px] md:min-w-[80px] shadow-md flex-shrink-0"
-              onClick={onSubmit}
-            >
-              Finish
-            </Button>
-          ) : null}
+          <Button
+            variant={hasUnanswered ? 'warning' : 'primary'}
+            size="sm"
+            className="min-w-[60px] md:min-w-[80px] shadow-md flex-shrink-0"
+            onClick={onSubmit}
+          >
+            Finish
+          </Button>
         </div>
       </div>
 

@@ -9,6 +9,8 @@ import React, {
   type ReactNode,
 } from 'react';
 import {
+  countAnsweredQuestions,
+  countQuestionSlots,
   getEnabledModules,
   getFirstQuestionIdForModule,
   getStudentQuestionsForModule,
@@ -710,10 +712,21 @@ export function StudentRuntimeProvider({
   const runtimeStatus = runtimeBacked ? runtimeSnapshot?.status ?? 'not_started' : null;
   const displayTimeRemaining =
     runtimeState.phase === 'exam' ? runtimeState.timeRemaining : undefined;
+  const unansweredSubmissionPolicy = state.config.progression.unansweredSubmissionPolicy ?? 'confirm';
+  const answeredSlots = useMemo(
+    () => countAnsweredQuestions(allQuestions, runtimeState.answers),
+    [allQuestions, runtimeState.answers],
+  );
+  const totalSlots = useMemo(
+    () => countQuestionSlots(allQuestions),
+    [allQuestions],
+  );
+  const hasUnanswered = totalSlots > 0 && answeredSlots < totalSlots;
   const submitRequiresConfirmation =
-    !runtimeBacked &&
     runtimeState.phase === 'exam' &&
-    (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening');
+    (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening') &&
+    hasUnanswered &&
+    unansweredSubmissionPolicy !== 'allow';
 
   useEffect(() => {
     if (!runtimeBacked) {

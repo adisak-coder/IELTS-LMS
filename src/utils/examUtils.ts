@@ -187,8 +187,35 @@ const validateMatchingBlock = (block: MatchingBlock): ValidationError[] => {
   if (block.questions.length === 0) {
     errors.push({ blockId: block.id, field: 'questions', message: 'At least one paragraph is required', type: 'error' });
   }
+
+  const allowedHeadings = new Set(block.headings.map((_, i) => toRoman(i)));
+  block.questions.forEach((q, i) => {
+    const heading = q.correctHeading?.trim() ?? '';
+    if (!heading) {
+      errors.push({
+        blockId: block.id,
+        field: `questions[${i}].correctHeading`,
+        message: `Paragraph ${q.paragraphLabel || String.fromCharCode(65 + i)} has no heading selected`,
+        type: 'error',
+      });
+      return;
+    }
+
+    if (!allowedHeadings.has(heading)) {
+      errors.push({
+        blockId: block.id,
+        field: `questions[${i}].correctHeading`,
+        message: `Paragraph ${q.paragraphLabel || String.fromCharCode(65 + i)} has an invalid heading selected`,
+        type: 'error',
+      });
+    }
+  });
   
-  const usedHeadings = new Set(block.questions.map(q => q.correctHeading).filter(Boolean));
+  const usedHeadings = new Set(
+    block.questions
+      .map((q) => q.correctHeading?.trim() ?? '')
+      .filter((heading): heading is string => Boolean(heading && allowedHeadings.has(heading))),
+  );
   const hasUnusedHeadings = block.headings.some((_, i) => {
     const roman = toRoman(i);
     return !usedHeadings.has(roman);

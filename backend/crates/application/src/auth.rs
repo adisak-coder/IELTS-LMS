@@ -1,4 +1,4 @@
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ielts_backend_domain::auth::{
     AccountActivationRequest, AttemptSession, IssueAttemptToken, LoginRequest, LoginResponse,
     PasswordResetCompleteRequest, PasswordResetRequest, SessionResponse, SessionUser,
@@ -16,6 +16,10 @@ use serde_json::json;
 use sqlx::{FromRow, MySql, MySqlPool};
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
+
+fn should_refresh_attempt_token(token_exp: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    token_exp - now <= Duration::minutes(5)
+}
 
 #[derive(Debug, Clone)]
 pub struct AuthService {
@@ -606,7 +610,7 @@ impl AuthService {
         &self,
         authorization: &AttemptAuthorization,
     ) -> Result<Option<IssueAttemptToken>, AuthError> {
-        if authorization.session.expires_at - Utc::now() > Duration::minutes(5) {
+        if !should_refresh_attempt_token(authorization.claims.exp, Utc::now()) {
             return Ok(None);
         }
         let session = AuthenticatedSession {
@@ -959,5 +963,27 @@ impl UserStateSqlExt for User {
             UserState::Locked => "locked",
             UserState::PendingActivation => "pending_activation",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_refresh_attempt_token;
+    use chrono::{Duration, Utc};
+
+    #[test]
+    fn does_not_refresh_when_more_than_five_minutes_remaining() {
+        let now = Utc::now();
+        assert!(!should_refresh_attempt_token(now + Duration::minutes(6), now));
+    }
+
+    #[test]
+    fn refreshes_when_five_minutes_or_less_remaining() {
+        let now = Utc::now();
+        assert!(should_refresh_attempt_token(now + Duration::minutes(5), now));
+        assert!(should_refresh_attempt_token(
+            now + Duration::minutes(4) + Duration::seconds(59),
+            now
+        ));
     }
 }

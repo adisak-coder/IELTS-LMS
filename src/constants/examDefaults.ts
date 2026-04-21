@@ -326,7 +326,8 @@ const buildDefaultConfig = (
       lockAfterSubmit: true,
       allowPause: false,
       showWarnings: true,
-      warningThreshold: 3
+      warningThreshold: 3,
+      unansweredSubmissionPolicy: 'confirm',
     },
     delivery: { ...DEFAULT_DELIVERY_POLICY },
     scoring: {

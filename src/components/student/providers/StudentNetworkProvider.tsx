@@ -59,6 +59,7 @@ export function StudentNetworkProvider({
     attemptState.attempt?.integrity.lastReconnectAt ?? null,
   );
   const missedHeartbeatsRef = useRef(0);
+  const heartbeatInFlightRef = useRef(false);
 
   useEffect(() => {
     setLastDisconnectAt(attemptState.attempt?.integrity.lastDisconnectAt ?? null);
@@ -229,6 +230,12 @@ export function StudentNetworkProvider({
 
     const intervalId = window.setInterval(() => {
       void (async () => {
+        if (heartbeatInFlightRef.current) {
+          return;
+        }
+
+        heartbeatInFlightRef.current = true;
+
         try {
           await attemptActions.recordHeartbeat('heartbeat');
           if (cancelled) {
@@ -287,6 +294,8 @@ export function StudentNetworkProvider({
               attemptState.attemptId ?? undefined,
             );
           }
+        } finally {
+          heartbeatInFlightRef.current = false;
         }
       })();
     }, intervalMs);

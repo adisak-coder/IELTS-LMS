@@ -12,6 +12,7 @@ import { backendPost } from '@services/backendBridge';
 import { buildStudentHeartbeatEvent } from '@services/studentIntegrityService';
 import {
   hasAttemptCredential,
+  ensureClientSessionIdForAttempt,
   mapBackendStudentAttempt,
   studentAttemptRepository,
 } from '@services/studentAttemptRepository';
@@ -84,6 +85,46 @@ type ObservedSnapshot = {
 
 const StudentAttemptContext = createContext<StudentAttemptContextValue | null>(null);
 
+function getMutationCoalesceKey(mutation: StudentAttemptMutation): string | null {
+  switch (mutation.type) {
+    case 'answer': {
+      const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
+      return typeof questionId === 'string' && questionId.trim() ? `answer:${questionId}` : null;
+    }
+    case 'writing_answer': {
+      const taskId = (mutation.payload as { taskId?: unknown } | undefined)?.taskId;
+      return typeof taskId === 'string' && taskId.trim() ? `writing_answer:${taskId}` : null;
+    }
+    case 'flag': {
+      const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
+      return typeof questionId === 'string' && questionId.trim() ? `flag:${questionId}` : null;
+    }
+    case 'position':
+    case 'network':
+    case 'device_fingerprint':
+      return mutation.type;
+    case 'violation':
+    case 'precheck':
+    case 'heartbeat':
+    case 'sync':
+    default:
+      return null;
+  }
+}
+
+function coalescePendingMutations(
+  pending: StudentAttemptMutation[],
+  nextMutation: StudentAttemptMutation,
+): StudentAttemptMutation[] {
+  const coalesceKey = getMutationCoalesceKey(nextMutation);
+  if (!coalesceKey) {
+    return [...pending, nextMutation];
+  }
+
+  const filtered = pending.filter((existing) => getMutationCoalesceKey(existing) !== coalesceKey);
+  return [...filtered, nextMutation];
+}
+
 function mergeViolationsById(
   localViolations: Violation[],
   remoteViolations: Violation[],
@@ -103,30 +144,6 @@ function mergeViolationsById(
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function generateUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-
-  return `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`;
-}
-
-function getClientSessionId(scheduleId: string, studentKey: string): string {
-  if (typeof window === 'undefined') {
-    return generateUuid();
-  }
-
-  const storageKey = `ielts-student-client-session:${scheduleId}:${studentKey}`;
-  const stored = window.sessionStorage.getItem(storageKey);
-  if (stored) {
-    return stored;
-  }
-
-  const nextId = generateUuid();
-  window.sessionStorage.setItem(storageKey, nextId);
-  return nextId;
 }
 
 function mergeAttempt(attempt: StudentAttempt, patch: AttemptPatch): StudentAttempt {
@@ -186,23 +203,40 @@ export function StudentAttemptProvider({
   const flushPendingRef = useRef<() => Promise<boolean>>(async () => true);
   const flushInFlightRef = useRef<Promise<boolean> | null>(null);
 
-  const setPendingMutations = useCallback((nextMutations: StudentAttemptMutation[]) => {
-    pendingMutationsRef.current = nextMutations;
-    setPendingMutationCount(nextMutations.length);
-
-    if (attemptRef.current) {
-      void studentAttemptRepository.savePendingMutations(
-        attemptRef.current.id,
-        nextMutations,
-      );
-    }
-  }, []);
-
   const syncAttemptState = useCallback((nextAttempt: StudentAttempt) => {
     attemptRef.current = nextAttempt;
     setAttempt(nextAttempt);
     setRuntimeAttemptSyncState(nextAttempt.recovery.syncState);
   }, [setRuntimeAttemptSyncState]);
+
+  const setPendingMutations = useCallback((nextMutations: StudentAttemptMutation[]) => {
+    pendingMutationsRef.current = nextMutations;
+    setPendingMutationCount(nextMutations.length);
+
+    if (attemptRef.current) {
+      const attempt = attemptRef.current;
+      void studentAttemptRepository
+        .savePendingMutations(attempt.id, nextMutations)
+        .catch((error) => {
+          const erroredAttempt = mergeAttempt(attemptRef.current ?? attempt, {
+            recovery: {
+              syncState: 'error',
+              pendingMutationCount: nextMutations.length,
+            },
+          });
+          syncAttemptState(erroredAttempt);
+          void saveStudentAuditEvent(
+            scheduleId ?? attempt.scheduleId,
+            'PERSISTENCE_STORAGE_ERROR',
+            {
+              message: error instanceof Error ? error.message : 'Failed to persist pending mutations',
+              pendingMutationCount: nextMutations.length,
+            },
+            attempt.id,
+          );
+        });
+    }
+  }, [scheduleId, syncAttemptState]);
 
   const scheduleFlush = useCallback((kind: 'objective' | 'writing', delayMs: number) => {
     const timeoutRef =
@@ -237,7 +271,7 @@ export function StudentAttemptProvider({
       type: mutationType,
       payload,
     };
-    const nextPendingMutations = [...pendingMutationsRef.current, mutation];
+    const nextPendingMutations = coalescePendingMutations(pendingMutationsRef.current, mutation);
     setPendingMutations(nextPendingMutations);
 
     const syncState: AttemptSyncState = navigator.onLine ? 'saving' : 'offline';
@@ -587,7 +621,7 @@ export function StudentAttemptProvider({
           candidateId: currentAttempt.candidateId,
           candidateName: currentAttempt.candidateName,
           candidateEmail: currentAttempt.candidateEmail,
-          clientSessionId: getClientSessionId(resolvedScheduleId, currentAttempt.studentKey),
+          clientSessionId: ensureClientSessionIdForAttempt(currentAttempt),
           preCheck: result,
           deviceFingerprintHash: currentAttempt.integrity.deviceFingerprintHash ?? undefined,
         },

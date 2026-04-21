@@ -87,8 +87,12 @@ class BackendPassageLibrary {
   }
 
   async updatePassage(id: string, updates: Partial<{ passage: Passage; metadata: Partial<PassageMetadata> }>): Promise<PassageLibraryItem | null> {
-    const revision = passageRevisions.get(id);
-    if (revision === undefined) return null;
+    let revision = passageRevisions.get(id);
+    if (revision === undefined) {
+      await this.getPassage(id);
+      revision = passageRevisions.get(id);
+      if (revision === undefined) return null;
+    }
 
     const patchBody: Record<string, unknown> = {
       revision,

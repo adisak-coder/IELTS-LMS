@@ -379,7 +379,7 @@ describe('StudentProctoringProvider', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(800);
     });
 
     expect(
@@ -398,7 +398,7 @@ describe('StudentProctoringProvider', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(800);
     });
 
     expect(
@@ -418,10 +418,32 @@ describe('StudentProctoringProvider', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
+      await vi.advanceTimersByTimeAsync(800);
     });
 
     expect(harness.result.current.runtime.state.phase).toBe('post-exam');
+  });
+
+  it('does not terminate the exam on close/reload signals (pagehide) even when tab-switch policy is terminate', async () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: { ...mockConfig.security, tabSwitchRule: 'terminate' },
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('pagehide'));
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(harness.result.current.runtime.state.phase).toBe('exam');
+    expect(
+      harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TAB_SWITCH'),
+    ).toBe(false);
   });
 
   it('requests fullscreen re-entry when fullscreen is lost', async () => {

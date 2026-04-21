@@ -19,6 +19,8 @@ import { getBlockQuestionCount } from '../utils/examUtils';
 import { QuestionBankLibrary } from './builder/QuestionBankLibrary';
 import { QuestionDetailModal } from './builder/QuestionDetailModal';
 import { questionBankService } from '../services/questionBankService';
+import { cloneQuestionBlockWithNewIds } from '../utils/cloneExamContent';
+import { createId } from '../utils/idUtils';
 
 interface BlockWithNumbers {
   block: QuestionBlock;
@@ -101,10 +103,7 @@ export function QuestionBuilderPane({
   };
 
   const handleAddQuestionFromBank = (item: QuestionBankItem) => {
-    const newBlock = {
-      ...item.block,
-      id: `b${Date.now()}`
-    };
+    const newBlock = cloneQuestionBlockWithNewIds(item.block);
     updateBlocks([...blocks, newBlock]);
     questionBankService.incrementUsageCount(item.id);
     setSelectedQuestionItem(null);
@@ -112,10 +111,7 @@ export function QuestionBuilderPane({
   };
 
   const handleAddQuestionFromDetail = (item: QuestionBankItem) => {
-    const newBlock = {
-      ...item.block,
-      id: `b${Date.now()}`
-    };
+    const newBlock = cloneQuestionBlockWithNewIds(item.block);
     updateBlocks([...blocks, newBlock]);
     questionBankService.incrementUsageCount(item.id);
     setSelectedQuestionItem(null);
@@ -154,43 +150,43 @@ export function QuestionBuilderPane({
       case 'TFNG':
         newBlock = {
           ...block,
-          questions: [...(block as TFNGBlockType).questions, { id: `q${Date.now()}`, statement: '', correctAnswer: 'T' as const }]
+          questions: [...(block as TFNGBlockType).questions, { id: createId('q'), statement: '', correctAnswer: 'T' as const }]
         };
         break;
       case 'CLOZE':
         newBlock = {
           ...block,
-          questions: [...(block as ClozeBlockType).questions, { id: `q${Date.now()}`, prompt: 'The ____ is important.', correctAnswer: '' }]
+          questions: [...(block as ClozeBlockType).questions, { id: createId('q'), prompt: 'The ____ is important.', correctAnswer: '' }]
         };
         break;
       case 'MATCHING':
         newBlock = {
           ...block,
-          headings: [...(block as MatchingBlockType).headings, { id: `h${Date.now()}`, text: 'New Heading' }]
+          headings: [...(block as MatchingBlockType).headings, { id: createId('h'), text: 'New Heading' }]
         };
         break;
       case 'MULTI_MCQ':
         newBlock = {
           ...block,
-          options: [...(block as MultiMCQBlockType).options, { id: `o${Date.now()}`, text: 'New Option', isCorrect: false }]
+          options: [...(block as MultiMCQBlockType).options, { id: createId('opt'), text: 'New Option', isCorrect: false }]
         };
         break;
       case 'SINGLE_MCQ':
         newBlock = {
           ...block,
-          options: [...(block as SingleMCQBlockType).options, { id: `o${Date.now()}`, text: 'New Option', isCorrect: false }]
+          options: [...(block as SingleMCQBlockType).options, { id: createId('opt'), text: 'New Option', isCorrect: false }]
         };
         break;
       case 'SHORT_ANSWER':
         newBlock = {
           ...block,
-          questions: [...(block as ShortAnswerBlockType).questions, { id: `q${Date.now()}`, prompt: '', correctAnswer: '', answerRule: 'ONE_WORD' as const }]
+          questions: [...(block as ShortAnswerBlockType).questions, { id: createId('q'), prompt: '', correctAnswer: '', answerRule: 'ONE_WORD' as const }]
         };
         break;
       case 'SENTENCE_COMPLETION':
         newBlock = {
           ...block,
-          questions: [...(block as SentenceCompletionBlockType).questions, { id: `q${Date.now()}`, sentence: '', blanks: [], answerRule: 'ONE_WORD' as const }]
+          questions: [...(block as SentenceCompletionBlockType).questions, { id: createId('q'), sentence: '', blanks: [], answerRule: 'ONE_WORD' as const }]
         };
         break;
       default:
@@ -206,134 +202,134 @@ export function QuestionBuilderPane({
     switch (type) {
       case 'TFNG':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'TFNG',
           mode: 'TFNG',
           instruction: 'Do the following statements agree with the information given?',
-          questions: [{ id: `q${Date.now()}`, statement: '', correctAnswer: 'T' }]
+          questions: [{ id: createId('q'), statement: '', correctAnswer: 'T' }]
         } as TFNGBlockType;
         break;
       case 'CLOZE':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'CLOZE',
           answerRule: 'TWO_WORDS',
           instruction: 'Complete the summary below. Choose NO MORE THAN TWO WORDS from the passage for each answer.',
-          questions: [{ id: `q${Date.now()}`, prompt: 'The ____ is important.', correctAnswer: '' }]
+          questions: [{ id: createId('q'), prompt: 'The ____ is important.', correctAnswer: '' }]
         } as ClozeBlockType;
         break;
       case 'MATCHING':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'MATCHING',
           instruction: 'Choose the correct heading for each paragraph from the list of headings below.',
-          headings: [{ id: `h${Date.now()}`, text: 'Heading 1' }],
-          questions: [{ id: `q${Date.now()}`, paragraphLabel: 'A', correctHeading: '' }]
+          headings: [{ id: createId('h'), text: 'Heading 1' }],
+          questions: [{ id: createId('q'), paragraphLabel: 'A', correctHeading: '' }]
         } as MatchingBlockType;
         break;
       case 'MULTI_MCQ':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'MULTI_MCQ',
           instruction: 'Choose TWO letters, A-E.',
           stem: '',
           requiredSelections: 2,
           options: [
-            { id: `o${Date.now()}`, text: 'Option A', isCorrect: true },
-            { id: `o${Date.now() + 1}`, text: 'Option B', isCorrect: true },
-            { id: `o${Date.now() + 2}`, text: 'Option C', isCorrect: false }
+            { id: createId('opt'), text: 'Option A', isCorrect: true },
+            { id: createId('opt'), text: 'Option B', isCorrect: true },
+            { id: createId('opt'), text: 'Option C', isCorrect: false }
           ]
         } as MultiMCQBlockType;
         break;
       case 'MAP':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'MAP',
           instruction: 'Label the map below.',
           assetUrl: '',
-          questions: [{ id: `q${Date.now()}`, label: 'Location A', correctAnswer: '', x: 50, y: 50 }]
+          questions: [{ id: createId('q'), label: 'Location A', correctAnswer: '', x: 50, y: 50 }]
         } as MapBlockType;
         break;
       case 'SINGLE_MCQ':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'SINGLE_MCQ',
           instruction: 'Choose the correct answer.',
           stem: '',
           options: [
-            { id: `o${Date.now()}`, text: 'Option A', isCorrect: true },
-            { id: `o${Date.now() + 1}`, text: 'Option B', isCorrect: false },
-            { id: `o${Date.now() + 2}`, text: 'Option C', isCorrect: false }
+            { id: createId('opt'), text: 'Option A', isCorrect: true },
+            { id: createId('opt'), text: 'Option B', isCorrect: false },
+            { id: createId('opt'), text: 'Option C', isCorrect: false }
           ]
         } as SingleMCQBlockType;
         break;
       case 'SHORT_ANSWER':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'SHORT_ANSWER',
           instruction: 'Answer the questions below using words from the passage.',
-          questions: [{ id: `q${Date.now()}`, prompt: 'What is described?', correctAnswer: '', answerRule: 'TWO_WORDS' }]
+          questions: [{ id: createId('q'), prompt: 'What is described?', correctAnswer: '', answerRule: 'TWO_WORDS' }]
         } as ShortAnswerBlockType;
         break;
       case 'SENTENCE_COMPLETION':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'SENTENCE_COMPLETION',
           instruction: 'Complete the sentences below using words from the passage.',
-          questions: [{ id: `q${Date.now()}`, sentence: 'The ____ is ____.', blanks: [{ id: `b${Date.now()}`, correctAnswer: '', position: 0 }], answerRule: 'TWO_WORDS' }]
+          questions: [{ id: createId('q'), sentence: 'The ____ is ____.', blanks: [{ id: createId('blank'), correctAnswer: '', position: 0 }], answerRule: 'TWO_WORDS' }]
         } as SentenceCompletionBlockType;
         break;
       case 'DIAGRAM_LABELING':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'DIAGRAM_LABELING',
           instruction: 'Label the diagram below.',
           imageUrl: '',
-          labels: [{ id: `l${Date.now()}`, x: 50, y: 50, correctAnswer: '' }]
+          labels: [{ id: createId('lbl'), x: 50, y: 50, correctAnswer: '' }]
         } as DiagramLabelingBlockType;
         break;
       case 'FLOW_CHART':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'FLOW_CHART',
           instruction: 'Complete the flow chart below.',
-          steps: [{ id: `s${Date.now()}`, label: 'Step 1', correctAnswer: '' }]
+          steps: [{ id: createId('step'), label: 'Step 1', correctAnswer: '' }]
         } as FlowChartBlockType;
         break;
       case 'TABLE_COMPLETION':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'TABLE_COMPLETION',
           instruction: 'Complete the table below.',
           answerRule: 'TWO_WORDS',
           headers: ['Column 1', 'Column 2'],
           rows: [['', '']],
-          cells: [{ id: `c${Date.now()}`, correctAnswer: '', row: 0, col: 0 }]
+          cells: [{ id: createId('cell'), correctAnswer: '', row: 0, col: 0 }]
         } as TableCompletionBlockType;
         break;
       case 'NOTE_COMPLETION':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'NOTE_COMPLETION',
           instruction: 'Complete the notes below.',
-          questions: [{ id: `q${Date.now()}`, noteText: 'The ____ is ____.', blanks: [{ id: `b${Date.now()}`, correctAnswer: '', position: 0 }], answerRule: 'TWO_WORDS' }]
+          questions: [{ id: createId('q'), noteText: 'The ____ is ____.', blanks: [{ id: createId('blank'), correctAnswer: '', position: 0 }], answerRule: 'TWO_WORDS' }]
         } as NoteCompletionBlockType;
         break;
       case 'CLASSIFICATION':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'CLASSIFICATION',
           instruction: 'Classify the following statements.',
           categories: ['Category A', 'Category B'],
-          items: [{ id: `i${Date.now()}`, text: 'Statement 1', correctCategory: 'Category A' }]
+          items: [{ id: createId('item'), text: 'Statement 1', correctCategory: 'Category A' }]
         } as ClassificationBlockType;
         break;
       case 'MATCHING_FEATURES':
         newBlock = {
-          id: `b${Date.now()}`,
+          id: createId('blk'),
           type: 'MATCHING_FEATURES',
           instruction: 'Match the features with the options.',
-          features: [{ id: `f${Date.now()}`, text: 'Feature 1', correctMatch: 'Option A' }],
+          features: [{ id: createId('feat'), text: 'Feature 1', correctMatch: 'Option A' }],
           options: ['Option A', 'Option B', 'Option C']
         } as MatchingFeaturesBlockType;
         break;

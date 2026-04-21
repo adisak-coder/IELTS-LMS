@@ -453,7 +453,7 @@ export function studentFlow() {
   const ctx = bootstrapJson && bootstrapJson.data;
   const attempt = ctx && ctx.attempt;
   const attemptId = (attempt && attempt.id) || '';
-  const attemptToken = (ctx && ctx.attemptCredential && ctx.attemptCredential.attemptToken) || '';
+  let attemptToken = (ctx && ctx.attemptCredential && ctx.attemptCredential.attemptToken) || '';
   const contentSnapshot = (ctx && ctx.version && ctx.version.contentSnapshot) || null;
 
   if (!attemptId || !attemptToken) {
@@ -528,7 +528,7 @@ export function studentFlow() {
     const now = Date.now();
     if (now - lastHbAt > heartbeatEverySeconds * 1000) {
       lastHbAt = now;
-      http.post(
+      const hbResp = http.post(
         `${baseUrl}/api/v1/student/sessions/${scheduleId}/heartbeat`,
         JSON.stringify({
           attemptId,
@@ -545,6 +545,14 @@ export function studentFlow() {
           }),
         },
       );
+      if (hbResp.status === 200) {
+        try {
+          const json = hbResp.json();
+          const refreshed =
+            (((json || {}).data || {}).refreshedAttemptCredential || {}).attemptToken;
+          if (refreshed) attemptToken = refreshed;
+        } catch (_) {}
+      }
     }
 
     // Every loop: send a small mutation batch that mirrors the UI adapter behavior.
@@ -617,6 +625,14 @@ export function studentFlow() {
     );
     check(mutationResp, { 'mutation batch 200/409 ok': (r) => r.status === 200 || r.status === 409 }) ||
       fail(`Mutation batch failed (${student.wcode}): status=${mutationResp.status} body=${mutationResp.body.slice(0, 200)}`);
+    if (mutationResp.status === 200) {
+      try {
+        const json = mutationResp.json();
+        const refreshed =
+          (((json || {}).data || {}).refreshedAttemptCredential || {}).attemptToken;
+        if (refreshed) attemptToken = refreshed;
+      } catch (_) {}
+    }
 
     sleep(2);
   }
@@ -639,6 +655,14 @@ export function studentFlow() {
     'submit 200/409 ok': (r) => r.status === 200 || r.status === 409,
   }) || fail(`Submit failed (${student.wcode}): status=${submitResp.status} body=${submitResp.body.slice(0, 200)}`);
   if (DEBUG) console.log(`[student ${__VU}] submit ok`);
+  if (submitResp.status === 200) {
+    try {
+      const json = submitResp.json();
+      const refreshed =
+        (((json || {}).data || {}).refreshedAttemptCredential || {}).attemptToken;
+      if (refreshed) attemptToken = refreshed;
+    } catch (_) {}
+  }
 
   // Verify submitted_at is set in session context.
   const afterSubmit = http.get(`${baseUrl}/api/v1/student/sessions/${scheduleId}`, { jar, headers: jsonHeaders() });

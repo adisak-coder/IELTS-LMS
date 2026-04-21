@@ -69,6 +69,7 @@ export function normalizeStudentAttempt(attempt: StudentAttempt): StudentAttempt
     integrity: {
       preCheck: attempt.integrity?.preCheck ?? null,
       deviceFingerprintHash: attempt.integrity?.deviceFingerprintHash ?? null,
+      clientSessionId: attempt.integrity?.clientSessionId ?? null,
       lastDisconnectAt: attempt.integrity?.lastDisconnectAt ?? null,
       lastReconnectAt: attempt.integrity?.lastReconnectAt ?? null,
       lastHeartbeatAt: attempt.integrity?.lastHeartbeatAt ?? null,
@@ -80,6 +81,7 @@ export function normalizeStudentAttempt(attempt: StudentAttempt): StudentAttempt
       lastPersistedAt: attempt.recovery?.lastPersistedAt ?? null,
       pendingMutationCount: attempt.recovery?.pendingMutationCount ?? 0,
       serverAcceptedThroughSeq: attempt.recovery?.serverAcceptedThroughSeq ?? 0,
+      clientSessionId: attempt.recovery?.clientSessionId ?? null,
       syncState: attempt.recovery?.syncState ?? 'idle',
     },
   };
@@ -97,4 +99,3 @@ export function mergeStudentAttemptRecovery(
     },
   });
 }
-

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { QuestionBlock, MatchingBlock as MatchingBlockType } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowRight, ArrowUp, ArrowDown, AlertCircle, AlertTriangle } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface Props {
   block: QuestionBlock;
@@ -27,7 +28,7 @@ export const MatchingBlock: React.FC<Props> = ({ block, startNum, endNum, update
   };
 
   const addHeading = () => {
-    const newH = { id: `h${Date.now()}`, text: '' };
+    const newH = { id: createId('h'), text: '' };
     updateBlock({ ...matchingBlock, headings: [...headings, newH] });
   };
 
@@ -43,7 +44,7 @@ export const MatchingBlock: React.FC<Props> = ({ block, startNum, endNum, update
 
   const addParagraph = () => {
     const nextChar = String.fromCharCode(65 + questions.length);
-    const newQ = { id: `q${Date.now()}`, paragraphLabel: nextChar, correctHeading: '' };
+    const newQ = { id: createId('q'), paragraphLabel: nextChar, correctHeading: '' };
     updateBlock({ ...matchingBlock, questions: [...questions, newQ] });
   };
 

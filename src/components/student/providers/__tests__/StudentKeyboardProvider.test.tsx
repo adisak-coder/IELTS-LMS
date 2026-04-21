@@ -8,6 +8,7 @@ import { KeyboardProvider } from '../StudentKeyboardProvider';
 import { ProctoringProvider } from '../StudentProctoringProvider';
 import { StudentAttemptProvider } from '../StudentAttemptProvider';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
+import { StudentUIProvider } from '../StudentUIProvider';
 
 function createExamState(): ExamState {
   return {
@@ -127,9 +128,11 @@ describe('StudentKeyboardProvider', () => {
           attemptSnapshot={attemptSnapshot}
         >
           <ProctoringProvider config={state.config} scheduleId={attemptSnapshot.scheduleId}>
-            <KeyboardProvider>
-              <Probe />
-            </KeyboardProvider>
+            <StudentUIProvider>
+              <KeyboardProvider>
+                <Probe />
+              </KeyboardProvider>
+            </StudentUIProvider>
           </ProctoringProvider>
         </StudentAttemptProvider>
       </StudentRuntimeProvider>,

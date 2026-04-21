@@ -27,6 +27,10 @@ import {
   OFFICIAL_WRITING_RUBRIC,
 } from '../../../utils/builderEnhancements';
 import { normalizeWritingTaskContents } from '../../../utils/writingTaskUtils';
+import {
+  cloneListeningPartWithNewIds,
+  cloneReadingPassageWithNewIds,
+} from '../../../utils/cloneExamContent';
 
 const nowLabel = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
@@ -379,6 +383,7 @@ export function BuilderRoot() {
         return;
       }
 
+      const duplicate = cloneReadingPassageWithNewIds(activePassage);
       updateBuilderState(
         {
           ...nextState,
@@ -387,8 +392,7 @@ export function BuilderRoot() {
             passages: [
               ...nextState.reading.passages,
               {
-                ...activePassage,
-                id: `p${Date.now()}`,
+                ...duplicate,
                 title: `${activePassage.title} Copy`,
               },
             ],
@@ -407,6 +411,7 @@ export function BuilderRoot() {
         return;
       }
 
+      const duplicate = cloneListeningPartWithNewIds(activePart);
       updateBuilderState(
         {
           ...nextState,
@@ -415,8 +420,7 @@ export function BuilderRoot() {
             parts: [
               ...nextState.listening.parts,
               {
-                ...activePart,
-                id: `l${Date.now()}`,
+                ...duplicate,
                 title: `${activePart.title} Copy`,
               },
             ],

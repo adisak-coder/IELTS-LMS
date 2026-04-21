@@ -241,11 +241,7 @@ export function StudentApp() {
     }
   };
 
-  const submitCurrentModule = async () => {
-    runtimeActions.submitModule();
-  };
-
-  const handleModuleSubmit = async () => {
+  const performModuleSubmit = async () => {
     if (runtimeState.runtimeBacked) {
       const flushed = await attemptActions.flushPending();
       if (!flushed) {
@@ -258,17 +254,21 @@ export function StudentApp() {
       return;
     }
 
+    runtimeActions.submitModule();
+  };
+
+  const handleModuleSubmit = async () => {
     if (runtimeState.submitRequiresConfirmation) {
       uiActions.setShowSubmitConfirm(true);
       return;
     }
 
-    await submitCurrentModule();
+    await performModuleSubmit();
   };
 
   const confirmModuleSubmit = async () => {
     uiActions.setShowSubmitConfirm(false);
-    await submitCurrentModule();
+    await performModuleSubmit();
   };
 
   useEffect(() => {
@@ -363,6 +363,7 @@ export function StudentApp() {
 
   const answeredCount = countAnsweredQuestions(runtimeState.allQuestions, runtimeState.answers);
   const totalQuestions = countQuestionSlots(runtimeState.allQuestions);
+  const unansweredSubmissionPolicy = examState.config.progression.unansweredSubmissionPolicy ?? 'confirm';
 
   const blockingOverlay =
     runtimeState.blocking.active && blockingCopy ? (
@@ -648,6 +649,7 @@ export function StudentApp() {
         totalQuestions={totalQuestions}
         flaggedCount={Object.values(runtimeState.flags).filter(Boolean).length}
         timeRemaining={runtimeState.displayTimeRemaining}
+        unansweredSubmissionPolicy={unansweredSubmissionPolicy}
       />
 
       {uiState.showTimeExtensionRequest && !uiState.timeExtensionGranted ? (

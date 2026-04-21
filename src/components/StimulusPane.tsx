@@ -14,6 +14,7 @@ import {
 import { Passage, ExamState, StimulusImageAsset } from '../types';
 import { StimulusImageEditor } from './StimulusImageEditor';
 import { getPassageMetrics } from '../utils/builderEnhancements';
+import { sanitizeHtml } from '../utils/sanitizeHtml';
 
 const metricTone = {
   green: 'text-emerald-700 bg-emerald-50 border-emerald-100',
@@ -69,6 +70,44 @@ export function StimulusPane({
     updatePassage({
       content: editorRef.current?.innerHTML ?? '',
     });
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const clipboard = event.clipboardData;
+    if (!clipboard) {
+      return;
+    }
+
+    event.preventDefault();
+    editorRef.current?.focus();
+
+    const html = clipboard.getData('text/html');
+    if (html) {
+      document.execCommand('insertHTML', false, sanitizeHtml(html));
+      syncEditor();
+      return;
+    }
+
+    const text = clipboard.getData('text/plain');
+    if (text) {
+      document.execCommand('insertText', false, text);
+      syncEditor();
+    }
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    const transfer = event.dataTransfer;
+    if (!transfer) {
+      return;
+    }
+
+    const html = transfer.getData('text/html');
+    if (html) {
+      event.preventDefault();
+      editorRef.current?.focus();
+      document.execCommand('insertHTML', false, sanitizeHtml(html));
+      syncEditor();
+    }
   };
 
   const applyCommand = (command: string, value?: string) => {
@@ -148,6 +187,8 @@ export function StimulusPane({
             contentEditable
             suppressContentEditableWarning
             onInput={syncEditor}
+            onPaste={handlePaste}
+            onDrop={handleDrop}
             className="min-h-[420px] rounded-[28px] border border-gray-100 bg-white px-8 py-8 outline-none text-gray-900 leading-relaxed font-serif text-base shadow-sm [&_h1]:text-3xl [&_h1]:font-black [&_h1]:mb-4 [&_h2]:text-2xl [&_h2]:font-bold [&_h2]:mb-3 [&_h3]:text-xl [&_h3]:font-bold [&_h3]:mb-2 [&_img]:max-w-full [&_img]:rounded-2xl [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:mb-4"
             data-placeholder="Enter reading passage text here..."
           />

@@ -10,6 +10,7 @@ interface SubmitConfirmationProps {
   totalQuestions: number;
   flaggedCount: number;
   timeRemaining?: number | undefined;
+  unansweredSubmissionPolicy?: 'allow' | 'confirm' | 'block' | undefined;
 }
 
 export function SubmitConfirmation({ 
@@ -19,13 +20,16 @@ export function SubmitConfirmation({
   answeredCount, 
   totalQuestions, 
   flaggedCount,
-  timeRemaining 
+  timeRemaining,
+  unansweredSubmissionPolicy = 'confirm',
 }: SubmitConfirmationProps) {
   if (!isOpen) return null;
 
   const unansweredCount = totalQuestions - answeredCount;
   const hasUnanswered = unansweredCount > 0;
   const hasFlagged = flaggedCount > 0;
+  const hardBlocksUnanswered = unansweredSubmissionPolicy === 'block';
+  const canSubmit = !(hardBlocksUnanswered && hasUnanswered);
 
   const formatTime = (seconds: number) => {
     const m = Math.floor(seconds / 60);
@@ -58,16 +62,22 @@ export function SubmitConfirmation({
         
         <div className="p-4 sm:p-6 space-y-3 md:space-y-4">
           {hasUnanswered && (
-            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+            <div className={`p-4 border rounded-lg ${hardBlocksUnanswered ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
               <div className="flex items-start gap-3">
-                <AlertTriangle size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
+                <AlertTriangle size={20} className={`${hardBlocksUnanswered ? 'text-red-700' : 'text-amber-600'} flex-shrink-0 mt-0.5`} />
                 <div>
-                  <p className="font-semibold text-amber-900 mb-1">
+                  <p className={`font-semibold mb-1 ${hardBlocksUnanswered ? 'text-red-900' : 'text-amber-900'}`}>
                     You have {unansweredCount} unanswered question{unansweredCount !== 1 ? 's' : ''}
                   </p>
-                  <p className="text-sm text-amber-800">
-                    Are you sure you want to submit? You cannot change your answers after submission.
-                  </p>
+                  {hardBlocksUnanswered ? (
+                    <p className="text-sm text-red-800">
+                      You must answer all questions before submitting this section.
+                    </p>
+                  ) : (
+                    <p className="text-sm text-amber-800">
+                      Are you sure you want to submit? You cannot change your answers after submission.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -135,6 +145,7 @@ export function SubmitConfirmation({
           <Button
             variant={hasUnanswered ? "danger" : "primary"}
             onClick={onConfirm}
+            disabled={!canSubmit}
             className="flex-1 text-sm md:text-base"
           >
             Submit Section

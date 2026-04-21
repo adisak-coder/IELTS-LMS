@@ -1,6 +1,7 @@
 import React from 'react';
 import { DiagramLabelingBlock as DiagramLabelingBlockType } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface DiagramLabelingBlockProps {
   block: DiagramLabelingBlockType;
@@ -30,7 +31,7 @@ export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, del
 
   const addLabel = () => {
     const newLabel = {
-      id: `l${Date.now()}`,
+      id: createId('lbl'),
       x: 50,
       y: 50,
       correctAnswer: ''

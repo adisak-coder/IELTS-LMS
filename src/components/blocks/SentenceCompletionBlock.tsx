@@ -1,6 +1,7 @@
 import React from 'react';
 import { SentenceCompletionBlock as SentenceCompletionBlockType, AnswerRule } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface SentenceCompletionBlockProps {
   block: SentenceCompletionBlockType;
@@ -37,7 +38,7 @@ export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, 
 
   const addQuestion = () => {
     const newQuestion = {
-      id: `q${Date.now()}`,
+      id: createId('q'),
       sentence: '',
       blanks: [],
       answerRule: 'TWO_WORDS' as AnswerRule
@@ -54,7 +55,7 @@ export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, 
     const newQuestions = block.questions.map(q => {
       if (q.id !== questionId) return q;
       const newBlank = {
-        id: `b${Date.now()}`,
+        id: createId('blank'),
         correctAnswer: '',
         position: q.blanks.length
       };

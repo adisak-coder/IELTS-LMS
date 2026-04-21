@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { QuestionBlock, MultiMCQBlock as MultiMCQBlockType } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface Props {
   block: QuestionBlock;
@@ -24,7 +25,7 @@ export const MultiSelectMCQBlock: React.FC<Props> = ({ block, startNum, endNum, 
   const isExactCorrect = correctCount === requiredSelections;
 
   const addOption = () => {
-    const newO = { id: `o${Date.now()}`, text: '', isCorrect: false };
+    const newO = { id: createId('opt'), text: '', isCorrect: false };
     updateBlock({ ...mcqBlock, options: [...options, newO] });
   };
 

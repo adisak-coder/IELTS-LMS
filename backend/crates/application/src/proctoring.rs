@@ -301,19 +301,46 @@ impl ProctoringService {
             }
         }
 
-        let runtime = self.load_runtime_row(schedule_id).await?;
+        let mut tx = self.pool.begin().await?;
+        let runtime = sqlx::query_as::<_, RuntimeRow>(
+            "SELECT * FROM exam_session_runtimes WHERE schedule_id = ? FOR UPDATE",
+        )
+        .bind(schedule_id.to_string())
+        .fetch_optional(tx.as_mut())
+        .await?
+        .ok_or(ProctoringError::NotFound)?;
         if runtime.status != RuntimeStatus::Live {
             return Err(ProctoringError::Conflict(
                 "Runtime must be live before ending a section.".to_owned(),
             ));
         }
 
+        if let Some(expected) = req.expected_active_section_key.as_deref() {
+            match runtime.active_section_key.as_deref() {
+                Some(actual) if actual == expected => {}
+                Some(_) => {
+                    return Err(ProctoringError::Conflict(
+                        "Runtime advanced; refresh before retrying.".to_owned(),
+                    ));
+                }
+                None => {
+                    return Err(ProctoringError::Conflict(
+                        "Runtime has no active section; refresh before retrying.".to_owned(),
+                    ));
+                }
+            }
+        }
+
         let active_section_key = runtime.active_section_key.clone().ok_or_else(|| {
             ProctoringError::Conflict("No active section is available.".to_owned())
         })?;
-        let sections = self
-            .load_runtime_section_rows(runtime.id.into_uuid())
-            .await?;
+        let sections = sqlx::query_as::<_, RuntimeSectionRow>(
+            "SELECT * FROM exam_session_runtime_sections WHERE runtime_id = ? ORDER BY section_order ASC FOR UPDATE",
+        )
+        .bind(runtime.id)
+        .fetch_all(tx.as_mut())
+        .await
+        .map_err(ProctoringError::from)?;
         let active_index = sections
             .iter()
             .position(|section| section.section_key == active_section_key)
@@ -324,8 +351,7 @@ impl ProctoringService {
             .iter()
             .skip(active_index + 1)
             .find(|section| section.status == SectionRuntimeStatus::Locked);
-        let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
+        let completion_reason = "proctor_end";
 
         sqlx::query(
             r#"
@@ -333,12 +359,13 @@ impl ProctoringService {
             SET
                 status = ?,
                 actual_end_at = NOW(),
-                completion_reason = 'proctor_end',
+                completion_reason = ?,
                 paused_at = NULL
             WHERE runtime_id = ? AND section_key = ?
             "#,
         )
         .bind(SectionRuntimeStatus::Completed)
+        .bind(completion_reason)
         .bind(runtime.id)
         .bind(&active_section_key)
         .execute(&mut *tx)
@@ -407,6 +434,16 @@ impl ProctoringService {
             .bind(schedule_id.to_string())
             .execute(&mut *tx)
             .await?;
+
+            auto_submit_schedule_attempts_in_tx(tx.as_mut(), schedule_id, completion_reason)
+                .await
+                .map_err(|error| match error {
+                    DeliveryError::Database(db) => ProctoringError::Database(db),
+                    DeliveryError::Conflict(message)
+                    | DeliveryError::Validation(message)
+                    | DeliveryError::Internal(message) => ProctoringError::Validation(message),
+                    DeliveryError::NotFound => ProctoringError::NotFound,
+                })?;
         }
 
         insert_control_event(
@@ -438,6 +475,16 @@ impl ProctoringService {
                 "SECTION_START",
                 None,
                 Some(json!({ "sectionKey": next_key })),
+            )
+            .await?;
+        } else {
+            insert_audit_log(
+                &mut tx,
+                schedule_id,
+                &ctx.actor_id.to_string(),
+                "SESSION_END",
+                None,
+                Some(json!({ "reason": req.reason })),
             )
             .await?;
         }
@@ -483,12 +530,35 @@ impl ProctoringService {
             ));
         }
 
-        let runtime = self.load_runtime_row(schedule_id).await?;
+        let mut tx = self.pool.begin().await?;
+        let runtime = sqlx::query_as::<_, RuntimeRow>(
+            "SELECT * FROM exam_session_runtimes WHERE schedule_id = ? FOR UPDATE",
+        )
+        .bind(schedule_id.to_string())
+        .fetch_optional(tx.as_mut())
+        .await?
+        .ok_or(ProctoringError::NotFound)?;
+
+        if let Some(expected) = req.expected_active_section_key.as_deref() {
+            match runtime.active_section_key.as_deref() {
+                Some(actual) if actual == expected => {}
+                Some(_) => {
+                    return Err(ProctoringError::Conflict(
+                        "Runtime advanced; refresh before retrying.".to_owned(),
+                    ));
+                }
+                None => {
+                    return Err(ProctoringError::Conflict(
+                        "Runtime has no active section; refresh before retrying.".to_owned(),
+                    ));
+                }
+            }
+        }
+
         let active_section_key = runtime.active_section_key.clone().ok_or_else(|| {
             ProctoringError::Conflict("No active section is available.".to_owned())
         })?;
-        let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
+        let _now = Utc::now();
 
         sqlx::query(
             r#"

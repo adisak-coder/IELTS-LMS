@@ -378,6 +378,7 @@ export class ExamDeliveryService {
     scheduleId: string,
     actor: string,
     minutes: number,
+    expectedActiveSectionKey?: string | null,
     _now: Date | string = new Date(),
   ): Promise<RuntimeMutationResult> {
     try {
@@ -387,6 +388,7 @@ export class ExamDeliveryService {
         {
           actorId: actor,
           minutes,
+          expectedActiveSectionKey: expectedActiveSectionKey ?? undefined,
         },
         { retries: 0 },
       );
@@ -406,6 +408,7 @@ export class ExamDeliveryService {
   async endCurrentSectionNow(
     scheduleId: string,
     actor: string,
+    expectedActiveSectionKey?: string | null,
     _now: Date | string = new Date(),
   ): Promise<RuntimeMutationResult> {
     try {
@@ -414,6 +417,7 @@ export class ExamDeliveryService {
         `/v1/proctor/sessions/${scheduleId}/control/end-section-now`,
         {
           actorId: actor,
+          expectedActiveSectionKey: expectedActiveSectionKey ?? undefined,
         },
         { retries: 0 },
       );

@@ -1,6 +1,7 @@
 import React from 'react';
 import { SingleMCQBlock as SingleMCQBlockType, MCQOption } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface SingleMCQBlockProps {
   block: SingleMCQBlockType;
@@ -26,7 +27,7 @@ export function SingleMCQBlock({ block, startNum, endNum, updateBlock, deleteBlo
 
   const addOption = () => {
     const newOption: MCQOption = {
-      id: `o${Date.now()}`,
+      id: createId('opt'),
       text: '',
       isCorrect: false
     };

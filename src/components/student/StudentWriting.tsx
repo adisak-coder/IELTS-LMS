@@ -4,6 +4,7 @@ import { Bold, Italic, Underline, AlignLeft, AlignCenter, List, Undo, Redo, Arro
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
 import { MIN_HEIGHTS, CHAR_HEIGHT_PX, WRITING } from '../../constants/uiConstants';
 import { saveStudentAuditEvent } from '../../services/studentAuditService';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 interface StudentWritingProps {
   state: ExamState;
@@ -370,7 +371,7 @@ export function StudentWriting({ state, writingAnswers, onWritingChange, onSubmi
               contentEditable
               onInput={handleEditorInput}
               className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 placeholder:text-gray-200 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-              dangerouslySetInnerHTML={{ __html: currentText }}
+              dangerouslySetInnerHTML={{ __html: sanitizeHtml(currentText) }}
               style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
               spellCheck={!security.preventAutocorrect}
               autoCorrect={security.preventAutocorrect ? 'off' : 'on'}

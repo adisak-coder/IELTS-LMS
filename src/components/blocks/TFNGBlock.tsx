@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { QuestionBlock, TFNGBlock as TFNGBlockType, TFNGMode } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, AlertCircle } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface Props {
   block: QuestionBlock;
@@ -32,7 +33,7 @@ export const TFNGBlock: React.FC<Props> = ({ block, startNum, endNum, updateBloc
   };
 
   const addRow = () => {
-    const newQ = { id: `q${Date.now()}`, statement: '', correctAnswer: (mode === 'TFNG' ? 'T' : 'Y') as 'T' | 'F' | 'NG' | 'Y' | 'N' };
+    const newQ = { id: createId('q'), statement: '', correctAnswer: (mode === 'TFNG' ? 'T' : 'Y') as 'T' | 'F' | 'NG' | 'Y' | 'N' };
     updateBlock({ ...tfngBlock, questions: [...tfngBlock.questions, newQ] });
   };
 

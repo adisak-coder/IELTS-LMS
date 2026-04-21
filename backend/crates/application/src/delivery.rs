@@ -199,7 +199,39 @@ impl DeliveryService {
             has_precheck,
             attempt.submitted_at.is_some(),
         );
-        let attempt = if attempt.phase != phase {
+        let client_session_id_value = Value::String(req.client_session_id.to_string());
+
+        let needs_client_session_id_in_integrity = attempt
+            .integrity
+            .get("clientSessionId")
+            .and_then(Value::as_str)
+            .is_none();
+        let next_integrity = if needs_client_session_id_in_integrity {
+            let mut integrity = ensure_object(attempt.integrity.clone());
+            integrity.insert("clientSessionId".to_owned(), client_session_id_value.clone());
+            Value::Object(integrity)
+        } else {
+            attempt.integrity.clone()
+        };
+
+        let needs_client_session_id_in_recovery = attempt
+            .recovery
+            .get("clientSessionId")
+            .and_then(Value::as_str)
+            .is_none();
+        let next_recovery = if needs_client_session_id_in_recovery {
+            merge_recovery(
+                attempt.recovery.clone(),
+                json!({ "clientSessionId": req.client_session_id }),
+            )
+        } else {
+            attempt.recovery.clone()
+        };
+
+        let attempt = if attempt.phase != phase
+            || needs_client_session_id_in_integrity
+            || needs_client_session_id_in_recovery
+        {
             self.update_attempt(
                 attempt.id,
                 phase,
@@ -209,8 +241,8 @@ impl DeliveryService {
                 attempt.writing_answers.clone(),
                 attempt.flags.clone(),
                 attempt.violations_snapshot.clone(),
-                attempt.integrity.clone(),
-                attempt.recovery.clone(),
+                next_integrity,
+                next_recovery,
                 attempt.final_submission.clone(),
                 attempt.submitted_at,
             )
@@ -705,6 +737,28 @@ impl DeliveryService {
             return Ok(response);
         }
 
+        let version = self.load_version(attempt.published_version_id.clone()).await?;
+        let unanswered_submission_policy = version
+            .config_snapshot
+            .get("progression")
+            .and_then(|progression| progression.get("unansweredSubmissionPolicy"))
+            .and_then(Value::as_str)
+            .unwrap_or("confirm");
+        let answer_schema = build_answer_schema(&version.content_snapshot)?;
+        let completion = compute_answer_completion(&answer_schema, &attempt.answers);
+        let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
+
+        if unanswered_submission_policy == "block"
+            && matches!(runtime_status, Some("live" | "paused"))
+            && completion.total_slots > 0
+            && completion.answered_slots < completion.total_slots
+        {
+            return Err(DeliveryError::Validation(format!(
+                "All questions must be answered before submitting. {}/{} answered.",
+                completion.answered_slots, completion.total_slots
+            )));
+        }
+
         let now = Utc::now();
         let submission_id = format!("submission-{}", Uuid::new_v4().simple());
         let final_submission = json!({
@@ -765,7 +819,12 @@ impl DeliveryService {
         .bind(&attempt.id)
         .bind(json!({
             "submissionId": submission_id,
-            "submittedAt": submitted_at
+            "submittedAt": submitted_at,
+            "answerCompletion": {
+                "answeredSlots": completion.answered_slots,
+                "totalSlots": completion.total_slots,
+                "unansweredSlots": completion.total_slots.saturating_sub(completion.answered_slots)
+            }
         }))
         .execute(tx.as_mut())
         .await?;
@@ -1417,6 +1476,66 @@ enum AnswerConstraint {
 #[derive(Debug, Clone)]
 struct AnswerSchema {
     constraints: HashMap<String, AnswerConstraint>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AnswerCompletion {
+    answered_slots: usize,
+    total_slots: usize,
+}
+
+fn is_answered_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(values) => values.iter().any(is_answered_value),
+        _ => true,
+    }
+}
+
+fn slots_for_constraint(constraint: &AnswerConstraint) -> usize {
+    match constraint {
+        AnswerConstraint::ArrayText { max_len } => *max_len,
+        AnswerConstraint::EnumArray { max_len, .. } => *max_len,
+        AnswerConstraint::MultiChoice { max, .. } => *max,
+        AnswerConstraint::Text | AnswerConstraint::Enum(_) => 1,
+    }
+}
+
+fn answered_slots_for_constraint(constraint: &AnswerConstraint, value: Option<&Value>) -> usize {
+    match constraint {
+        AnswerConstraint::Text | AnswerConstraint::Enum(_) => value.map_or(0, |v| usize::from(is_answered_value(v))),
+        AnswerConstraint::MultiChoice { max, .. } => {
+            let Some(Value::Array(values)) = value else { return 0 };
+            values
+                .iter()
+                .filter(|entry| is_answered_value(entry))
+                .take(*max)
+                .count()
+        }
+        AnswerConstraint::ArrayText { max_len } | AnswerConstraint::EnumArray { max_len, .. } => {
+            let Some(Value::Array(values)) = value else { return 0 };
+            (0..*max_len)
+                .filter(|index| values.get(*index).is_some_and(is_answered_value))
+                .count()
+        }
+    }
+}
+
+fn compute_answer_completion(schema: &AnswerSchema, answers: &Value) -> AnswerCompletion {
+    let mut total_slots = 0usize;
+    let mut answered_slots = 0usize;
+
+    for (key, constraint) in &schema.constraints {
+        total_slots += slots_for_constraint(constraint);
+        let value = answers.get(key);
+        answered_slots += answered_slots_for_constraint(constraint, value);
+    }
+
+    AnswerCompletion {
+        answered_slots,
+        total_slots,
+    }
 }
 
 fn build_writing_task_ids(config_snapshot: &Value) -> HashSet<String> {
@@ -2170,5 +2289,43 @@ mod tests {
         assert_eq!(phase, "exam");
         assert_eq!(current_module, "reading");
         assert_eq!(current_question_id.as_deref(), Some("q1"));
+    }
+
+    #[test]
+    fn compute_answer_completion_counts_required_slots_across_constraint_types() {
+        let schema = AnswerSchema {
+            constraints: HashMap::from_iter([
+                ("q1".to_owned(), AnswerConstraint::Text),
+                (
+                    "multi-1".to_owned(),
+                    AnswerConstraint::MultiChoice {
+                        allowed: HashSet::new(),
+                        max: 2,
+                    },
+                ),
+                (
+                    "sentence-1".to_owned(),
+                    AnswerConstraint::ArrayText { max_len: 2 },
+                ),
+                (
+                    "classify-1".to_owned(),
+                    AnswerConstraint::EnumArray {
+                        allowed: HashSet::new(),
+                        max_len: 3,
+                    },
+                ),
+            ]),
+        };
+
+        let answers = json!({
+            "q1": "A",
+            "multi-1": ["opt-a"],
+            "sentence-1": ["filled", ""],
+            "classify-1": [null, "category", " "]
+        });
+
+        let completion = compute_answer_completion(&schema, &answers);
+        assert_eq!(completion.total_slots, 1 + 2 + 2 + 3);
+        assert_eq!(completion.answered_slots, 1 + 1 + 1 + 1);
     }
 }

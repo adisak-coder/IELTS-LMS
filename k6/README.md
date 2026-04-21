@@ -42,6 +42,18 @@ K6_CHECKED_IN_THRESHOLD=95 \
 k6 run k6/prod-exam-day.js
 ```
 
+## Pre-prod rehearsal (30–60 minutes)
+Run long enough to cross multiple attempt-token refresh windows and confirm students can keep heartbeating/mutating and still submit:
+
+```bash
+K6_STUDENTS=50 \
+K6_PROCTORS=1 \
+K6_CHECKED_IN_THRESHOLD=45 \
+K6_WAIT_FOR_LIVE_TIMEOUT_SECONDS=1800 \
+K6_STUDENT_WORK_SECONDS=3600 \
+k6 run k6/prod-exam-day.js
+```
+
 ## Common overrides
 - `K6_BASE_URL` (default from `prod-target.json`)
 - `K6_SCHEDULE_ID` (default from runtime override, else `prod-target.json`)

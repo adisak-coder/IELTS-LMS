@@ -1,6 +1,7 @@
 import React from 'react';
 import { ClassificationBlock as ClassificationBlockType } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface ClassificationBlockProps {
   block: ClassificationBlockType;
@@ -39,7 +40,7 @@ export function ClassificationBlock({ block, startNum, endNum, updateBlock, dele
 
   const addItem = () => {
     const newItem = {
-      id: `i${Date.now()}`,
+      id: createId('item'),
       text: '',
       correctCategory: block.categories[0] || ''
     };

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { QuestionBlock, ClozeBlock as ClozeBlockType, AnswerRule } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, AlertCircle } from 'lucide-react';
+import { createId } from '../../utils/idUtils';
 
 interface Props {
   block: QuestionBlock;
@@ -34,7 +35,7 @@ export const ClozeBlock: React.FC<Props> = ({ block, startNum, endNum, updateBlo
   };
 
   const addQuestion = () => {
-    const newQ = { id: `q${Date.now()}`, prompt: '', correctAnswer: '' };
+    const newQ = { id: createId('q'), prompt: '', correctAnswer: '' };
     updateBlock({ ...clozeBlock, questions: [...clozeBlock.questions, newQ] });
   };
 

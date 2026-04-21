@@ -35,6 +35,7 @@ import {
 } from '../utils/examUtils';
 import { hydrateExamState } from './examAdapterService';
 import { getWritingTaskContent } from '../utils/writingTaskUtils';
+import { getExamIdCollisionIssues } from '../utils/examIdCollisionCheck';
 import {
   backendDelete,
   backendGet,
@@ -453,6 +454,16 @@ export class ExamLifecycleService {
     publishNotes?: string
   ): Promise<TransitionResult> {
     if (this.useBackendBuilder()) {
+      const readiness = await this.getPublishReadiness(examId);
+      if (!readiness.canPublish) {
+        const exam = await this.repository.getExamById(examId);
+        return {
+          success: false,
+          error: 'Exam is not ready for publication',
+          exam: exam ?? undefined,
+        };
+      }
+
       try {
         const revision = await this.ensureBackendExamRevision(examId);
         if (revision === null) {
@@ -815,6 +826,7 @@ export class ExamLifecycleService {
         }>(`/v1/exams/${examId}/validation`);
 
         let questionCounts = { reading: 0, listening: 0, total: 0 };
+        let integrityIssues: ReturnType<typeof getExamIdCollisionIssues> = [];
         try {
           const exam = await this.repository.getExamById(examId);
           const versionId = exam?.currentDraftVersionId ?? exam?.currentPublishedVersionId ?? null;
@@ -829,6 +841,7 @@ export class ExamLifecycleService {
               const listeningQuestions = config.sections.listening.enabled
                 ? getListeningTotalQuestions(content.listening.parts)
                 : 0;
+              integrityIssues = getExamIdCollisionIssues(content);
               questionCounts = {
                 reading: readingQuestions,
                 listening: listeningQuestions,
@@ -840,15 +853,30 @@ export class ExamLifecycleService {
           // Ignore local readiness failures in backend mode; retain summary.
         }
 
-        return {
-          canPublish: summary.canPublish,
-          errors: summary.errors.map((error) => ({
+        const mappedIntegrityErrors = integrityIssues.map((issue) => ({
+          field: issue.field,
+          message: issue.message,
+          severity: issue.severity,
+        }));
+
+        const combinedErrors = [
+          ...summary.errors.map((error) => ({
             field: error.field,
             message: error.message,
-            severity: 'error',
+            severity: 'error' as const,
           })),
+          ...mappedIntegrityErrors,
+        ];
+
+        const hasIntegrityError = mappedIntegrityErrors.some((issue) => issue.severity === 'error');
+        return {
+          canPublish: summary.canPublish && !hasIntegrityError,
+          errors: combinedErrors,
           warnings: summary.warnings,
-          missingFields: summary.errors.map((error) => error.field),
+          missingFields: [
+            ...summary.errors.map((error) => error.field),
+            ...mappedIntegrityErrors.filter((issue) => issue.severity === 'error').map((issue) => issue.field),
+          ],
           questionCounts,
         };
       } catch (error) {
@@ -1032,6 +1060,18 @@ export class ExamLifecycleService {
     // Calculate question counts
     const readingQuestions = config.sections.reading.enabled ? getReadingTotalQuestions(content.reading.passages) : 0;
     const listeningQuestions = config.sections.listening.enabled ? getListeningTotalQuestions(content.listening.parts) : 0;
+
+    const integrityIssues = getExamIdCollisionIssues(content);
+    integrityIssues.forEach((issue) => {
+      errors.push({
+        field: issue.field,
+        message: issue.message,
+        severity: issue.severity,
+      });
+      if (issue.severity === 'error') {
+        missingFields.push(issue.field);
+      }
+    });
 
     const hasErrors = errors.some(e => e.severity === 'error');
 

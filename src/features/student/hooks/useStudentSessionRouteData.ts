@@ -11,6 +11,8 @@ import {
 import {
   hasAttemptCredential,
   mapBackendStudentAttempt,
+  ensureClientSessionIdForAttempt,
+  refreshAttemptCredentialForAttempt,
   studentAttemptRepository,
 } from '@services/studentAttemptRepository';
 import type { ExamState } from '../../../types';
@@ -191,6 +193,15 @@ export function useStudentSessionRouteData(
             }
           ).submittedAt,
         );
+
+        if (!isSubmittedAttempt) {
+          // Restore/lock the clientSessionId used for mutation sequencing if sessionStorage was lost.
+          ensureClientSessionIdForAttempt(nextAttempt);
+          if (!hasAttemptCredential(nextAttempt.scheduleId, nextAttempt.id)) {
+            await refreshAttemptCredentialForAttempt(nextAttempt).catch(() => false);
+          }
+        }
+
         await studentAttemptRepository.saveAttempt(nextAttempt);
         if (isSubmittedAttempt) {
           setAttemptSnapshot(nextAttempt);
@@ -232,8 +243,8 @@ export function useStudentSessionRouteData(
     void loadStudentData();
   }, [loadStudentData]);
 
-  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 4_000 : 2_000;
-  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 8_000 : 6_000;
+  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 10_000 : 4_000;
+  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 15_000 : 8_000;
 
   useAsyncPolling(async () => {
     await refreshBackendSessionSnapshot();

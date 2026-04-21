@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { QuestionBlock, MapBlock as MapBlockType } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, Image as ImageIcon, ArrowUp, ArrowDown, AlertCircle, Link as LinkIcon } from 'lucide-react';
 import { MIN_HEIGHTS } from '../../constants/uiConstants';
+import { createId } from '../../utils/idUtils';
 
 interface Props {
   block: QuestionBlock;
@@ -25,7 +26,7 @@ export const MapLabelingBlock: React.FC<Props> = ({ block, startNum, endNum, upd
   const getFieldError = (field: string) => errors.find(e => e.field.includes(field));
 
   const addHotspot = (x: number = 50, y: number = 50) => {
-    const newQ = { id: `q${Date.now()}`, label: `Location ${questions.length + 1}`, correctAnswer: '', x, y };
+    const newQ = { id: createId('q'), label: `Location ${questions.length + 1}`, correctAnswer: '', x, y };
     updateBlock({ ...mapBlock, questions: [...questions, newQ] });
   };
 
