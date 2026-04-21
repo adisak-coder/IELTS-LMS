@@ -62,16 +62,19 @@ export const StudentCard = React.memo(function StudentCard({
       role="button"
       tabIndex={0}
       aria-label={`Open ${session.name} session details`}
-      className={`group grid cursor-pointer items-center gap-3 px-4 ${compact ? 'py-3' : 'py-4'} transition ${isSelected ? 'bg-slate-50' : 'bg-white hover:bg-slate-50'} ${isMultiSelected ? 'bg-blue-50' : ''} grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_120px_120px_120px]`}
+      className={`group grid cursor-pointer items-center gap-3 px-4 ${compact ? 'py-3' : 'py-4'} transition ${isSelected ? 'bg-slate-50' : 'bg-white hover:bg-slate-50'} ${isMultiSelected ? 'bg-blue-50' : ''} grid-cols-[minmax(0,2fr)_minmax(0,1.1fr)_120px_120px_120px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white`}
     >
       <div className="flex min-w-0 items-center gap-3">
         {isSelectionEnabled ? (
           <button
+            type="button"
             onClick={onToggleSelection}
-            className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border transition-colors ${isMultiSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white'}`}
+            aria-label={isMultiSelected ? `Deselect ${session.name}` : `Select ${session.name}`}
+            aria-pressed={isMultiSelected}
+            className={`flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white ${isMultiSelected ? 'border-blue-600 bg-blue-600 text-white' : 'border-slate-300 bg-white'}`}
             title={isMultiSelected ? 'Deselect student' : 'Select student'}
           >
-            {isMultiSelected ? <Check size={13} /> : null}
+            {isMultiSelected ? <Check size={13} aria-hidden="true" /> : null}
           </button>
         ) : null}
         <div className={`grid h-9 w-9 flex-shrink-0 place-items-center rounded-full text-xs font-semibold ${isSelected ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700'}`}>{initials}</div>
@@ -106,15 +109,15 @@ export const StudentCard = React.memo(function StudentCard({
         <div className="min-w-0 text-xs text-slate-500">
           <p className="truncate">{new Date(session.lastActivity).toLocaleTimeString()}</p>
         </div>
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          <button onClick={(event) => handleAction(event, 'warn')} className="rounded p-1 text-amber-700 hover:bg-amber-100" title="Warn Student"><AlertTriangle size={14} /></button>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+          <button type="button" onClick={(event) => handleAction(event, 'warn')} className="rounded p-1 text-amber-700 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300" title="Warn student" aria-label="Warn student"><AlertTriangle size={14} aria-hidden="true" /></button>
           {session.status === 'paused' ? (
-            <button onClick={(event) => handleAction(event, 'resume')} className="rounded p-1 text-emerald-700 hover:bg-emerald-100" title="Resume Session"><Play size={14} /></button>
+            <button type="button" onClick={(event) => handleAction(event, 'resume')} className="rounded p-1 text-emerald-700 hover:bg-emerald-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300" title="Resume session" aria-label="Resume session"><Play size={14} aria-hidden="true" /></button>
           ) : (
-            <button onClick={(event) => handleAction(event, 'pause')} className="rounded p-1 text-sky-700 hover:bg-sky-100" title="Pause Session"><Pause size={14} /></button>
+            <button type="button" onClick={(event) => handleAction(event, 'pause')} className="rounded p-1 text-sky-700 hover:bg-sky-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300" title="Pause session" aria-label="Pause session"><Pause size={14} aria-hidden="true" /></button>
           )}
-          <button onClick={(event) => handleAction(event, 'terminate')} className="rounded p-1 text-red-700 hover:bg-red-100" title="Terminate Session"><XCircle size={14} /></button>
-          <span className="rounded p-1 text-slate-300"><MoreHorizontal size={14} /></span>
+          <button type="button" onClick={(event) => handleAction(event, 'terminate')} className="rounded p-1 text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300" title="Terminate session" aria-label="Terminate session"><XCircle size={14} aria-hidden="true" /></button>
+          <span className="rounded p-1 text-slate-300" aria-hidden="true"><MoreHorizontal size={14} /></span>
         </div>
       </div>
     </div>

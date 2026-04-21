@@ -77,6 +77,11 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   const [drawerTab, setDrawerTab] = useState<StudentDrawerTab>('timeline');
   const [pendingCohortAction, setPendingCohortAction] = useState<CohortControlAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<Extract<CohortControlAction, 'end_section' | 'complete'> | null>(null);
+  const [confirmDisciplineAction, setConfirmDisciplineAction] = useState<
+    | null
+    | { scope: 'single'; studentId: string; studentName: string; action: 'pause' | 'terminate' }
+    | { scope: 'bulk'; studentIds: string[]; action: 'pause' | 'terminate' }
+  >(null);
   const [toasts, setToasts] = useState<
     Array<{ id: string; variant: ToastVariant; title?: string; message: string }>
   >([]);
@@ -278,7 +283,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   const createAuditLog = (actionType: AuditActionType, targetStudentId?: string, payload?: Record<string, unknown>): SessionAuditLog => ({
     id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
     timestamp: new Date().toISOString(),
-    actor: 'Proctor',
+    actor: currentProctorName ?? 'Proctor',
     actionType,
     targetStudentId,
     sessionId: selectedScheduleId || '',
@@ -308,67 +313,158 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
     return { ...session, status: 'terminated' };
   };
 
-  const handleDisciplineAction = async (studentId: string, action: 'warn' | 'pause' | 'resume' | 'terminate', payload?: unknown) => {
-    if (action === 'pause' && !window.confirm('Pause this student session?')) return;
-    if (action === 'terminate' && !window.confirm('Terminate this student session?')) return;
+  const pushToast = useCallback((toast: Omit<(typeof toasts)[number], 'id'>) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    setToasts((current) => [...current, { ...toast, id }]);
+  }, []);
 
-    const updatedSessions = [...sessions];
-    const index = updatedSessions.findIndex((session) => session.id === studentId);
-    if (index < 0) return;
-    const currentSession = updatedSessions[index];
-    if (!currentSession) return;
+  const dismissToast = useCallback((id: string) => {
+    setToasts((current) => current.filter((toast) => toast.id !== id));
+  }, []);
 
-    let deliveryResult: { success: boolean; error?: string } = { success: true };
-    if (action === 'warn') {
-      deliveryResult = await examDeliveryService.warnStudent(studentId, typeof payload === 'string' ? payload : 'Warning issued by proctor', 'Proctor');
-    } else if (action === 'pause') {
-      deliveryResult = await examDeliveryService.pauseStudentAttempt(studentId, 'Proctor');
-    } else if (action === 'resume') {
-      deliveryResult = await examDeliveryService.resumeStudentAttempt(studentId, 'Proctor');
-    } else if (action === 'terminate') {
-      deliveryResult = await examDeliveryService.terminateStudentAttempt(studentId, 'Proctor');
-    }
-
-    if (!deliveryResult.success) {
-      logger.error('Failed to execute student action:', deliveryResult.error);
-      throw new Error(deliveryResult.error ?? 'Failed to execute student action');
-    }
-
-    const nextSession = applyStudentAction(currentSession, action, payload);
-    updatedSessions[index] = nextSession;
-    onUpdateSessions(updatedSessions);
-  };
-
-  const handleBulkAction = async (action: 'warn' | 'pause' | 'resume' | 'terminate') => {
-    if ((action === 'pause' || action === 'terminate') && !window.confirm(`Confirm bulk ${action} for selected students?`)) return;
-
-    const updatedSessions = [...sessions];
-    for (const studentId of selectedStudentIds) {
+  const runDisciplineAction = useCallback(
+    async (studentId: string, action: 'warn' | 'pause' | 'resume' | 'terminate', payload?: unknown) => {
+      const updatedSessions = [...sessions];
       const index = updatedSessions.findIndex((session) => session.id === studentId);
-      if (index < 0) continue;
+      if (index < 0) return { success: false, error: 'Student not found.' as const };
       const currentSession = updatedSessions[index];
-      if (!currentSession) continue;
+      if (!currentSession) return { success: false, error: 'Student not found.' as const };
 
       let deliveryResult: { success: boolean; error?: string } = { success: true };
       if (action === 'warn') {
-        deliveryResult = await examDeliveryService.warnStudent(studentId, 'Bulk warning issued by proctor', 'Proctor');
+        deliveryResult = await examDeliveryService.warnStudent(
+          studentId,
+          typeof payload === 'string' ? payload : 'Warning issued by proctor',
+          currentProctorName ?? 'Proctor',
+        );
       } else if (action === 'pause') {
-        deliveryResult = await examDeliveryService.pauseStudentAttempt(studentId, 'Proctor');
+        deliveryResult = await examDeliveryService.pauseStudentAttempt(studentId, currentProctorName ?? 'Proctor');
       } else if (action === 'resume') {
-        deliveryResult = await examDeliveryService.resumeStudentAttempt(studentId, 'Proctor');
+        deliveryResult = await examDeliveryService.resumeStudentAttempt(studentId, currentProctorName ?? 'Proctor');
       } else if (action === 'terminate') {
-        deliveryResult = await examDeliveryService.terminateStudentAttempt(studentId, 'Proctor');
+        deliveryResult = await examDeliveryService.terminateStudentAttempt(studentId, currentProctorName ?? 'Proctor');
       }
 
-      if (deliveryResult.success) {
-        updatedSessions[index] = applyStudentAction(currentSession, action);
+      if (!deliveryResult.success) {
+        const errorMessage = deliveryResult.error ?? 'Failed to execute student action';
+        logger.error('Failed to execute student action:', errorMessage);
+        return { success: false, error: errorMessage };
       }
-    }
 
-    onUpdateSessions(updatedSessions);
-    setSelectedStudentIds(new Set());
-    setIsSelectionMode(false);
-  };
+      const nextSession = applyStudentAction(currentSession, action, payload);
+      updatedSessions[index] = nextSession;
+      onUpdateSessions(updatedSessions);
+      return { success: true as const };
+    },
+    [currentProctorName, onUpdateSessions, sessions],
+  );
+
+  const requestDisciplineAction = useCallback(
+    (session: StudentSession, action: 'warn' | 'pause' | 'resume' | 'terminate', payload?: unknown) => {
+      if (action === 'pause' || action === 'terminate') {
+        setConfirmDisciplineAction({
+          scope: 'single',
+          studentId: session.id,
+          studentName: session.name,
+          action,
+        });
+        return;
+      }
+
+      void (async () => {
+        const result = await runDisciplineAction(session.id, action, payload);
+        if (result.success) {
+          pushToast({
+            variant: 'success',
+            title: 'Student updated',
+            message: `${session.name}: ${action === 'resume' ? 'resumed' : action === 'warn' ? 'warned' : action}`,
+          });
+        } else {
+          pushToast({
+            variant: 'error',
+            title: 'Student action failed',
+            message: result.error,
+          });
+        }
+      })();
+    },
+    [pushToast, runDisciplineAction],
+  );
+
+  const runBulkAction = useCallback(
+    async (action: 'warn' | 'pause' | 'resume' | 'terminate', studentIds: string[]) => {
+      const updatedSessions = [...sessions];
+      let successCount = 0;
+      let failureCount = 0;
+
+      for (const studentId of studentIds) {
+        const index = updatedSessions.findIndex((session) => session.id === studentId);
+        if (index < 0) {
+          failureCount += 1;
+          continue;
+        }
+        const currentSession = updatedSessions[index];
+        if (!currentSession) {
+          failureCount += 1;
+          continue;
+        }
+
+        let deliveryResult: { success: boolean; error?: string } = { success: true };
+        if (action === 'warn') {
+          deliveryResult = await examDeliveryService.warnStudent(studentId, 'Bulk warning issued by proctor', currentProctorName ?? 'Proctor');
+        } else if (action === 'pause') {
+          deliveryResult = await examDeliveryService.pauseStudentAttempt(studentId, currentProctorName ?? 'Proctor');
+        } else if (action === 'resume') {
+          deliveryResult = await examDeliveryService.resumeStudentAttempt(studentId, currentProctorName ?? 'Proctor');
+        } else if (action === 'terminate') {
+          deliveryResult = await examDeliveryService.terminateStudentAttempt(studentId, currentProctorName ?? 'Proctor');
+        }
+
+        if (deliveryResult.success) {
+          updatedSessions[index] = applyStudentAction(currentSession, action);
+          successCount += 1;
+        } else {
+          failureCount += 1;
+        }
+      }
+
+      onUpdateSessions(updatedSessions);
+
+      if (successCount > 0) {
+        pushToast({
+          variant: 'success',
+          title: 'Bulk action complete',
+          message: `${successCount} students updated.`,
+        });
+      }
+      if (failureCount > 0) {
+        pushToast({
+          variant: 'error',
+          title: 'Bulk action partial failure',
+          message: `${failureCount} students failed to update.`,
+        });
+      }
+    },
+    [currentProctorName, onUpdateSessions, pushToast, sessions],
+  );
+
+  const requestBulkAction = useCallback(
+    (action: 'warn' | 'pause' | 'resume' | 'terminate') => {
+      const studentIds = [...selectedStudentIds];
+      if (studentIds.length === 0) return;
+
+      if (action === 'pause' || action === 'terminate') {
+        setConfirmDisciplineAction({ scope: 'bulk', studentIds, action });
+        return;
+      }
+
+      void runBulkAction(action, studentIds).then(() => {
+        setSelectedStudentIds(new Set());
+        setIsSelectionMode(false);
+      });
+    },
+    [runBulkAction, selectedStudentIds],
+  );
 
   const updateFilterCriterion = <K extends keyof typeof filterCriteria>(key: K, value: (typeof filterCriteria)[K]) => {
     setFilterCriteria((previous) => {
@@ -380,15 +476,6 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
       return { ...previous, [key]: value };
     });
   };
-
-  const pushToast = useCallback((toast: Omit<(typeof toasts)[number], 'id'>) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
-    setToasts((current) => [...current, { ...toast, id }]);
-  }, []);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts((current) => current.filter((toast) => toast.id !== id));
-  }, []);
 
   const controlDisabled = !selectedScheduleId;
   const selectedRuntimeStatus = selectedGroup?.runtimeStatus ?? 'not_started';
@@ -491,7 +578,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
           <div className="grid gap-3">
             <div className="flex flex-wrap items-center gap-3">
               {selectedScheduleId ? (
-                <button type="button" onClick={() => handleSelectSchedule(null)} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900">
+                <button type="button" onClick={() => handleSelectSchedule(null)} className="inline-flex items-center gap-1 text-sm font-medium text-slate-500 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
                   <ChevronLeft size={16} />
                   All cohorts
                 </button>
@@ -694,6 +781,76 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
         }}
       />
 
+      <ConfirmModal
+        isOpen={confirmDisciplineAction?.scope === 'single' && confirmDisciplineAction.action === 'pause'}
+        onClose={() => setConfirmDisciplineAction(null)}
+        title={`Pause ${confirmDisciplineAction?.scope === 'single' ? confirmDisciplineAction.studentName : 'student'}?`}
+        description="This will pause the student's session. You can resume it later."
+        confirmLabel="Pause student"
+        tone="warning"
+        onConfirm={async () => {
+          const current = confirmDisciplineAction;
+          if (!current || current.scope !== 'single' || current.action !== 'pause') return;
+          const result = await runDisciplineAction(current.studentId, 'pause');
+          if (result.success) {
+            pushToast({ variant: 'success', title: 'Student paused', message: `${current.studentName} paused.` });
+          } else {
+            pushToast({ variant: 'error', title: 'Pause failed', message: result.error });
+          }
+        }}
+      />
+
+      <ConfirmModal
+        isOpen={confirmDisciplineAction?.scope === 'single' && confirmDisciplineAction.action === 'terminate'}
+        onClose={() => setConfirmDisciplineAction(null)}
+        title={`Terminate ${confirmDisciplineAction?.scope === 'single' ? confirmDisciplineAction.studentName : 'student'}?`}
+        description="This will immediately terminate the student's session and force them to the post-exam phase. This action cannot be undone."
+        confirmLabel="Terminate student"
+        tone="danger"
+        onConfirm={async () => {
+          const current = confirmDisciplineAction;
+          if (!current || current.scope !== 'single' || current.action !== 'terminate') return;
+          const result = await runDisciplineAction(current.studentId, 'terminate');
+          if (result.success) {
+            pushToast({ variant: 'success', title: 'Student terminated', message: `${current.studentName} terminated.` });
+          } else {
+            pushToast({ variant: 'error', title: 'Terminate failed', message: result.error });
+          }
+        }}
+      />
+
+      <ConfirmModal
+        isOpen={confirmDisciplineAction?.scope === 'bulk' && confirmDisciplineAction.action === 'pause'}
+        onClose={() => setConfirmDisciplineAction(null)}
+        title="Pause selected students?"
+        description="This will pause every selected student's session. You can resume them later."
+        confirmLabel="Pause selected"
+        tone="warning"
+        onConfirm={async () => {
+          const current = confirmDisciplineAction;
+          if (!current || current.scope !== 'bulk' || current.action !== 'pause') return;
+          await runBulkAction('pause', current.studentIds);
+          setSelectedStudentIds(new Set());
+          setIsSelectionMode(false);
+        }}
+      />
+
+      <ConfirmModal
+        isOpen={confirmDisciplineAction?.scope === 'bulk' && confirmDisciplineAction.action === 'terminate'}
+        onClose={() => setConfirmDisciplineAction(null)}
+        title="Terminate selected students?"
+        description="This will immediately terminate every selected student's session and force them to the post-exam phase. This action cannot be undone."
+        confirmLabel="Terminate selected"
+        tone="danger"
+        onConfirm={async () => {
+          const current = confirmDisciplineAction;
+          if (!current || current.scope !== 'bulk' || current.action !== 'terminate') return;
+          await runBulkAction('terminate', current.studentIds);
+          setSelectedStudentIds(new Set());
+          setIsSelectionMode(false);
+        }}
+      />
+
       <section className="min-h-0 overflow-auto px-6 py-5">
         {!selectedScheduleId ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -710,7 +867,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                     <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">Cohort roster</p>
                     <h3 className="mt-1 text-base font-semibold text-slate-950">{selectedGroup?.cohortName}</h3>
                   </div>
-                  <button onClick={() => setSelectedStudentId(null)} className="text-xs font-medium text-slate-500 hover:text-slate-900">
+                  <button type="button" onClick={() => setSelectedStudentId(null)} className="text-xs font-medium text-slate-500 hover:text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white">
                     Back to list
                   </button>
                 </div>
@@ -737,27 +894,33 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               </div>
             </aside>
 
-            <StudentDetailPanel
-              student={selectedStudent}
-              cohort={selectedGroup}
-              alerts={selectedScheduleAlerts}
-              auditLogs={scopedAuditLogs}
-              notes={scopedNotes}
-              activeTab={drawerTab}
-              onTabChange={setDrawerTab}
-              onClose={() => setSelectedStudentId(null)}
-              onAction={(action, payload) => (selectedStudent ? handleDisciplineAction(selectedStudent.id, action, payload) : undefined)}
-              onSaveNote={async (content, category) => {
-                if (!selectedScheduleId || !onUpdateNotes) return;
-                const newNote = {
-                  id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
-                  scheduleId: selectedScheduleId,
-                  author: 'Sarah K.',
-                  timestamp: new Date().toISOString(),
-                  content,
-                  category,
-                  isResolved: false,
-                };
+              <StudentDetailPanel
+                student={selectedStudent}
+                cohort={selectedGroup}
+                alerts={selectedScheduleAlerts}
+                auditLogs={scopedAuditLogs}
+                notes={scopedNotes}
+                activeTab={drawerTab}
+                onTabChange={setDrawerTab}
+                onClose={() => setSelectedStudentId(null)}
+                onAction={async (action, payload) => {
+                  if (!selectedStudent) return;
+                  const result = await runDisciplineAction(selectedStudent.id, action, payload);
+                  if (!result.success) {
+                    throw new Error(result.error);
+                  }
+                }}
+                onSaveNote={async (content, category) => {
+                  if (!selectedScheduleId || !onUpdateNotes) return;
+                  const newNote = {
+                    id: `note-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
+                    scheduleId: selectedScheduleId,
+                    author: currentProctorName ?? 'Proctor',
+                    timestamp: new Date().toISOString(),
+                    content,
+                    category,
+                    isResolved: false,
+                  };
                 await examRepository.saveSessionNote(newNote);
                 await examRepository.saveAuditLog(
                   createAuditLog('NOTE_CREATED', selectedStudent?.id, {
@@ -774,8 +937,8 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                 const updatedNote = { ...note, isResolved: !note.isResolved };
                 await examRepository.saveSessionNote(updatedNote);
                 onUpdateNotes(notes.map((n) => (n.id === noteId ? updatedNote : n)));
-              }}
-            />
+                }}
+              />
           </div>
         ) : (
           <div className="grid gap-4">
@@ -828,10 +991,10 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
 
               {hasActiveFilters ? (
                 <div className="flex flex-wrap gap-2">
-                  {filterCriteria.status ? <button onClick={() => removeFilter('status')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Status: {filterCriteria.status}<X size={12} /></button> : null}
-                  {filterCriteria.section ? <button onClick={() => removeFilter('section')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Section: {filterCriteria.section}<X size={12} /></button> : null}
-                  {filterCriteria.minViolations !== undefined ? <button onClick={() => removeFilter('minViolations')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Violations ≥ {filterCriteria.minViolations}<X size={12} /></button> : null}
-                  {filterCriteria.maxTimeRemaining !== undefined ? <button onClick={() => removeFilter('maxTimeRemaining')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Time ≤ {Math.floor(filterCriteria.maxTimeRemaining / 60)}m<X size={12} /></button> : null}
+                  {filterCriteria.status ? <button type="button" aria-label="Remove status filter" onClick={() => removeFilter('status')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Status: {filterCriteria.status}<X size={12} aria-hidden="true" /></button> : null}
+                  {filterCriteria.section ? <button type="button" aria-label="Remove section filter" onClick={() => removeFilter('section')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Section: {filterCriteria.section}<X size={12} aria-hidden="true" /></button> : null}
+                  {filterCriteria.minViolations !== undefined ? <button type="button" aria-label="Remove minimum violations filter" onClick={() => removeFilter('minViolations')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Violations ≥ {filterCriteria.minViolations}<X size={12} aria-hidden="true" /></button> : null}
+                  {filterCriteria.maxTimeRemaining !== undefined ? <button type="button" aria-label="Remove maximum time filter" onClick={() => removeFilter('maxTimeRemaining')} className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">Time ≤ {Math.floor(filterCriteria.maxTimeRemaining / 60)}m<X size={12} aria-hidden="true" /></button> : null}
                 </div>
               ) : null}
             </div>
@@ -844,10 +1007,10 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                     <CheckSquare size={14} />
                     Select all visible
                   </button>
-                  <button onClick={() => void handleBulkAction('warn')} className="rounded-md bg-amber-100 px-3 py-2 text-sm font-medium text-amber-800">Warn</button>
-                  <button onClick={() => void handleBulkAction('pause')} className="rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">Pause</button>
-                  <button onClick={() => void handleBulkAction('resume')} className="rounded-md bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-800">Resume</button>
-                  <button onClick={() => void handleBulkAction('terminate')} className="rounded-md bg-red-100 px-3 py-2 text-sm font-medium text-red-800">Terminate</button>
+                  <button onClick={() => requestBulkAction('warn')} className="rounded-md bg-amber-100 px-3 py-2 text-sm font-medium text-amber-800">Warn</button>
+                  <button onClick={() => requestBulkAction('pause')} className="rounded-md bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">Pause</button>
+                  <button onClick={() => requestBulkAction('resume')} className="rounded-md bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-800">Resume</button>
+                  <button onClick={() => requestBulkAction('terminate')} className="rounded-md bg-red-100 px-3 py-2 text-sm font-medium text-red-800">Terminate</button>
                   <button onClick={() => { setSelectedStudentIds(new Set()); setIsSelectionMode(false); }} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white">Clear</button>
                 </div>
               </div>
@@ -883,7 +1046,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                     isMultiSelected={selectedStudentIds.has(session.id)}
                     compact={listDensity === 'compact'}
                     onClick={() => handleSelectStudent(session.id)}
-                    onAction={(action) => handleDisciplineAction(session.id, action)}
+                    onAction={(action) => requestDisciplineAction(session, action)}
                     onToggleSelection={(event) => {
                       event.stopPropagation();
                       handleToggleStudentSelection(session.id);

@@ -1,8 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Bell, LayoutDashboard, LogOut, Search } from 'lucide-react';
 import { ProctorProps } from '../../features/proctor/contracts';
 import { useAuthSession } from '../../features/auth/authSession';
 import { ProctorDashboard } from './ProctorDashboard';
+import { AlertPanel } from './AlertPanel';
 
 function getInitials(name: string) {
   const tokens = name.trim().split(/\s+/).filter(Boolean);
@@ -43,6 +44,7 @@ export function ProctorApp({
 }: ProctorProps) {
   const { session } = useAuthSession();
   const [searchQuery, setSearchQuery] = useState('');
+  const [isAlertsOpen, setIsAlertsOpen] = useState(false);
   const unacknowledgedAlerts = useMemo(() => alerts.filter((alert) => !alert.isAcknowledged), [alerts]);
   const proctorName =
     session?.user.displayName?.trim() ||
@@ -50,6 +52,17 @@ export function ProctorApp({
     'Proctor';
   const proctorId = session?.user.id;
   const initials = getInitials(proctorName);
+
+  useEffect(() => {
+    if (!isAlertsOpen) return;
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsAlertsOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleEscape);
+    return () => document.removeEventListener('keydown', handleEscape);
+  }, [isAlertsOpen]);
 
   return (
     <div className="flex h-screen w-full bg-gray-50 text-gray-900 font-sans overflow-hidden">
@@ -93,7 +106,7 @@ export function ProctorApp({
               aria-live="polite"
             >
               <div
-                className="w-2 h-2 bg-green-500 rounded-full animate-pulse"
+                className="w-2 h-2 bg-green-500 rounded-full animate-pulse motion-reduce:animate-none"
                 aria-hidden="true"
               ></div>
               <span className="text-xs font-bold uppercase tracking-wider">Live</span>
@@ -110,6 +123,8 @@ export function ProctorApp({
               </div>
             ) : null}
             <button
+              type="button"
+              onClick={() => setIsAlertsOpen(true)}
               className="relative p-2 text-gray-500 hover:bg-gray-100 rounded-full"
               aria-label={`Notifications, ${unacknowledgedAlerts.length} unacknowledged`}
               aria-live="polite"
@@ -123,7 +138,7 @@ export function ProctorApp({
                 ></span>
               ) : null}
             </button>
-            <div className="flex items-center gap-2 cursor-pointer">
+            <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center font-bold text-sm">
                 {initials}
               </div>
@@ -169,6 +184,32 @@ export function ProctorApp({
           />
         </main>
       </div>
+
+      {isAlertsOpen ? (
+        <div
+          className="fixed inset-0 z-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Alert management"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/40"
+            aria-label="Close alert management"
+            onClick={() => setIsAlertsOpen(false)}
+          />
+          <div
+            className="absolute right-0 top-0 h-full w-full max-w-xl bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <AlertPanel
+              alerts={alerts}
+              onUpdateAlerts={onUpdateAlerts}
+              onClose={() => setIsAlertsOpen(false)}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

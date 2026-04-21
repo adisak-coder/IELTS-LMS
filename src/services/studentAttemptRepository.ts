@@ -9,6 +9,10 @@ import type {
   StudentAttemptSeed,
   StudentHeartbeatEvent,
 } from '../types/studentAttempt';
+import {
+  mergeStudentAttemptRecovery,
+  normalizeStudentAttempt,
+} from './studentAttemptNormalization';
 
 const STORAGE_KEY_ATTEMPTS = 'ielts_student_attempts_v1';
 const STORAGE_KEY_PENDING_MUTATIONS = 'ielts_student_attempt_pending_mutations_v1';
@@ -76,7 +80,6 @@ interface StoredAttemptCredential extends BackendAttemptCredential {
   scheduleId: string;
 }
 
-const WARNING_VIOLATION_TYPES = new Set(['PROCTOR_WARNING', 'AUTO_WARNING']);
 const mutationSequenceWatermarks = new Map<string, number>();
 
 function generateId(prefix: string): string {
@@ -184,104 +187,10 @@ function getClientSessionId(scheduleId: string, studentKey: string): string {
   return nextId;
 }
 
-function deriveCandidateId(
-  attempt: Pick<StudentAttempt, 'candidateId' | 'scheduleId' | 'studentKey' | 'id'>,
-): string {
-  if (attempt.candidateId) {
-    return attempt.candidateId;
-  }
-
-  const prefix = `student-${attempt.scheduleId}-`;
-  if (attempt.studentKey.startsWith(prefix)) {
-    return attempt.studentKey.slice(prefix.length) || attempt.id;
-  }
-
-  return attempt.studentKey.split('-').pop() || attempt.id;
-}
-
-function deriveProctorStatus(attempt: StudentAttempt): StudentAttempt['proctorStatus'] {
-  if (attempt.proctorStatus) {
-    return attempt.proctorStatus;
-  }
-
-  if (attempt.phase === 'post-exam') {
-    return 'terminated';
-  }
-
-  const latestWarningId =
-    attempt.lastWarningId ??
-    [...(attempt.violations ?? [])]
-      .reverse()
-      .find((violation) => WARNING_VIOLATION_TYPES.has(violation.type))?.id ??
-    null;
-
-  if (latestWarningId && latestWarningId !== attempt.lastAcknowledgedWarningId) {
-    return 'warned';
-  }
-
-  return 'active';
-}
-
-function normalizeAttempt(attempt: StudentAttempt): StudentAttempt {
-  const candidateId = deriveCandidateId(attempt);
-  const lastWarningId =
-    attempt.lastWarningId ??
-    [...(attempt.violations ?? [])]
-      .reverse()
-      .find((violation) => WARNING_VIOLATION_TYPES.has(violation.type))?.id ??
-    null;
-
-  return {
-    ...attempt,
-    candidateId,
-    candidateName: attempt.candidateName ?? `Candidate ${candidateId}`,
-    candidateEmail: attempt.candidateEmail ?? `${candidateId}@example.com`,
-    answers: attempt.answers ?? {},
-    writingAnswers: attempt.writingAnswers ?? {},
-    flags: attempt.flags ?? {},
-    violations: attempt.violations ?? [],
-    proctorStatus: deriveProctorStatus(attempt),
-    proctorNote: attempt.proctorNote ?? null,
-    proctorUpdatedAt: attempt.proctorUpdatedAt ?? null,
-    proctorUpdatedBy: attempt.proctorUpdatedBy ?? null,
-    lastWarningId,
-    lastAcknowledgedWarningId: attempt.lastAcknowledgedWarningId ?? null,
-    integrity: {
-      preCheck: attempt.integrity?.preCheck ?? null,
-      deviceFingerprintHash: attempt.integrity?.deviceFingerprintHash ?? null,
-      lastDisconnectAt: attempt.integrity?.lastDisconnectAt ?? null,
-      lastReconnectAt: attempt.integrity?.lastReconnectAt ?? null,
-      lastHeartbeatAt: attempt.integrity?.lastHeartbeatAt ?? null,
-      lastHeartbeatStatus: attempt.integrity?.lastHeartbeatStatus ?? 'idle',
-    },
-    recovery: {
-      lastRecoveredAt: attempt.recovery?.lastRecoveredAt ?? null,
-      lastLocalMutationAt: attempt.recovery?.lastLocalMutationAt ?? null,
-      lastPersistedAt: attempt.recovery?.lastPersistedAt ?? null,
-      pendingMutationCount: attempt.recovery?.pendingMutationCount ?? 0,
-      serverAcceptedThroughSeq: attempt.recovery?.serverAcceptedThroughSeq ?? 0,
-      syncState: attempt.recovery?.syncState ?? 'idle',
-    },
-  };
-}
-
-function mergeRecovery(
-  attempt: StudentAttempt,
-  recovery: Partial<StudentAttempt['recovery']>,
-): StudentAttempt {
-  return normalizeAttempt({
-    ...attempt,
-    recovery: {
-      ...attempt.recovery,
-      ...recovery,
-    },
-  });
-}
-
 export function mapBackendStudentAttempt(payload: BackendStudentAttempt): StudentAttempt {
   rememberAttemptSchedule(payload.id, payload.scheduleId);
 
-  return normalizeAttempt({
+  return normalizeStudentAttempt({
     id: payload.id,
     scheduleId: payload.scheduleId,
     studentKey: payload.studentKey,
@@ -373,7 +282,7 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
   }
 
   async getAttemptByScheduleId(scheduleId: string, studentKey: string): Promise<StudentAttempt | null> {
-    const attempts = this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeAttempt);
+    const attempts = this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeStudentAttempt);
     const exactMatch =
       attempts.find((attempt) => attempt.scheduleId === scheduleId && attempt.studentKey === studentKey) ??
       null;
@@ -395,17 +304,17 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
   }
 
   async getAllAttempts(): Promise<StudentAttempt[]> {
-    return this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeAttempt);
+    return this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeStudentAttempt);
   }
 
   async getAttemptsByScheduleId(scheduleId: string): Promise<StudentAttempt[]> {
-    const attempts = this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeAttempt);
+    const attempts = this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeStudentAttempt);
     return attempts.filter((attempt) => attempt.scheduleId === scheduleId);
   }
 
   async saveAttempt(attempt: StudentAttempt): Promise<void> {
-    const attempts = this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeAttempt);
-    const normalizedAttempt = normalizeAttempt({
+    const attempts = this.getItem<StudentAttempt>(STORAGE_KEY_ATTEMPTS).map(normalizeStudentAttempt);
+    const normalizedAttempt = normalizeStudentAttempt({
       ...attempt,
       updatedAt: new Date().toISOString(),
     });
@@ -421,7 +330,7 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
   }
 
   async submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
-    const submittedAttempt = normalizeAttempt({
+    const submittedAttempt = normalizeStudentAttempt({
       ...attempt,
       phase: 'post-exam',
       currentQuestionId: null,
@@ -597,7 +506,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       mutationSequenceWatermarks.set(attempt.id, response.serverAcceptedThroughSeq);
       storeAttemptCredential(attempt, response.refreshedAttemptCredential);
       await this.cache.saveAttempt(
-        mergeRecovery(mapBackendStudentAttempt(response.attempt), {
+        mergeStudentAttemptRecovery(mapBackendStudentAttempt(response.attempt), {
           lastLocalMutationAt: attempt.recovery.lastLocalMutationAt,
           lastPersistedAt: attempt.recovery.lastPersistedAt,
           pendingMutationCount: pendingMutations.length,

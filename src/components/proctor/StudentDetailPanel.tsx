@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import type { ExamGroup, NoteCategory, ProctorAlert, SessionAuditLog, SessionNote, StudentSession } from '../../types';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { ConfirmModal } from '../ConfirmModal';
 
 export type StudentDrawerTab = 'timeline' | 'violations' | 'notes' | 'audit';
 
@@ -50,16 +51,9 @@ export function StudentDetailPanel({
   const [toggleNoteError, setToggleNoteError] = useState<string | null>(null);
   const [disciplineAction, setDisciplineAction] = useState<'warn' | 'pause' | 'resume' | 'terminate' | null>(null);
   const [disciplineError, setDisciplineError] = useState<string | null>(null);
+  const [confirmDisciplineAction, setConfirmDisciplineAction] = useState<'pause' | 'terminate' | null>(null);
 
-  const studentNotes = useMemo(
-    () =>
-      notes.filter(
-        (note) =>
-          note.scheduleId === cohort?.scheduleId &&
-          (!student || note.content.toLowerCase().includes(student.name.toLowerCase()) || note.content.includes(student.studentId)),
-      ),
-    [cohort?.scheduleId, notes, student],
-  );
+  const cohortNotes = useMemo(() => notes.filter((note) => note.scheduleId === cohort?.scheduleId), [cohort?.scheduleId, notes]);
   const studentAuditLogs = useMemo(
     () => auditLogs.filter((log) => !student || !log.targetStudentId || log.targetStudentId === student.id),
     [auditLogs, student],
@@ -274,6 +268,7 @@ export function StudentDetailPanel({
                   value={draftCategory}
                   onChange={(event) => setDraftCategory(event.target.value as NoteCategory)}
                   disabled={isSavingNote}
+                  aria-label="Note category"
                   className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <option value="general">General</option>
@@ -281,9 +276,11 @@ export function StudentDetailPanel({
                   <option value="handover">Handover</option>
                 </select>
                 <input
+                  name="note"
                   value={draftNote}
                   onChange={(event) => setDraftNote(event.target.value)}
-                  placeholder="Add note to this cohort or student"
+                  aria-label="Note content"
+                  placeholder="Add a cohort note…"
                   disabled={isSavingNote}
                   className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none disabled:cursor-not-allowed disabled:opacity-60"
                 />
@@ -297,8 +294,8 @@ export function StudentDetailPanel({
                 </button>
               </div>
               <div className="grid gap-3">
-                {studentNotes.length === 0 ? <p className="text-sm text-slate-500">No notes scoped to this student yet.</p> : null}
-                {studentNotes.map((note) => (
+                {cohortNotes.length === 0 ? <p className="text-sm text-slate-500">No notes for this cohort yet.</p> : null}
+                {cohortNotes.map((note) => (
                   <div key={note.id} className="grid gap-1 border-b border-slate-100 pb-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex items-center gap-2">
@@ -372,7 +369,7 @@ export function StudentDetailPanel({
                 leftIcon={<Pause size={14} />}
                 isLoading={disciplineAction === 'pause'}
                 disabled={disciplineAction !== null}
-                onClick={() => void handleDisciplineAction('pause')}
+                onClick={() => setConfirmDisciplineAction('pause')}
               >
                 Pause
               </Button>
@@ -383,7 +380,7 @@ export function StudentDetailPanel({
               leftIcon={<UserX size={14} />}
               isLoading={disciplineAction === 'terminate'}
               disabled={disciplineAction !== null}
-              onClick={() => void handleDisciplineAction('terminate')}
+              onClick={() => setConfirmDisciplineAction('terminate')}
             >
               Terminate
             </Button>
@@ -391,6 +388,30 @@ export function StudentDetailPanel({
           <div className="text-xs text-slate-400">Activity system scoped to {cohort.cohortName}</div>
         </div>
       </motion.section>
+
+      <ConfirmModal
+        isOpen={confirmDisciplineAction === 'pause'}
+        onClose={() => setConfirmDisciplineAction(null)}
+        title="Pause this student?"
+        description="This will pause the student's session. You can resume it later."
+        confirmLabel="Pause student"
+        tone="warning"
+        onConfirm={async () => {
+          await handleDisciplineAction('pause');
+        }}
+      />
+
+      <ConfirmModal
+        isOpen={confirmDisciplineAction === 'terminate'}
+        onClose={() => setConfirmDisciplineAction(null)}
+        title="Terminate this student?"
+        description="This will immediately terminate the student's session and force them to the post-exam phase. This action cannot be undone."
+        confirmLabel="Terminate student"
+        tone="danger"
+        onConfirm={async () => {
+          await handleDisciplineAction('terminate');
+        }}
+      />
     </AnimatePresence>
   );
 }

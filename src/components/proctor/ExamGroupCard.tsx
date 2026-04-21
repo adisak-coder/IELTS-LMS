@@ -11,7 +11,12 @@ interface ExamGroupCardProps {
 export const ExamGroupCard = React.memo(function ExamGroupCard({ group, onClick, hasNotes = false }: ExamGroupCardProps) {
   const statusLabel = group.runtimeStatus === 'not_started' && group.isReadyToStart ? 'ready' : group.runtimeStatus;
   return (
-    <div onClick={onClick} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onClick(); } }} role="button" tabIndex={0} aria-label={`Monitor ${group.examTitle} for cohort ${group.cohortName}`} className="grid gap-4 rounded-md border border-slate-200 bg-white p-5 transition hover:border-slate-300 hover:bg-slate-50">
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Monitor ${group.examTitle} for cohort ${group.cohortName}`}
+      className="grid w-full gap-4 rounded-md border border-slate-200 bg-white p-5 text-left transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-50"
+    >
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold text-slate-950">{group.examTitle}</h3>
@@ -46,6 +51,6 @@ export const ExamGroupCard = React.memo(function ExamGroupCard({ group, onClick,
         <span>Monitor Session</span>
         <ChevronRight size={18} />
       </div>
-    </div>
+    </button>
   );
 });

@@ -12,6 +12,11 @@ import { backendPost, backendPut, isBackendGradingEnabled } from './backendBridg
 import { getReviewDraftRevision, gradingRepository } from './gradingRepository';
 import { examRepository } from './examRepository';
 import {
+  filterGradingSessions,
+  filterStudentSubmissions,
+  mapScheduleStatusToGradingStatus,
+} from './gradingFilters';
+import {
   GradingSession,
   StudentSubmission,
   SectionSubmission,
@@ -81,7 +86,7 @@ export class GradingService {
           institution: schedule.institution,
           startTime: schedule.startTime,
           endTime: schedule.endTime,
-          status: this.mapScheduleStatusToGradingStatus(schedule.status),
+          status: mapScheduleStatusToGradingStatus(schedule.status),
           totalStudents: 0,
           submittedCount: 0,
           pendingManualReviews: 0,
@@ -112,7 +117,7 @@ export class GradingService {
       let sessions = await gradingRepository.getAllSessions();
       
       if (filters) {
-        sessions = this.applySessionFilters(sessions, filters);
+        sessions = filterGradingSessions(sessions, filters);
       }
       
       // Sort by start time (most recent first)
@@ -157,7 +162,7 @@ export class GradingService {
       let submissions = await gradingRepository.getSubmissionsBySession(sessionId);
       
       if (filters) {
-        submissions = this.applySubmissionFilters(submissions, filters);
+        submissions = filterStudentSubmissions(submissions, filters);
       }
       
       // Sort by submission time (most recent first)
@@ -1169,83 +1174,6 @@ export class GradingService {
     session.overdueReviews = submissions.filter(s => s.isOverdue && s.gradingStatus !== 'released').length;
     
     await gradingRepository.saveSession(session);
-  }
-  
-  /**
-   * Map schedule status to grading session status
-   */
-  private mapScheduleStatusToGradingStatus(status: string): GradingSession['status'] {
-    const map: Record<string, GradingSession['status']> = {
-      'scheduled': 'scheduled',
-      'live': 'live',
-      'completed': 'completed',
-      'cancelled': 'cancelled'
-    };
-    return map[status] || 'scheduled';
-  }
-  
-  /**
-   * Apply filters to sessions
-   */
-  private applySessionFilters(
-    sessions: GradingSession[],
-    filters: GradingQueueFilters
-  ): GradingSession[] {
-    let filtered = sessions;
-    
-    if (filters.cohort && filters.cohort.length > 0) {
-      filtered = filtered.filter(s => filters.cohort!.includes(s.cohortName));
-    }
-    
-    if (filters.exam && filters.exam.length > 0) {
-      filtered = filtered.filter(s => filters.exam!.includes(s.examTitle));
-    }
-    
-    if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase();
-      filtered = filtered.filter(s => 
-        s.examTitle.toLowerCase().includes(query) ||
-        s.cohortName.toLowerCase().includes(query)
-      );
-    }
-    
-    return filtered;
-  }
-  
-  /**
-   * Apply filters to submissions
-   */
-  private applySubmissionFilters(
-    submissions: StudentSubmission[],
-    filters: SessionDetailFilters
-  ): StudentSubmission[] {
-    let filtered = submissions;
-    
-    if (filters.status && filters.status.length > 0) {
-      filtered = filtered.filter(s => filters.status!.includes(s.gradingStatus));
-    }
-    
-    if (filters.assignedTeacher) {
-      filtered = filtered.filter(s => s.assignedTeacherId === filters.assignedTeacher);
-    }
-    
-    if (filters.isFlagged !== undefined) {
-      filtered = filtered.filter(s => s.isFlagged === filters.isFlagged);
-    }
-    
-    if (filters.isOverdue !== undefined) {
-      filtered = filtered.filter(s => s.isOverdue === filters.isOverdue);
-    }
-    
-    if (filters.searchQuery) {
-      const query = filters.searchQuery.toLowerCase();
-      filtered = filtered.filter(s => 
-        s.studentName.toLowerCase().includes(query) ||
-        s.studentEmail?.toLowerCase().includes(query)
-      );
-    }
-    
-    return filtered;
   }
 }
 

@@ -49,7 +49,11 @@ export function AlertPanel({ alerts, onUpdateAlerts, onClose }: AlertPanelProps)
       .filter(alert => {
         if (filter.severity !== 'all' && alert.severity !== filter.severity) return false;
         if (filter.acknowledged !== 'all' && alert.isAcknowledged !== filter.acknowledged) return false;
-        if (filter.type && !alert.type.toLowerCase().includes(filter.type.toLowerCase())) return false;
+        if (filter.type) {
+          const normalized = filter.type.toLowerCase();
+          const combined = `${alert.type} ${alert.message} ${alert.studentName}`.toLowerCase();
+          if (!combined.includes(normalized)) return false;
+        }
         if (filter.student && !alert.studentName.toLowerCase().includes(filter.student.toLowerCase())) return false;
         return true;
       })
@@ -144,32 +148,36 @@ export function AlertPanel({ alerts, onUpdateAlerts, onClose }: AlertPanelProps)
             </p>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 text-gray-500 hover:bg-gray-100 rounded-md transition-colors"
+            aria-label="Close alert management"
+            className="p-2 text-gray-500 hover:bg-gray-100 rounded-md transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
-            <X size={20} />
+            <X size={20} aria-hidden="true" />
           </button>
         </div>
 
         {/* Search and Filter Controls */}
         <div className="flex items-center gap-3">
           <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} />
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={16} aria-hidden="true" />
             <input
               type="text"
               placeholder="Search alerts..."
               value={filter.type}
               onChange={(e) => setFilter({ ...filter, type: e.target.value })}
+              aria-label="Search alerts"
               className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
           </div>
           <button
+            type="button"
             onClick={() => setShowFilters(!showFilters)}
             className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               showFilters ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            <Filter size={16} />
+            <Filter size={16} aria-hidden="true" />
             Filters
           </button>
         </div>
