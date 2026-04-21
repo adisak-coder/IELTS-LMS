@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Globe,
-  Loader2,
   Lock,
   Monitor,
   Shield,
@@ -16,6 +15,7 @@ import type {
   StudentPreCheckResult,
 } from '../../types/studentAttempt';
 import { Button } from '../ui/Button';
+import { LoadingMark, SrLoadingText } from '../ui/LoadingMark';
 
 interface PreCheckProps {
   config?: ExamConfig | undefined;
@@ -399,9 +399,16 @@ export function PreCheck({ config, onComplete, onExit }: PreCheckProps) {
                           : check.status === 'fail'
                             ? 'bg-white text-red-900 shadow-sm border border-red-300'
                             : 'bg-gray-50 text-gray-500 border border-gray-100'
-                    }`}
+                  }`}
                   >
-                    {isRunning ? <Loader2 className="animate-spin" size={14} /> : <Icon size={14} />}
+                    {isRunning ? (
+                      <>
+                        <LoadingMark size="sm" className="bg-gray-300" />
+                        <SrLoadingText>Checking…</SrLoadingText>
+                      </>
+                    ) : (
+                      <Icon size={14} />
+                    )}
                   </div>
 
                   <div className="flex-1 min-w-0">

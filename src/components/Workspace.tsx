@@ -17,9 +17,8 @@ function WorkspaceSkeleton({ progress }: { progress: number }) {
   return (
     <div className="flex-1 bg-gray-50 p-8 animate-in fade-in duration-200">
       <div className="mb-6">
-        <p className="text-xs font-black text-gray-400 uppercase tracking-[0.22em] mb-3">
-          Loading modules... {progress}%
-        </p>
+        <span className="sr-only">Loading modules… {progress}%</span>
+        <div className="h-3 w-48 rounded bg-gray-200 animate-pulse mb-3" aria-hidden="true" />
         <div className="h-2 rounded-full bg-gray-200 overflow-hidden">
           <div className="h-full rounded-full bg-blue-600 transition-all duration-200" style={{ width: `${progress}%` }} />
         </div>

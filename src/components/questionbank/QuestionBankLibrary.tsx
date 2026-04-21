@@ -4,6 +4,7 @@ import { QuestionBankItem, QuestionBankQuery } from '../../types';
 import { questionBankService } from '../../services/questionBankService';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { CollectionLoadingSkeleton } from '../ui/CollectionLoadingSkeleton';
 
 interface QuestionBankLibraryProps {
   onSelectQuestion: (item: QuestionBankItem) => void;
@@ -207,9 +208,9 @@ export function QuestionBankLibrary({ onSelectQuestion, onClose }: QuestionBankL
       {/* Question List */}
       <div className="flex-1 overflow-y-auto p-6">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500">
-            <Search size={48} className="mb-4 text-gray-300" />
-            <p className="text-lg font-medium">Loading questions…</p>
+          <div role="status" aria-live="polite" aria-busy="true">
+            <span className="sr-only">Loading questions…</span>
+            <CollectionLoadingSkeleton variant={viewMode} />
           </div>
         ) : loadError ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">

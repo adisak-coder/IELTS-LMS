@@ -3,6 +3,7 @@ import { BookOpen, HelpCircle, Trash2, Search, Grid, List } from 'lucide-react';
 import { passageLibraryService } from '@services/passageLibraryService';
 import { questionBankService } from '@services/questionBankService';
 import { PassageLibraryItem, QuestionBankItem } from '../../../types';
+import { CollectionLoadingSkeleton } from '@components/ui';
 
 export function LibraryRoute() {
   const [activeTab, setActiveTab] = useState<'passages' | 'questions'>('passages');
@@ -240,8 +241,9 @@ export function LibraryRoute() {
       ) : null}
 
       {isLoading ? (
-        <div className="bg-white border border-gray-200 rounded-lg p-12 text-center text-sm text-gray-600">
-          Loading library...
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4" role="status" aria-live="polite" aria-busy="true">
+          <span className="sr-only">Loading library…</span>
+          <CollectionLoadingSkeleton variant={viewMode} />
         </div>
       ) : null}
 

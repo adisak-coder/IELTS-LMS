@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CheckSquare, ChevronLeft, FastForward, Filter, LayoutGrid, List, Loader2, Pause, Play, Square, StopCircle, Timer, X } from 'lucide-react';
+import { AlertTriangle, CheckSquare, ChevronLeft, FastForward, Filter, LayoutGrid, List, Pause, Play, Square, StopCircle, Timer, X } from 'lucide-react';
 import type { AuditActionType, ExamGroup, ModuleType, ProctorAlert, SessionAuditLog, SessionNote, StudentSession, StudentStatus } from '../../types';
 import type { ExamSchedule, ExamSessionRuntime } from '../../types/domain';
 import { ConfirmModal } from '../ConfirmModal';
+import { LoadingMark, SrLoadingText } from '../ui/LoadingMark';
 import { Toast, ToastContainer, type ToastVariant } from '../ui/Toast';
 import { PresenceIndicator } from './PresenceIndicator';
 import { StudentCard } from './StudentCard';
@@ -631,7 +632,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'start'}
               className="inline-flex items-center justify-center gap-2 rounded-md bg-slate-950 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
             >
-              {pendingCohortAction === 'start' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} />}
+              {pendingCohortAction === 'start' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-white/40" />
+                  <SrLoadingText>Starting…</SrLoadingText>
+                </>
+              ) : (
+                <Play size={14} />
+              )}
               {pendingCohortAction === 'start' ? 'Starting…' : 'Start Exam'}
             </button>
             <button
@@ -650,7 +658,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'pause'}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              {pendingCohortAction === 'pause' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Pause size={14} />}
+              {pendingCohortAction === 'pause' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-slate-200" />
+                  <SrLoadingText>Pausing…</SrLoadingText>
+                </>
+              ) : (
+                <Pause size={14} />
+              )}
               {pendingCohortAction === 'pause' ? 'Pausing…' : 'Pause Cohort'}
             </button>
             <button
@@ -669,7 +684,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'resume'}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              {pendingCohortAction === 'resume' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Play size={14} />}
+              {pendingCohortAction === 'resume' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-slate-200" />
+                  <SrLoadingText>Resuming…</SrLoadingText>
+                </>
+              ) : (
+                <Play size={14} />
+              )}
               {pendingCohortAction === 'resume' ? 'Resuming…' : 'Resume Cohort'}
             </button>
             <button
@@ -679,7 +701,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'end_section'}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              {pendingCohortAction === 'end_section' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <FastForward size={14} />}
+              {pendingCohortAction === 'end_section' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-slate-200" />
+                  <SrLoadingText>Ending…</SrLoadingText>
+                </>
+              ) : (
+                <FastForward size={14} />
+              )}
               {pendingCohortAction === 'end_section' ? 'Ending…' : 'End Section'}
             </button>
             <button
@@ -698,7 +727,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'extend_5'}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              {pendingCohortAction === 'extend_5' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Timer size={14} />}
+              {pendingCohortAction === 'extend_5' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-slate-200" />
+                  <SrLoadingText>Extending…</SrLoadingText>
+                </>
+              ) : (
+                <Timer size={14} />
+              )}
               {pendingCohortAction === 'extend_5' ? 'Extending…' : 'Extend +5'}
             </button>
             <button
@@ -717,7 +753,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'extend_10'}
               className="inline-flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:text-slate-400"
             >
-              {pendingCohortAction === 'extend_10' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <Timer size={14} />}
+              {pendingCohortAction === 'extend_10' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-slate-200" />
+                  <SrLoadingText>Extending…</SrLoadingText>
+                </>
+              ) : (
+                <Timer size={14} />
+              )}
               {pendingCohortAction === 'extend_10' ? 'Extending…' : 'Extend +10'}
             </button>
             <button
@@ -727,7 +770,14 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               aria-busy={pendingCohortAction === 'complete'}
               className="inline-flex items-center justify-center gap-2 rounded-md bg-red-700 px-3 py-2 text-sm font-medium text-white transition hover:bg-red-800 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-500"
             >
-              {pendingCohortAction === 'complete' ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : <StopCircle size={14} />}
+              {pendingCohortAction === 'complete' ? (
+                <>
+                  <LoadingMark size="sm" className="bg-white/40" />
+                  <SrLoadingText>Completing…</SrLoadingText>
+                </>
+              ) : (
+                <StopCircle size={14} />
+              )}
               {pendingCohortAction === 'complete' ? 'Completing…' : 'Complete'}
             </button>
           </div>

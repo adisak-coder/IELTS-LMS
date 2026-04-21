@@ -5,6 +5,8 @@ export { ErrorSurface } from './ErrorSurface';
 export { Input } from './Input';
 export { AppLoadingSkeleton } from './AppLoadingSkeleton';
 export { LoadingSurface } from './LoadingSurface';
+export { LoadingMark, SrLoadingText } from './LoadingMark';
+export { CollectionLoadingSkeleton } from './CollectionLoadingSkeleton';
 export { SectionLoadingSkeleton } from './SectionLoadingSkeleton';
 export { TableLoadingSkeleton } from './TableLoadingSkeleton';
 export { Textarea } from './Textarea';

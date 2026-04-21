@@ -8,6 +8,7 @@ import { StandardsTab } from '../components/StandardsTab';
 import { TimingTab } from '../components/TimingTab';
 import type { ConfigTab } from '../components/ExamConfigTabs';
 import { useConfigRouteController } from '../hooks/useConfigRouteController';
+import { LoadingSurface } from '@components/ui';
 
 export function ExamConfigRoute() {
   const { examId } = useParams<{ examId: string }>();
@@ -15,11 +16,7 @@ export function ExamConfigRoute() {
   const [activeTab, setActiveTab] = useState<ConfigTab>('basic');
 
   if (controller.isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-gray-500">Loading exam configuration...</div>
-      </div>
-    );
+    return <LoadingSurface label="Loading exam configuration…" />;
   }
 
   if (controller.error) {

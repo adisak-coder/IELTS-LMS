@@ -1,6 +1,6 @@
 import React from 'react';
-import { Loader2 } from 'lucide-react';
 import { Dialog } from './ui/Dialog';
+import { LoadingMark, SrLoadingText } from './ui/LoadingMark';
 
 interface ConfirmModalProps {
   confirmLabel: string;
@@ -62,7 +62,12 @@ export function ConfirmModal({
             } disabled:opacity-60 disabled:cursor-not-allowed`}
           >
             <span className="inline-flex items-center gap-2">
-              {isConfirming ? <Loader2 size={14} className="animate-spin" aria-hidden="true" /> : null}
+              {isConfirming ? (
+                <>
+                  <LoadingMark size="sm" className="bg-white/40" />
+                  <SrLoadingText>Working…</SrLoadingText>
+                </>
+              ) : null}
               {isConfirming ? 'Working…' : confirmLabel}
             </span>
           </button>

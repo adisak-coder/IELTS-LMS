@@ -127,7 +127,8 @@ export function WarningOverlay({ isOpen, severity, message, onAcknowledge, actio
             </div>
           ) : (
             <div className="flex flex-col items-center gap-4">
-              <div className="w-12 h-12 border-4 border-red-200 border-t-red-600 rounded-full animate-spin"></div>
+              <div className="w-12 h-12 rounded-full bg-red-200 animate-pulse" aria-hidden="true" />
+              <span className="sr-only">Waiting…</span>
               <p className="text-sm font-bold text-red-700 uppercase tracking-widest">
                 Waiting for proctor to resume...
               </p>

@@ -6,6 +6,7 @@ import { PublishActions } from '../components/PublishActions';
 import { ValidationSummary } from '../components/ValidationSummary';
 import { useReviewRouteController } from '../hooks/useReviewRouteController';
 import { Exam } from '../../../types';
+import { LoadingSurface } from '@components/ui';
 
 export function ExamReviewRoute() {
   const { examId } = useParams<{ examId: string }>();
@@ -13,11 +14,7 @@ export function ExamReviewRoute() {
   const [showScheduleModal, setShowScheduleModal] = React.useState(false);
 
   if (controller.isLoading) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-gray-500">Loading exam review...</div>
-      </div>
-    );
+    return <LoadingSurface label="Loading exam review…" />;
   }
 
   if (controller.error) {
@@ -49,8 +46,8 @@ export function ExamReviewRoute() {
       ? {
           draftVersion: currentDraftVersion?.versionNumber ?? currentPublishedVersion.versionNumber,
           publishedVersion: currentPublishedVersion.versionNumber,
-          scheduledDate: scheduledTime || undefined,
-          publishedLink,
+          ...(scheduledTime ? { scheduledDate: scheduledTime } : {}),
+          ...(publishedLink ? { publishedLink } : {}),
         }
       : null;
 
@@ -69,7 +66,13 @@ export function ExamReviewRoute() {
               {controller.publishReadiness ? (
                 <ValidationSummary publishReadiness={controller.publishReadiness} />
               ) : (
-                <div className="text-slate-500">Loading validation...</div>
+                <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
+                  <span className="sr-only">Loading validation…</span>
+                  <div className="h-4 w-40 rounded bg-slate-100 animate-pulse" />
+                  <div className="h-3 w-full rounded bg-slate-50 animate-pulse" />
+                  <div className="h-3 w-5/6 rounded bg-slate-50 animate-pulse" />
+                  <div className="h-9 w-32 rounded bg-slate-100 animate-pulse" />
+                </div>
               )}
             </div>
 
@@ -88,7 +91,15 @@ export function ExamReviewRoute() {
                   exam={{ title: controller.exam?.title || 'Untitled Exam' }}
                 />
               ) : (
-                <div className="text-slate-500">Loading actions...</div>
+                <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
+                  <span className="sr-only">Loading actions…</span>
+                  <div className="h-4 w-48 rounded bg-slate-100 animate-pulse" />
+                  <div className="h-3 w-full rounded bg-slate-50 animate-pulse" />
+                  <div className="flex gap-3 pt-2">
+                    <div className="h-10 w-32 rounded bg-slate-100 animate-pulse" />
+                    <div className="h-10 w-36 rounded bg-slate-100 animate-pulse" />
+                  </div>
+                </div>
               )}
             </div>
           </div>

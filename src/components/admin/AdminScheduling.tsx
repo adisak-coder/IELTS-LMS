@@ -420,7 +420,16 @@ export function AdminScheduling({
                 <div>
                   <p className="block text-sm font-semibold text-gray-700 mb-1">Exam Version</p>
                   <div className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 text-sm text-gray-700">
-                    {loadingVersion ? 'Loading version...' : selectedVersion ? `v${selectedVersion.versionNumber} (${selectedVersion.id.slice(0, 8)})` : 'No version available'}
+                    {loadingVersion ? (
+                      <>
+                        <span className="sr-only">Loading version…</span>
+                        <div className="h-4 w-44 bg-gray-200 rounded animate-pulse" aria-hidden="true" />
+                      </>
+                    ) : selectedVersion ? (
+                      `v${selectedVersion.versionNumber} (${selectedVersion.id.slice(0, 8)})`
+                    ) : (
+                      'No version available'
+                    )}
                   </div>
                 </div>
               </div>

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { PassageLibraryItem, Passage } from '../../types';
 import { passageLibraryService } from '../../services/passageLibraryService';
 import { Search, Filter, Grid, List, BookOpen, Clock, FileText } from 'lucide-react';
+import { CollectionLoadingSkeleton } from '../ui/CollectionLoadingSkeleton';
 
 interface PassageLibraryProps {
   onAddToExam: (passage: Passage) => void;
@@ -199,9 +200,9 @@ export function PassageLibrary({ onAddToExam, onClose }: PassageLibraryProps) {
       {/* Passage List */}
       <div className="flex-1 overflow-auto p-4 bg-gray-50">
         {isLoading ? (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500">
-            <FileText size={48} className="mb-4 text-gray-300" />
-            <p className="text-lg font-medium">Loading passages…</p>
+          <div role="status" aria-live="polite" aria-busy="true">
+            <span className="sr-only">Loading passages…</span>
+            <CollectionLoadingSkeleton variant={viewMode} />
           </div>
         ) : loadError ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-500">

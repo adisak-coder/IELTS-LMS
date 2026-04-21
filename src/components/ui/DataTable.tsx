@@ -1,4 +1,5 @@
 import React, { useId } from 'react';
+import { TableLoadingSkeleton } from './TableLoadingSkeleton';
 
 export interface Column<T> {
   key: string;
@@ -35,12 +36,13 @@ export function DataTable<T>({
     return (
       <div
         id={tableId}
-        className="flex items-center justify-center p-8 bg-white border border-gray-100 rounded-sm"
+        className="bg-white border border-gray-100 rounded-sm"
         role="status"
         aria-live="polite"
         aria-busy="true"
       >
-        <div className="text-gray-500 text-sm">Loading...</div>
+        <span className="sr-only">Loading…</span>
+        <TableLoadingSkeleton />
       </div>
     );
   }

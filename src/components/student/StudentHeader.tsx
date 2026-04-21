@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { Wifi, Bell, Menu, Clock, CheckCircle, Loader2, Contrast, LayoutGrid } from 'lucide-react';
+import { Wifi, Bell, Menu, Clock, CheckCircle, Contrast, LayoutGrid } from 'lucide-react';
+import { LoadingMark, SrLoadingText } from '../ui/LoadingMark';
 
 interface StudentHeaderProps {
   onExit: () => void;
@@ -91,7 +92,8 @@ export function StudentHeader({
           <div className="flex items-center gap-1 md:gap-1.5 text-[9px] md:text-[10px] lg:text-xs font-bold uppercase tracking-wider hidden sm:flex">
             {autoSaveStatus === 'saving' || autoSaveStatus === 'syncing' ? (
               <>
-                <Loader2 size={10} className="animate-spin text-gray-600" />
+                <LoadingMark size="xs" className="bg-gray-300" />
+                <SrLoadingText>{autoSaveStatus === 'syncing' ? 'Syncing…' : 'Saving…'}</SrLoadingText>
                 <span className="text-gray-600">
                   {autoSaveStatus === 'syncing' ? 'Syncing' : 'Saving'}
                 </span>

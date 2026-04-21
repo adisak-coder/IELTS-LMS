@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2 } from 'lucide-react';
+import { LoadingMark, SrLoadingText } from './LoadingMark';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'danger' | 'ghost' | 'outline' | 'warning';
@@ -43,13 +43,24 @@ export function Button({
   };
 
   const widthStyle = fullWidth ? 'w-full' : '';
+  const isSolidVariant = variant === 'primary' || variant === 'danger' || variant === 'warning';
+  const loadingMarkClassName = isSolidVariant ? 'bg-white/40' : 'bg-gray-300';
 
   return (
     <button
       className={`${baseStyles} ${variants[variant]} ${sizes[size]} ${widthStyle} ${className}`}
+      disabled={props.disabled || isLoading}
       {...props}
     >
-      {isLoading && <Loader2 className="animate-spin" size={size === 'sm' ? 14 : 18} />}
+      {isLoading ? (
+        <>
+          <LoadingMark
+            size={size === 'sm' ? 'xs' : 'sm'}
+            className={loadingMarkClassName}
+          />
+          <SrLoadingText />
+        </>
+      ) : null}
       {!isLoading && leftIcon}
       {children}
       {!isLoading && rightIcon}
