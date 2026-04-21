@@ -1,15 +1,24 @@
 import React, { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { resolvePostLoginPath, useAuthSession } from './authSession';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { LoadingSurface } from '@components/ui';
+import { resolvePostLoginPath, resolveRoleLandingPath, useAuthSession } from './authSession';
 
 export function PasswordResetCompletePage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { completePasswordReset } = useAuthSession();
+  const { completePasswordReset, session, status } = useAuthSession();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const token = useMemo(() => searchParams.get('token') ?? '', [searchParams]);
+
+  if (status === 'loading') {
+    return <LoadingSurface label="Loading Session..." />;
+  }
+
+  if (session) {
+    return <Navigate to={resolveRoleLandingPath(session.user.role)} replace />;
+  }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

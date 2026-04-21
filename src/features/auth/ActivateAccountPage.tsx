@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { resolvePostLoginPath, useAuthSession } from './authSession';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { LoadingSurface } from '@components/ui';
+import { resolvePostLoginPath, resolveRoleLandingPath, useAuthSession } from './authSession';
 
 function readToken(searchParams: URLSearchParams) {
   return searchParams.get('token') ?? '';
@@ -9,12 +10,20 @@ function readToken(searchParams: URLSearchParams) {
 export function ActivateAccountPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { activateAccount } = useAuthSession();
+  const { activateAccount, session, status } = useAuthSession();
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const token = useMemo(() => readToken(searchParams), [searchParams]);
+
+  if (status === 'loading') {
+    return <LoadingSurface label="Loading Session..." />;
+  }
+
+  if (session) {
+    return <Navigate to={resolveRoleLandingPath(session.user.role)} replace />;
+  }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

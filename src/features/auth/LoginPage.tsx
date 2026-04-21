@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { LoadingSurface } from '@components/ui';
 import { resolvePostLoginPath, useAuthSession } from './authSession';
 
 export function LoginPage() {
@@ -11,16 +12,20 @@ export function LoginPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!session) {
-      return;
-    }
+  const nextPath = searchParams.get('next');
 
-    navigate(
-      resolvePostLoginPath(session.user.role, searchParams.get('next')),
-      { replace: true },
+  if (status === 'loading') {
+    return <LoadingSurface label="Loading Session..." />;
+  }
+
+  if (session) {
+    return (
+      <Navigate
+        to={resolvePostLoginPath(session.user.role, nextPath)}
+        replace
+      />
     );
-  }, [navigate, searchParams, session]);
+  }
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -30,7 +35,7 @@ export function LoginPage() {
     try {
       const nextSession = await login(email, password);
       navigate(
-        resolvePostLoginPath(nextSession.user.role, searchParams.get('next')),
+        resolvePostLoginPath(nextSession.user.role, nextPath),
         { replace: true },
       );
     } catch (loginError) {
@@ -88,7 +93,7 @@ export function LoginPage() {
 
             <button
               type="submit"
-              disabled={isSubmitting || status === 'loading'}
+              disabled={isSubmitting}
               className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition duration-150 ease-in-out"
             >
               {isSubmitting ? 'Signing In...' : 'Sign In'}

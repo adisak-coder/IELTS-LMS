@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Search, Filter, ArrowLeft, Clock, AlertCircle, CheckCircle, User, ChevronRight } from 'lucide-react';
 import { StudentSubmission, SessionDetailFilters, OverallGradingStatus, SectionGradingStatus } from '../../types/grading';
 import { gradingService } from '../../services/gradingService';
+import { TableLoadingSkeleton } from '@components/ui';
 
 interface GradingSessionDetailProps {
   sessionId: string;
@@ -189,10 +190,7 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
       {/* Students Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         {loading ? (
-          <div className="flex flex-col items-center justify-center h-64 space-y-3">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-            <p className="text-sm text-gray-500">Loading submissions...</p>
-          </div>
+          <TableLoadingSkeleton rows={8} />
         ) : submissions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-500">
             <User size={48} className="mb-4 text-gray-300" />

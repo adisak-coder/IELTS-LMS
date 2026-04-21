@@ -1,7 +1,9 @@
 import { lazy, Suspense } from 'react';
 import { Navigate, createBrowserRouter, useParams } from 'react-router-dom';
 import { AppShell } from '../components/AppShell';
+import { AppLoadingSkeleton } from '../components/ui/AppLoadingSkeleton';
 import { ErrorSurface } from '../components/ui/ErrorSurface';
+import { LoadingSurface } from '../components/ui/LoadingSurface';
 import { ActivateAccountPage } from '../features/auth/ActivateAccountPage';
 import { LoginPage } from '../features/auth/LoginPage';
 import { PasswordResetCompletePage } from '../features/auth/PasswordResetCompletePage';
@@ -76,36 +78,7 @@ const StudentRegistrationRoute = lazy(() =>
 );
 
 function RouteLoadingFallback() {
-  return (
-    <div className="flex flex-col h-screen bg-gray-50">
-      <div className="h-16 border-b border-gray-200 bg-white px-6">
-        <div className="h-8 w-32 bg-gray-200 rounded animate-pulse"></div>
-      </div>
-      <div className="flex-1 p-6">
-        <div className="max-w-7xl mx-auto space-y-6">
-          <div className="h-8 w-64 bg-gray-200 rounded animate-pulse"></div>
-          <div className="flex gap-4 h-10">
-            <div className="h-10 w-48 bg-gray-200 rounded animate-pulse"></div>
-            <div className="h-10 w-32 bg-gray-200 rounded animate-pulse"></div>
-          </div>
-          <div className="bg-white border border-gray-200 rounded-sm overflow-hidden">
-            <div className="h-12 border-b border-gray-100 bg-gray-50">
-              <div className="h-4 w-full mx-4 mt-4 bg-gray-200 rounded animate-pulse"></div>
-            </div>
-            <div className="space-y-2 p-4">
-              {[...Array(5)].map((_, index) => (
-                <div
-                  key={index}
-                  className="h-12 bg-gray-100 rounded animate-pulse"
-                  style={{ animationDelay: `${index * 0.1}s` }}
-                ></div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return <AppLoadingSkeleton />;
 }
 
 function NotFoundRoute() {
@@ -118,7 +91,10 @@ function NotFoundRoute() {
 }
 
 function AdminIndexRedirect() {
-  const { session } = useAuthSession();
+  const { session, status } = useAuthSession();
+  if (status === 'loading') {
+    return <LoadingSurface label="Loading Session..." />;
+  }
   if (!session) {
     return <Navigate to="/login" replace />;
   }

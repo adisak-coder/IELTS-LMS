@@ -14,6 +14,7 @@ import { gradingRepository } from '../../services/gradingRepository';
 import { WritingAnnotationCanvas } from './WritingAnnotationCanvas';
 import { StudentReportPreview } from './StudentReportPreview';
 import { logger } from '../../utils/logger';
+import { SectionLoadingSkeleton } from '@components/ui';
 
 export interface StudentReviewWorkspaceProps {
   submissionId: string;
@@ -331,8 +332,8 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
 
   if (loading || !submission) {
     return (
-      <div className="flex items-center justify-center h-full">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      <div className="h-full bg-gray-50">
+        <SectionLoadingSkeleton message="Loading review workspace..." />
       </div>
     );
   }

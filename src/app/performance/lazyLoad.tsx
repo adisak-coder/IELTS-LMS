@@ -5,6 +5,7 @@
 
 import { Suspense, lazy, type ComponentType, type ReactElement } from 'react';
 import { ErrorBoundary } from '../error/ErrorBoundary';
+import { SectionLoadingSkeleton } from '@components/ui';
 
 /**
  * Loading fallback component
@@ -14,14 +15,7 @@ interface LoadingFallbackProps {
 }
 
 export function LoadingFallback({ message = 'Loading...' }: LoadingFallbackProps): ReactElement {
-  return (
-    <div className="flex items-center justify-center p-8">
-      <div className="text-center">
-        <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mb-4" />
-        <p className="text-gray-600 text-sm">{message}</p>
-      </div>
-    </div>
-  );
+  return <SectionLoadingSkeleton message={message} />;
 }
 
 /**

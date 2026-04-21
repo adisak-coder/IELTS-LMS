@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Search, Filter, Clock, Users, AlertCircle, ArrowRight, Calendar } from 'lucide-react';
 import { GradingSession, GradingQueueFilters } from '../../types/grading';
 import { gradingService } from '../../services/gradingService';
+import { TableLoadingSkeleton } from '@components/ui';
 
 interface GradingSessionListProps {
   onSessionSelect: (sessionId: string) => void;
@@ -147,9 +148,7 @@ export const GradingSessionList = React.memo(function GradingSessionList({ onSes
       {/* Sessions Table */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
         {loading ? (
-          <div className="flex items-center justify-center h-64">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-          </div>
+          <TableLoadingSkeleton rows={7} />
         ) : sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-500">
             <Calendar size={48} className="mb-4 text-gray-300" />

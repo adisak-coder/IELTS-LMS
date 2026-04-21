@@ -1,13 +1,22 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { useAuthSession } from './authSession';
+import { Link, Navigate } from 'react-router-dom';
+import { LoadingSurface } from '@components/ui';
+import { resolveRoleLandingPath, useAuthSession } from './authSession';
 
 export function PasswordResetRequestPage() {
-  const { requestPasswordReset } = useAuthSession();
+  const { requestPasswordReset, session, status } = useAuthSession();
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  if (status === 'loading') {
+    return <LoadingSurface label="Loading Session..." />;
+  }
+
+  if (session) {
+    return <Navigate to={resolveRoleLandingPath(session.user.role)} replace />;
+  }
 
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
