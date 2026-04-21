@@ -9,6 +9,7 @@ import {
 } from '../support/prodOrchestration';
 import {
   acknowledgeWarningOverlayIfPresent,
+  assertAuthSession,
   completePreCheckIfPresent,
   grantStrictProctoringPermissions,
   openStudentSessionWithRetry,
@@ -18,7 +19,9 @@ import {
   triggerClipboardBlockedViolation,
   triggerContextMenuBlockedViolation,
   triggerTabSwitchViolation,
+  waitForStudentSessionCookie,
 } from '../support/studentUi';
+import { makeProgressLogger } from '../support/prodProgress';
 
 async function waitForExamSurface(page: Page) {
   const completeHeading = page.getByRole('heading', { name: /Examination Complete!/i });
@@ -192,6 +195,7 @@ test.describe('Prod load: student shard', () => {
     const target = readEffectiveProdTarget();
     const run = resolveProdRunContext(target);
     const assignments = computeScenarioAssignments(target);
+    const progress = makeProgressLogger({ runId: run.runId, shardIndex: run.shardIndex, shardCount: run.shardCount });
 
     if (run.shardIndex === 0 && process.env['E2E_PROD_RUN_STUDENTS_ON_CONTROL_SHARD'] !== 'true') {
       testInfo.skip(true, 'Shard 0 reserved for control plane by default.');
@@ -199,6 +203,7 @@ test.describe('Prod load: student shard', () => {
 
     const shardStudents = selectShardStudents(target, run.shardIndex, run.shardCount);
     expect(shardStudents.length).toBeGreaterThan(0);
+    progress.log({ actor: 'student', phase: 'shard_start', detail: { studentCount: shardStudents.length, progressPath: progress.filePath } });
 
     const maxConcurrent = Number(process.env['E2E_PROD_MAX_CONCURRENT_STUDENTS'] ?? '5');
     const queue = [...shardStudents];
@@ -208,6 +213,7 @@ test.describe('Prod load: student shard', () => {
       const student = queue.shift();
       if (!student) return;
 
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'student_start' });
       const jitterMs = computeArrivalJitterMs(run.runId, student.wcode, target.scenario.arrivalRampSeconds);
       await new Promise((resolve) => setTimeout(resolve, jitterMs));
 
@@ -222,21 +228,30 @@ test.describe('Prod load: student shard', () => {
         await page.getByRole('heading', { name: 'Exam Check-in' }).waitFor({ state: 'visible' });
         await page.getByRole('button', { name: 'Continue' }).click();
         await expect(page.getByText(/required/i).first()).toBeVisible();
+        progress.log({ actor: 'student', wcode: student.wcode, phase: 'invalid_checkin_validated' });
       }
 
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'checkin_begin' });
       await studentCheckIn(page, target.scheduleId, {
         wcode: student.wcode,
         email: student.email,
         fullName: student.fullName,
       });
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'checkin_navigated', url: page.url() });
+
+      await waitForStudentSessionCookie(page, { timeoutMs: 30_000 });
+      await assertAuthSession(page, 'student');
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'session_established' });
 
       await openStudentSessionWithRetry(page, target.scheduleId, student.wcode);
       await completePreCheckIfPresent(page);
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'precheck_complete', url: page.url() });
       await startLobbyIfPresent(page);
 
       await openStudentSessionWithRetry(page, target.scheduleId, student.wcode);
       await waitForExamSurface(page);
       await waitForExamStart(page);
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'exam_started', url: page.url() });
 
       await performViolationIfAssignedWith(page, assignments, student.wcode);
       await toggleOfflineBrieflyIfAssignedWith(context, assignments, student.wcode);
@@ -248,6 +263,7 @@ test.describe('Prod load: student shard', () => {
         expect(outcome).toBe('submitted');
       }
 
+      progress.log({ actor: 'student', wcode: student.wcode, phase: 'done', detail: { outcome } });
       await context.close();
       await runOne();
     };

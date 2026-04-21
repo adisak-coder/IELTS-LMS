@@ -188,6 +188,11 @@ impl RateLimiter {
             !bucket.requests.is_empty()
         });
     }
+
+    /// Returns the number of active buckets currently stored.
+    pub async fn bucket_count(&self) -> usize {
+        self.buckets.read().await.len()
+    }
 }
 
 #[cfg(test)]

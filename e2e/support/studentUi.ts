@@ -25,6 +25,41 @@ export async function grantStrictProctoringPermissions(
   await context.grantPermissions(['camera', 'microphone'], { origin });
 }
 
+function sessionCookieCandidates() {
+  const configured = process.env['AUTH_SESSION_COOKIE_NAME'];
+  return [
+    typeof configured === 'string' && configured.length > 0 ? configured : null,
+    '__Host-session',
+    'session',
+  ].filter((value): value is string => Boolean(value));
+}
+
+export async function waitForStudentSessionCookie(page: Page, opts?: { timeoutMs?: number }) {
+  const candidates = sessionCookieCandidates();
+  const timeoutMs = opts?.timeoutMs ?? 30_000;
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const cookies = await page.context().cookies();
+    const hasSession = cookies.some((cookie) => candidates.includes(cookie.name));
+    if (hasSession) return;
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`Student session cookie not found (candidates: ${candidates.join(', ')}) after ${timeoutMs}ms`);
+}
+
+export async function assertAuthSession(page: Page, expectedRole: 'student' | 'admin' | 'proctor' | 'builder' | 'grader') {
+  const resp = await page.request.get('/api/v1/auth/session');
+  if (!resp.ok()) {
+    const body = await resp.text().catch(() => '');
+    throw new Error(`GET /api/v1/auth/session failed: ${resp.status()} ${body.slice(0, 200)}`);
+  }
+  const json = (await resp.json()) as any;
+  const role = String(json?.data?.user?.role ?? '');
+  if (role !== expectedRole) {
+    throw new Error(`Expected auth role=${expectedRole} but got ${role}`);
+  }
+}
+
 export async function triggerTabSwitchViolation(page: Page) {
   await page.evaluate(() => {
     try {
@@ -71,7 +106,7 @@ export async function studentCheckIn(
   await page.waitForTimeout(250);
   const wcodeField = page.getByLabel('Wcode');
   const emailField = page.getByLabel('Email');
-  const nameField = page.getByLabel('Full Name');
+  const nameField = page.getByLabel(/Full Name|Name/i);
 
   // Prefer typing over a single `fill()` call to avoid hydration races in slower browsers.
   await wcodeField.click();

@@ -72,6 +72,18 @@ fn new_request_id() -> String {
 }
 
 fn normalize_metrics_route(path: &str) -> String {
+    // Prevent high-cardinality Prometheus labels from frontend SPA routes and asset hashes.
+    // Prometheus label sets are retained for the lifetime of the process, so using raw paths can
+    // steadily increase memory usage as new unique URLs are requested.
+    if !path.starts_with("/api/") && path != "/api" {
+        return match path {
+            "/" => "/".to_owned(),
+            "/healthz" | "/readyz" | "/metrics" => path.to_owned(),
+            _ if path.starts_with("/assets/") => "/assets/*".to_owned(),
+            _ => "/frontend".to_owned(),
+        };
+    }
+
     let normalized = path
         .split('/')
         .map(|segment| {

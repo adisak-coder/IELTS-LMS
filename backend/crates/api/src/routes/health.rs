@@ -82,6 +82,16 @@ pub async fn metrics(
         return Err(StatusCode::NOT_FOUND);
     }
 
+    if let Some(resident_bytes) = process_resident_memory_bytes() {
+        state
+            .telemetry
+            .set_process_resident_memory_bytes(resident_bytes);
+    }
+    let rate_limiter_buckets = state.rate_limiter.bucket_count().await;
+    state
+        .telemetry
+        .set_rate_limiter_bucket_count(rate_limiter_buckets);
+
     if let Some(pool) = state.db_pool_opt() {
         if let Ok(backlog) = inspect_outbox_backlog(&pool).await {
             state
@@ -108,4 +118,23 @@ pub async fn metrics(
         [(CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
         body,
     ))
+}
+
+#[cfg(target_os = "linux")]
+fn process_resident_memory_bytes() -> Option<u64> {
+    // Parse `VmRSS` from `/proc/self/status` (kB).
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    for line in status.lines() {
+        let Some(rest) = line.strip_prefix("VmRSS:") else {
+            continue;
+        };
+        let kb: u64 = rest.trim().split_whitespace().next()?.parse().ok()?;
+        return Some(kb.saturating_mul(1024));
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_resident_memory_bytes() -> Option<u64> {
+    None
 }

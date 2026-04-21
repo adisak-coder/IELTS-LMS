@@ -368,7 +368,9 @@ test.describe('Prod load: control plane', () => {
     expect(proctorPages).toHaveLength(10);
 
     // Wait for student check-in ramp before starting cohort.
-    await waitForCheckedIn(proctorPages[0]!, target.scheduleId, target.scenario.checkedInStartThreshold);
+    const thresholdOverride = process.env['E2E_PROD_CHECKED_IN_START_THRESHOLD'];
+    const threshold = Number(thresholdOverride ?? `${target.scenario.checkedInStartThreshold}`);
+    await waitForCheckedIn(proctorPages[0]!, target.scheduleId, threshold);
 
     // Start cohort (if not already started).
     await tryClickIfEnabled(proctorPages[0]!, 'Start Exam');

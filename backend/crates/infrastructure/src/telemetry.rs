@@ -50,6 +50,8 @@ pub struct Telemetry {
     outbox_oldest_age_seconds: Gauge<i64, AtomicI64>,
     storage_budget_bytes: Gauge<i64, AtomicI64>,
     storage_budget_level: Gauge<i64, AtomicI64>,
+    process_resident_memory_bytes: Gauge<i64, AtomicI64>,
+    rate_limiter_buckets: Gauge<i64, AtomicI64>,
     storage_budget_threshold_hits: Family<ThresholdLabels, Counter>,
 }
 
@@ -89,6 +91,8 @@ impl Telemetry {
         let outbox_oldest_age_seconds = Gauge::<i64, AtomicI64>::default();
         let storage_budget_bytes = Gauge::<i64, AtomicI64>::default();
         let storage_budget_level = Gauge::<i64, AtomicI64>::default();
+        let process_resident_memory_bytes = Gauge::<i64, AtomicI64>::default();
+        let rate_limiter_buckets = Gauge::<i64, AtomicI64>::default();
         let storage_budget_threshold_hits = Family::<ThresholdLabels, Counter>::default();
 
         let mut registry = Registry::default();
@@ -143,6 +147,16 @@ impl Telemetry {
             storage_budget_level.clone(),
         );
         registry.register(
+            "backend_process_resident_memory_bytes",
+            "Resident memory (RSS) in bytes for this process.",
+            process_resident_memory_bytes.clone(),
+        );
+        registry.register(
+            "backend_rate_limiter_buckets",
+            "Number of active in-memory rate limiter buckets.",
+            rate_limiter_buckets.clone(),
+        );
+        registry.register(
             "backend_storage_budget_threshold_hits_total",
             "Number of times storage budget checks have hit a given severity.",
             storage_budget_threshold_hits.clone(),
@@ -160,6 +174,8 @@ impl Telemetry {
             outbox_oldest_age_seconds,
             storage_budget_bytes,
             storage_budget_level,
+            process_resident_memory_bytes,
+            rate_limiter_buckets,
             storage_budget_threshold_hits,
         }
     }
@@ -216,6 +232,16 @@ impl Telemetry {
             .set(i64::try_from(pending_count).unwrap_or(i64::MAX));
         self.outbox_oldest_age_seconds
             .set(oldest_age_seconds.max(0));
+    }
+
+    pub fn set_process_resident_memory_bytes(&self, resident_bytes: u64) {
+        self.process_resident_memory_bytes
+            .set(i64::try_from(resident_bytes).unwrap_or(i64::MAX));
+    }
+
+    pub fn set_rate_limiter_bucket_count(&self, buckets: usize) {
+        self.rate_limiter_buckets
+            .set(i64::try_from(buckets).unwrap_or(i64::MAX));
     }
 
     pub fn observe_storage_budget(&self, total_bytes: u64, level_label: &str, severity_code: i64) {
