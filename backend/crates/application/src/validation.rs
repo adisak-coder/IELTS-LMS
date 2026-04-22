@@ -222,30 +222,36 @@ fn validate_id_integrity(
     content: &serde_json::Map<String, serde_json::Value>,
     result: &mut ValidationResult,
 ) {
-    // Collect all IDs from the content and check for duplicates
-    let mut seen_ids: HashSet<String> = HashSet::new();
-    let mut duplicates: Vec<String> = Vec::new();
+    // Enforce ID uniqueness *within each array* of objects that carry an `id`.
+    //
+    // Rationale: some IDs (e.g. rubric criteria like "lexical" / "grammar") are
+    // intentionally reused across different parts of the schema. A global
+    // uniqueness constraint produces false positives. Arrays (siblings) are
+    // where collisions actually break editing / lookups.
+    let mut duplicates: HashSet<String> = HashSet::new();
 
-    fn collect_ids(
-        value: &serde_json::Value,
-        seen_ids: &mut HashSet<String>,
-        duplicates: &mut Vec<String>,
-    ) {
+    fn collect_array_duplicates(value: &serde_json::Value, duplicates: &mut HashSet<String>) {
         match value {
-            serde_json::Value::Object(map) => {
-                if let Some(id) = map.get("id").and_then(|v| v.as_str()) {
-                    let id = id.to_owned();
-                    if !seen_ids.insert(id.clone()) {
-                        duplicates.push(id);
+            serde_json::Value::Array(arr) => {
+                let mut seen_in_array: HashSet<String> = HashSet::new();
+                for child in arr {
+                    if let Some(obj) = child.as_object() {
+                        if let Some(id) = obj.get("id").and_then(|v| v.as_str()) {
+                            let id = id.to_owned();
+                            if !seen_in_array.insert(id.clone()) {
+                                duplicates.insert(id);
+                            }
+                        }
                     }
                 }
-                for child in map.values() {
-                    collect_ids(child, seen_ids, duplicates);
+
+                for child in arr {
+                    collect_array_duplicates(child, duplicates);
                 }
             }
-            serde_json::Value::Array(arr) => {
-                for child in arr {
-                    collect_ids(child, seen_ids, duplicates);
+            serde_json::Value::Object(map) => {
+                for child in map.values() {
+                    collect_array_duplicates(child, duplicates);
                 }
             }
             _ => {}
@@ -253,13 +259,15 @@ fn validate_id_integrity(
     }
 
     for value in content.values() {
-        collect_ids(value, &mut seen_ids, &mut duplicates);
+        collect_array_duplicates(value, &mut duplicates);
     }
 
     if !duplicates.is_empty() {
+        let mut duplicates_sorted: Vec<String> = duplicates.into_iter().collect();
+        duplicates_sorted.sort();
         result.add_error(
             "content.idIntegrity",
-            format!("Duplicate IDs found: {}", duplicates.join(", ")),
+            format!("Duplicate IDs found: {}", duplicates_sorted.join(", ")),
         );
     }
 }
@@ -330,18 +338,25 @@ fn validate_passage(passage: &serde_json::Value, idx: usize, result: &mut Valida
         );
     }
 
-    let blocks = passage_obj.get("questionBlocks").and_then(|b| b.as_array());
+    let (blocks, blocks_field) = passage_obj
+        .get("blocks")
+        .and_then(|b| b.as_array())
+        .map(|blocks| (Some(blocks), "blocks"))
+        .unwrap_or_else(|| {
+            let blocks = passage_obj.get("questionBlocks").and_then(|b| b.as_array());
+            (blocks, "questionBlocks")
+        });
     match &blocks {
         None => {
             result.add_warning(
-                format!("content.reading.passages[{}].questionBlocks", idx),
+                format!("content.reading.passages[{}].{}", idx, blocks_field),
                 "Passage has no question blocks",
             );
             0
         }
         Some(blocks) if blocks.is_empty() => {
             result.add_warning(
-                format!("content.reading.passages[{}].questionBlocks", idx),
+                format!("content.reading.passages[{}].{}", idx, blocks_field),
                 "Passage has no question blocks",
             );
             0
@@ -1254,18 +1269,25 @@ fn validate_listening_part(
         );
     }
 
-    let blocks = part_obj.get("questionBlocks").and_then(|b| b.as_array());
+    let (blocks, blocks_field) = part_obj
+        .get("blocks")
+        .and_then(|b| b.as_array())
+        .map(|blocks| (Some(blocks), "blocks"))
+        .unwrap_or_else(|| {
+            let blocks = part_obj.get("questionBlocks").and_then(|b| b.as_array());
+            (blocks, "questionBlocks")
+        });
     match &blocks {
         None => {
             result.add_warning(
-                format!("content.listening.parts[{}].questionBlocks", idx),
+                format!("content.listening.parts[{}].{}", idx, blocks_field),
                 "Part has no question blocks",
             );
             0
         }
         Some(blocks) if blocks.is_empty() => {
             result.add_warning(
-                format!("content.listening.parts[{}].questionBlocks", idx),
+                format!("content.listening.parts[{}].{}", idx, blocks_field),
                 "Part has no question blocks",
             );
             0
