@@ -3,7 +3,7 @@
  * Centralized HTTP communication with interceptors, error handling, and retry logic
  */
 
-import { NetworkError, ServiceUnavailableError } from '../error/errorTypes';
+import { AuthError, NetworkError, ServiceUnavailableError } from '../error/errorTypes';
 import { logError, logInfo, logWarn } from '../error/errorLogger';
 
 export interface ApiRequestConfig {
@@ -46,7 +46,7 @@ function readCookie(name: string): string | null {
 }
 
 function getCsrfCookieToken(): string | null {
-  const configuredName = import.meta.env.VITE_AUTH_CSRF_COOKIE_NAME;
+  const configuredName = import.meta.env['VITE_AUTH_CSRF_COOKIE_NAME'];
   const cookieNames = [
     typeof configuredName === 'string' ? configuredName : null,
     '__Host-csrf',
@@ -67,6 +67,7 @@ class ApiClient {
   private baseURL: string;
   private defaultHeaders: Record<string, string>;
   private defaultTimeout: number;
+  private unauthorizedHandler: ((context: { endpoint: string; method: string; requestId: string }) => void | Promise<void>) | null;
 
   constructor(baseURL: string = '/api', defaultTimeout: number = 30000) {
     this.baseURL = baseURL;
@@ -74,6 +75,17 @@ class ApiClient {
     this.defaultHeaders = {
       'Content-Type': 'application/json',
     };
+    this.unauthorizedHandler = null;
+  }
+
+  /**
+   * Register a global handler for 401 Unauthorized responses.
+   * Useful to immediately clear local auth/session state and redirect to /login.
+   */
+  setUnauthorizedHandler(
+    handler: ((context: { endpoint: string; method: string; requestId: string }) => void | Promise<void>) | null,
+  ): void {
+    this.unauthorizedHandler = handler;
   }
 
   /**
@@ -153,7 +165,6 @@ class ApiClient {
         const requestHeaders = { ...this.defaultHeaders, ...headers };
         if (
           method !== 'GET' &&
-          method !== 'HEAD' &&
           requestHeaders['x-csrf-token'] === undefined
         ) {
           const cookieToken = getCsrfCookieToken();
@@ -185,6 +196,19 @@ class ApiClient {
         });
 
         if (!response.ok) {
+          if (response.status === 401 && this.unauthorizedHandler) {
+            try {
+              await this.unauthorizedHandler({ endpoint, method, requestId });
+            } catch (handlerError) {
+              logError(
+                handlerError instanceof Error
+                  ? handlerError
+                  : new Error('Unauthorized handler failed'),
+                { scope: 'apiClient.unauthorizedHandler' },
+              );
+            }
+          }
+
           const errorData = await this.parseErrorResponse(response);
           throw this.createErrorFromResponse(response, errorData);
         }
@@ -238,10 +262,11 @@ class ApiClient {
         attempts: retries + 1,
       });
     } else if (statusCode !== undefined && statusCode >= 400 && statusCode < 500) {
-      logWarn(lastError || new Error('Request failed'), {
+      logWarn(lastError?.message ?? 'Request failed', {
         endpoint,
         requestId,
         attempts: retries + 1,
+        error: lastError?.message,
       });
     } else {
       logError(lastError || new Error('Request failed after retries'), {
@@ -297,6 +322,10 @@ class ApiClient {
   private createErrorFromResponse(response: Response, errorData: unknown): Error {
     const status = response.status;
     const message = this.extractErrorMessage(errorData, response.statusText);
+
+    if (status === 401) {
+      return new AuthError(message);
+    }
 
     if (status === 503) {
       return new ServiceUnavailableError(message);

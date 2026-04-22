@@ -4,10 +4,12 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { apiClient } from '../../app/api/apiClient';
+import { queryClient } from '../../app/data/queryClient';
 import { logError } from '../../app/error/errorLogger';
 import {
   authService,
@@ -89,6 +91,33 @@ export function resolvePostLoginPath(
 export function AuthSessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
+  const sessionRef = useRef<AuthSession | null>(null);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  useEffect(() => {
+    apiClient.setUnauthorizedHandler(({ endpoint }) => {
+      // If we are already unauthenticated, do not churn state/cache.
+      if (!sessionRef.current) {
+        return;
+      }
+
+      // Student attempt flows use different credentials and may legitimately return 401
+      // while the studentAttemptRepository refreshes attempt tokens and retries.
+      if (endpoint.startsWith('/v1/student/')) {
+        return;
+      }
+
+      queryClient.clear();
+      setSessionState(null, setSession, setStatus);
+    });
+
+    return () => {
+      apiClient.setUnauthorizedHandler(null);
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     try {

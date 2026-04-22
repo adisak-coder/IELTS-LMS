@@ -5,6 +5,7 @@ use axum::{
     Json,
 };
 use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
+use cookie::time::{Duration as CookieDuration, OffsetDateTime};
 use ielts_backend_application::auth::{AuthError, AuthService};
 use ielts_backend_application::scheduling::SchedulingService;
 use ielts_backend_domain::auth::{
@@ -343,33 +344,72 @@ fn with_auth_cookies(
     csrf_token: &str,
 ) -> CookieJar {
     let secure = state.config.auth_cookie_secure;
-    let session_cookie = Cookie::build((
+    let ttl_seconds = state
+        .config
+        .session_absolute_lifetime_hours
+        .saturating_mul(60)
+        .saturating_mul(60);
+    let max_age = if ttl_seconds > 0 {
+        Some(CookieDuration::seconds(ttl_seconds))
+    } else {
+        None
+    };
+
+    let mut session_builder = Cookie::build((
         state.config.auth_session_cookie_name.clone(),
         session_token.to_owned(),
     ))
     .http_only(true)
     .same_site(SameSite::Lax)
     .path("/")
-    .secure(secure)
-    .build();
-    let csrf_cookie = Cookie::build((
+    .secure(secure);
+
+    if let Some(duration) = max_age {
+        session_builder = session_builder
+            .max_age(duration)
+            .expires(OffsetDateTime::now_utc() + duration);
+    }
+
+    let session_cookie = session_builder.build();
+
+    let mut csrf_builder = Cookie::build((
         state.config.auth_csrf_cookie_name.clone(),
         csrf_token.to_owned(),
     ))
     .http_only(false)
     .same_site(SameSite::Lax)
     .path("/")
-    .secure(secure)
-    .build();
+    .secure(secure);
+
+    if let Some(duration) = max_age {
+        csrf_builder = csrf_builder
+            .max_age(duration)
+            .expires(OffsetDateTime::now_utc() + duration);
+    }
+
+    let csrf_cookie = csrf_builder.build();
     jar.add(session_cookie).add(csrf_cookie)
 }
 
 fn clear_auth_cookies(jar: CookieJar, state: &AppState) -> CookieJar {
+    let secure = state.config.auth_cookie_secure;
+    let expires = OffsetDateTime::UNIX_EPOCH;
+    let max_age = CookieDuration::seconds(0);
     let session_cookie = Cookie::build((state.config.auth_session_cookie_name.clone(), ""))
+        .http_only(true)
+        .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure)
+        .max_age(max_age)
+        .expires(expires)
         .build();
     let csrf_cookie = Cookie::build((state.config.auth_csrf_cookie_name.clone(), ""))
+        .http_only(false)
+        .same_site(SameSite::Lax)
         .path("/")
+        .secure(secure)
+        .max_age(max_age)
+        .expires(expires)
         .build();
     jar.remove(session_cookie).remove(csrf_cookie)
 }

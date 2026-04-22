@@ -29,7 +29,10 @@ async fn login_returns_session_and_sets_secure_cookie() {
     let database = mysql::TestDatabase::new(AUTH_MIGRATIONS).await;
     let _user = create_test_user(database.pool(), "test@example.com", "password123").await;
     let app = build_router(AppState::with_pool(
-        AppConfig::default(),
+        AppConfig {
+            session_absolute_lifetime_hours: 168,
+            ..AppConfig::default()
+        },
         database.pool().clone(),
     ));
 
@@ -53,6 +56,21 @@ async fn login_returns_session_and_sets_secure_cookie() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+
+    let set_cookie_headers: Vec<String> = response
+        .headers()
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok().map(str::to_owned))
+        .collect();
+    assert!(!set_cookie_headers.is_empty());
+    let set_cookie_combined = set_cookie_headers.join("\n");
+    assert!(set_cookie_combined.contains("__Host-session="));
+    assert!(set_cookie_combined.contains("__Host-csrf="));
+    assert!(set_cookie_combined.contains("Path=/"));
+    assert!(set_cookie_combined.contains("SameSite=Lax"));
+    assert!(set_cookie_combined.contains("Secure"));
+    assert!(set_cookie_combined.contains("Max-Age=604800"));
     
     // Verify response contains user and csrf_token
     let json = json_body(response).await;

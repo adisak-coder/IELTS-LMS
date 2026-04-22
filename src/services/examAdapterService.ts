@@ -85,7 +85,10 @@ export async function getExamStateFromEntity(
     throw new Error(`Version ${versionId} not found`);
   }
 
-  return hydrateExamState(version.contentSnapshot);
+  return hydrateExamState({
+    ...version.contentSnapshot,
+    config: version.configSnapshot ?? (version.contentSnapshot as ExamState).config,
+  } satisfies ExamState);
 }
 
 export async function adaptExamEntityToLegacyExam(

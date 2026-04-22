@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, Clock, AlertCircle } from 'lucide-react';
+import { Clock, AlertCircle } from 'lucide-react';
 import { ProctorPresence } from '../../types/domain';
 
 interface PresenceIndicatorProps {
@@ -10,6 +10,7 @@ interface PresenceIndicatorProps {
 }
 
 export function PresenceIndicator({ proctorPresence, currentProctorId, currentProctorName, onJoin }: PresenceIndicatorProps) {
+  void currentProctorName;
   const uniquePresence = (() => {
     const byProctorId = new Map<string, ProctorPresence>();
     for (const entry of proctorPresence) {
@@ -64,12 +65,6 @@ export function PresenceIndicator({ proctorPresence, currentProctorId, currentPr
 
   return (
     <div className="flex items-center gap-2">
-      <div className="flex items-center gap-1 text-xs text-gray-500">
-        <Users size={14} />
-        <span className="font-medium">{activeProctors.length}</span>
-        <span>active proctor{activeProctors.length !== 1 ? 's' : ''}</span>
-      </div>
-
       {activeProctors.length > 0 && (
         <div className="flex -space-x-2">
           {activeProctors.slice(0, 5).map(proctor => (
