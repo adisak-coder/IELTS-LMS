@@ -39,6 +39,7 @@ async fn retention_prunes_only_expired_non_live_operational_rows_in_batches() {
 
     insert_cache_rows(&pool).await;
     insert_idempotency_rows(&pool).await;
+    insert_user_sessions(&pool).await;
     insert_outbox_rows(&pool).await;
 
     for index in 0..1001 {
@@ -62,6 +63,7 @@ async fn retention_prunes_only_expired_non_live_operational_rows_in_batches() {
 
     assert_eq!(report.cache_rows, 2);
     assert_eq!(report.idempotency_rows, 1);
+    assert_eq!(report.user_sessions_rows, 1);
     assert_eq!(report.heartbeat_rows, 1000);
     assert_eq!(report.mutation_rows, 1000);
     assert_eq!(report.outbox_rows, 1);
@@ -69,6 +71,7 @@ async fn retention_prunes_only_expired_non_live_operational_rows_in_batches() {
     let cache_count = count_rows(&pool, "shared_cache_entries").await;
     let idempotency_count = count_rows(&pool, "idempotency_keys").await;
     let outbox_count = count_rows(&pool, "outbox_events").await;
+    let session_count = count_rows(&pool, "user_sessions").await;
     let heartbeat_count = count_rows(&pool, "student_heartbeat_events").await;
     let mutation_count = count_rows(&pool, "student_attempt_mutations").await;
 
@@ -83,6 +86,10 @@ async fn retention_prunes_only_expired_non_live_operational_rows_in_batches() {
     assert_eq!(
         outbox_count, 1,
         "only unpublished or fresh outbox rows remain"
+    );
+    assert_eq!(
+        session_count, 2,
+        "old revoked sessions pruned; active + recent revoked remain"
     );
     assert_eq!(
         heartbeat_count, 2,
@@ -302,6 +309,65 @@ async fn insert_idempotency_rows(pool: &MySqlPool) {
     .execute(pool)
     .await
     .expect("insert idempotency rows");
+}
+
+async fn insert_user_sessions(pool: &MySqlPool) {
+    // One old revoked session (should be pruned), one old active session (should remain),
+    // one recent revoked session (should remain due to 30-day safety window).
+    sqlx::query(
+        r#"
+        INSERT INTO users (
+            id, email, display_name, role, state,
+            failed_login_count, locked_until, last_login_at, created_at, updated_at
+        )
+        VALUES
+            (?, 'retention-user@example.com', 'Retention User', 'admin', 'active', 0, NULL, NOW(), NOW(), NOW())
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .execute(pool)
+    .await
+    .expect("insert retention user");
+
+    let user_id: String = sqlx::query_scalar("SELECT id FROM users WHERE email = 'retention-user@example.com'")
+        .fetch_one(pool)
+        .await
+        .expect("load retention user");
+
+    sqlx::query(
+        r#"
+        INSERT INTO user_sessions (
+            id, user_id, session_token_hash, csrf_token, role_snapshot, issued_at,
+            last_seen_at, expires_at, idle_timeout_at, user_agent_hash, ip_metadata,
+            revoked_at, revocation_reason
+        )
+        VALUES
+            (
+                ?, ?, 'hash-old-revoked', 'csrf-old', 'admin', NOW() - INTERVAL 40 DAY,
+                NOW() - INTERVAL 40 DAY, NOW() - INTERVAL 39 DAY, NOW() - INTERVAL 39 DAY, NULL, NULL,
+                NOW() - INTERVAL 39 DAY, 'logout'
+            ),
+            (
+                ?, ?, 'hash-old-active', 'csrf-active', 'admin', NOW() - INTERVAL 40 DAY,
+                NOW() - INTERVAL 40 DAY, NOW() + INTERVAL 39 DAY, NOW() + INTERVAL 39 DAY, NULL, NULL,
+                NULL, NULL
+            ),
+            (
+                ?, ?, 'hash-recent-revoked', 'csrf-recent', 'admin', NOW() - INTERVAL 5 DAY,
+                NOW() - INTERVAL 5 DAY, NOW() + INTERVAL 39 DAY, NOW() + INTERVAL 39 DAY, NULL, NULL,
+                NOW() - INTERVAL 4 DAY, 'logout'
+            )
+        "#,
+    )
+    .bind(Uuid::new_v4())
+    .bind(&user_id)
+    .bind(Uuid::new_v4())
+    .bind(&user_id)
+    .bind(Uuid::new_v4())
+    .bind(&user_id)
+    .execute(pool)
+    .await
+    .expect("insert user sessions");
 }
 
 async fn insert_outbox_rows(pool: &MySqlPool) {

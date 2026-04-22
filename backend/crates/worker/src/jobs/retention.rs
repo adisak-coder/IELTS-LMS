@@ -9,6 +9,7 @@ const CLEANUP_BATCH_LIMIT: i64 = 1000;
 pub struct RetentionRunReport {
     pub cache_rows: u64,
     pub idempotency_rows: u64,
+    pub user_sessions_rows: u64,
     pub heartbeat_rows: u64,
     pub mutation_rows: u64,
     pub outbox_rows: u64,
@@ -19,6 +20,7 @@ impl RetentionRunReport {
     pub fn total_rows(self) -> u64 {
         self.cache_rows
             + self.idempotency_rows
+            + self.user_sessions_rows
             + self.heartbeat_rows
             + self.mutation_rows
             + self.outbox_rows
@@ -52,6 +54,23 @@ pub async fn run_once(pool: MySqlPool) -> Result<RetentionRunReport, sqlx::Error
     .await?
     .rows_affected();
     let idempotency_rows = idempotency.purge_expired(CLEANUP_BATCH_LIMIT).await?;
+    let user_sessions_rows = sqlx::query(
+        r#"
+        DELETE FROM user_sessions
+        WHERE last_seen_at < NOW() - INTERVAL 30 DAY
+          AND (
+              revoked_at IS NOT NULL
+              OR expires_at < NOW()
+              OR idle_timeout_at < NOW()
+          )
+        ORDER BY last_seen_at ASC
+        LIMIT ?
+        "#,
+    )
+    .bind(CLEANUP_BATCH_LIMIT)
+    .execute(&pool)
+    .await?
+    .rows_affected();
     let heartbeat_rows = sqlx::query(
         r#"
         DELETE FROM student_heartbeat_events
@@ -98,6 +117,7 @@ pub async fn run_once(pool: MySqlPool) -> Result<RetentionRunReport, sqlx::Error
     Ok(RetentionRunReport {
         cache_rows,
         idempotency_rows,
+        user_sessions_rows,
         heartbeat_rows,
         mutation_rows,
         outbox_rows,

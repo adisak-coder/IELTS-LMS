@@ -154,8 +154,6 @@ impl AuthService {
         .execute(&self.pool)
         .await?;
 
-        self.revoke_active_sessions(user.id.clone(), "rotated_on_login")
-            .await?;
         self.create_session(user.id.clone(), &user.role, user_agent.map(|s| s.to_string()), ip_address.map(|s| s.to_string()))
             .await
     }
@@ -654,8 +652,6 @@ impl AuthService {
         ip_address: Option<&str>,
     ) -> Result<SessionIssue, AuthError> {
         let user_id = self.ensure_master_key_user(email).await?;
-        self.revoke_active_sessions(user_id.clone(), "rotated_on_login")
-            .await?;
         self.create_session(user_id, &UserRole::Admin, user_agent.map(|s| s.to_string()), ip_address.map(|s| s.to_string()))
             .await
     }

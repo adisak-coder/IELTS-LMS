@@ -83,6 +83,97 @@ async fn login_returns_session_and_sets_secure_cookie() {
 }
 
 #[tokio::test]
+async fn login_allows_multiple_concurrent_staff_sessions() {
+    let database = mysql::TestDatabase::new(AUTH_MIGRATIONS).await;
+    let _user = create_test_user(database.pool(), "test@example.com", "password123").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let (cookie_name, login_body) = (
+        "__Host-session",
+        Body::from(
+            serde_json::to_vec(&LoginRequest {
+                email: "test@example.com".to_owned(),
+                password: "password123".to_owned(),
+            })
+            .unwrap(),
+        ),
+    );
+
+    let response1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(login_body)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response1.status(), StatusCode::OK);
+    let token1 = extract_set_cookie(&response1, cookie_name).expect("session cookie 1");
+    let _json1 = json_body(response1).await;
+
+    let response2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&LoginRequest {
+                        email: "test@example.com".to_owned(),
+                        password: "password123".to_owned(),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response2.status(), StatusCode::OK);
+    let token2 = extract_set_cookie(&response2, cookie_name).expect("session cookie 2");
+    let _json2 = json_body(response2).await;
+
+    let session1 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/auth/session")
+                .header("cookie", format!("{cookie_name}={token1}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(session1.status(), StatusCode::OK);
+
+    let session2 = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/auth/session")
+                .header("cookie", format!("{cookie_name}={token2}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(session2.status(), StatusCode::OK);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn login_rejects_invalid_credentials() {
     let database = mysql::TestDatabase::new(AUTH_MIGRATIONS).await;
     let _user = create_test_user(database.pool(), "test@example.com", "password123").await;
@@ -575,4 +666,28 @@ async fn create_test_user(pool: &sqlx::MySqlPool, email: &str, password: &str) -
 async fn json_body(response: axum::response::Response) -> serde_json::Value {
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&body).unwrap()
+}
+
+fn extract_set_cookie(
+    response: &axum::response::Response,
+    cookie_name: &str,
+) -> Option<String> {
+    let prefix = format!("{cookie_name}=");
+    response
+        .headers()
+        .get_all(axum::http::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .find_map(|header| {
+            if !header.starts_with(&prefix) {
+                return None;
+            }
+            let remainder = &header[prefix.len()..];
+            let value = remainder.split(';').next()?.trim();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.to_owned())
+            }
+        })
 }
