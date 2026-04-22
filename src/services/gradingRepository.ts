@@ -119,7 +119,7 @@ export interface IGradingRepository {
 }
 
 class BackendGradingRepository implements IGradingRepository {
-  private readonly submissionBundleCache = new Map<string, any>();
+  private readonly submissionBundleCache = new Map<string, Promise<any>>();
 
   private mapSession(payload: any): GradingSession {
     return {
@@ -278,12 +278,18 @@ class BackendGradingRepository implements IGradingRepository {
   private async getSubmissionBundle(submissionId: string): Promise<any> {
     const cached = this.submissionBundleCache.get(submissionId);
     if (cached) {
-      return cached;
+      return await cached;
     }
 
-    const bundle = await backendGet<any>(`/v1/grading/submissions/${submissionId}`);
-    this.submissionBundleCache.set(submissionId, bundle);
-    return bundle;
+    const request = backendGet<any>(`/v1/grading/submissions/${submissionId}`);
+    this.submissionBundleCache.set(submissionId, request);
+
+    try {
+      return await request;
+    } catch (error) {
+      this.submissionBundleCache.delete(submissionId);
+      throw error;
+    }
   }
 
   async getAllSessions(): Promise<GradingSession[]> {

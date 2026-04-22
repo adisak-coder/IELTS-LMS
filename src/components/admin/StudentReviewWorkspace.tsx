@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   ArrowLeft, Save, CheckCircle, Clock, FileText,
   MessageSquare, BookOpen, ChevronLeft, ChevronRight, Eye, Calendar,
@@ -11,10 +11,25 @@ import {
 } from '../../types/grading';
 import { gradingService } from '../../services/gradingService';
 import { gradingRepository } from '../../services/gradingRepository';
+import { examRepository } from '../../services/examRepository';
+import type { ExamState, WritingTaskContent } from '../../types';
+import {
+  getQuestionNumberLabel,
+  getStudentQuestionsForModule,
+  hydrateExamState,
+} from '../../services/examAdapterService';
+import type { StudentQuestionDescriptor } from '../../services/examAdapterService';
 import { WritingAnnotationCanvas } from './WritingAnnotationCanvas';
 import { StudentReportPreview } from './StudentReportPreview';
 import { logger } from '../../utils/logger';
 import { SectionLoadingSkeleton } from '@components/ui';
+import {
+  extractObjectiveAnswerMap,
+  getCorrectAnswerDisplay,
+  getQuestionPrompt,
+  getStudentAnswerDisplay,
+  isStudentAnswerCorrect,
+} from './gradingAnswerUtils';
 
 export interface StudentReviewWorkspaceProps {
   submissionId: string;
@@ -40,10 +55,14 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   const [sectionSubmissions, setSectionSubmissions] = useState<SectionSubmission[]>([]);
   const [writingSubmissions, setWritingSubmissions] = useState<WritingTaskSubmission[]>([]);
   const [reviewDraft, setReviewDraft] = useState<ReviewDraft | null>(null);
+  const [examState, setExamState] = useState<ExamState | null>(null);
+  const [examLoading, setExamLoading] = useState(false);
+  const [examError, setExamError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<'listening' | 'reading' | 'writing' | 'speaking'>('reading');
   const [activeTask, setActiveTask] = useState<string>('task1');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const examLoadSeq = useRef(0);
   const [releaseAction, setReleaseAction] = useState<
     | 'mark_grading_complete'
     | 'mark_ready_to_release'
@@ -64,6 +83,43 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   useEffect(() => {
     loadData();
   }, [submissionId]);
+
+  useEffect(() => {
+    const publishedVersionId = submission?.publishedVersionId;
+    if (!publishedVersionId) {
+      setExamState(null);
+      setExamError(null);
+      setExamLoading(false);
+      return;
+    }
+
+    const seq = (examLoadSeq.current += 1);
+    setExamLoading(true);
+    setExamError(null);
+
+    void (async () => {
+      try {
+        const version = await examRepository.getVersionById(publishedVersionId);
+        if (seq !== examLoadSeq.current) return;
+
+        if (!version) {
+          setExamState(null);
+          setExamError('Exam version not found for this submission.');
+          return;
+        }
+
+        setExamState(hydrateExamState(version.contentSnapshot as ExamState));
+      } catch (error) {
+        if (seq !== examLoadSeq.current) return;
+        setExamState(null);
+        setExamError(error instanceof Error ? error.message : 'Failed to load exam version.');
+      } finally {
+        if (seq === examLoadSeq.current) {
+          setExamLoading(false);
+        }
+      }
+    })();
+  }, [submission?.publishedVersionId]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -308,6 +364,62 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     return writingSubmissions.find(w => w.taskId === taskId);
   };
 
+  const writingTasks = useMemo<WritingTaskContent[]>(() => {
+    const tasks = examState?.writing?.tasks;
+    if (Array.isArray(tasks) && tasks.length > 0) {
+      return tasks;
+    }
+
+    return [
+      {
+        taskId: 'task1',
+        prompt: examState?.writing?.task1Prompt ?? '',
+        chart: examState?.writing?.task1Chart,
+      },
+      {
+        taskId: 'task2',
+        prompt: examState?.writing?.task2Prompt ?? '',
+      },
+    ];
+  }, [examState]);
+
+  useEffect(() => {
+    if (activeSection !== 'writing') return;
+    if (writingTasks.some((task) => task.taskId === activeTask)) return;
+    setActiveTask(writingTasks[0]?.taskId ?? 'task1');
+  }, [activeSection, activeTask, writingTasks]);
+
+  const getWritingPrompt = useCallback((taskId: string) => {
+    const fromSubmission = getWritingTaskSubmission(taskId)?.prompt;
+    if (typeof fromSubmission === 'string' && fromSubmission.trim() !== '') {
+      return fromSubmission;
+    }
+    return writingTasks.find((task) => task.taskId === taskId)?.prompt ?? '';
+  }, [writingSubmissions, writingTasks]);
+
+  const getWritingResponseText = useCallback((taskId: string) => {
+    const fromWritingTasks = getWritingTaskSubmission(taskId)?.studentText;
+    if (typeof fromWritingTasks === 'string' && fromWritingTasks.trim() !== '') {
+      return fromWritingTasks;
+    }
+
+    const writingSection = getSectionSubmission('writing');
+    const sectionAnswers = (writingSection?.answers as unknown) as Record<string, unknown> | null;
+    const tasks = sectionAnswers && typeof sectionAnswers === 'object' ? (sectionAnswers['tasks'] as unknown) : null;
+    if (Array.isArray(tasks)) {
+      const match = tasks.find(
+        (entry): entry is { taskId?: unknown; text?: unknown } =>
+          Boolean(entry) && typeof entry === 'object' && (entry as any).taskId === taskId,
+      );
+      const text = match?.text;
+      if (typeof text === 'string' && text.trim() !== '') {
+        return text;
+      }
+    }
+
+    return '';
+  }, [sectionSubmissions, writingSubmissions]);
+
   const getReleaseStatusBadge = (status: ReleaseStatus) => {
     const styles = {
       draft: 'bg-gray-100 text-gray-700',
@@ -339,7 +451,16 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   }
 
   const currentSectionSubmission = getSectionSubmission(activeSection);
-  const currentWritingSubmission = activeSection === 'writing' ? getWritingTaskSubmission(activeTask) : null;
+  const objectiveAnswerMap = currentSectionSubmission
+    ? extractObjectiveAnswerMap(currentSectionSubmission.answers)
+    : {};
+  const objectiveDescriptors: StudentQuestionDescriptor[] =
+    examState && (activeSection === 'reading' || activeSection === 'listening')
+      ? getStudentQuestionsForModule(examState, activeSection)
+      : [];
+  const currentWritingTaskId = activeSection === 'writing' ? activeTask : null;
+  const currentWritingPrompt = currentWritingTaskId ? getWritingPrompt(currentWritingTaskId) : '';
+  const currentWritingText = currentWritingTaskId ? getWritingResponseText(currentWritingTaskId) : '';
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -446,24 +567,30 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
               <>
                 <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3 mt-6">Writing Tasks</h2>
                 <div className="space-y-1">
-                  {['task1', 'task2'].map((task) => (
+                  {writingTasks.map((task, index) => (
                     <button
-                      key={task}
-                      onClick={() => setActiveTask(task)}
+                      key={task.taskId}
+                      onClick={() => setActiveTask(task.taskId)}
                       className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                        activeTask === task 
+                        activeTask === task.taskId
                           ? 'bg-blue-50 text-blue-700' 
                           : 'text-gray-700 hover:bg-gray-50'
                       }`}
                     >
-                      <span className="capitalize">{task === 'task1' ? 'Task 1' : 'Task 2'}</span>
-                      {getWritingTaskSubmission(task) && (
+                      <span className="capitalize">
+                        {task.taskId === 'task1'
+                          ? 'Task 1'
+                          : task.taskId === 'task2'
+                            ? 'Task 2'
+                            : `Task ${index + 1}`}
+                      </span>
+                      {getWritingTaskSubmission(task.taskId) && (
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          getWritingTaskSubmission(task)!.gradingStatus === 'finalized' 
+                          getWritingTaskSubmission(task.taskId)!.gradingStatus === 'finalized' 
                             ? 'bg-emerald-100 text-emerald-700' 
                             : 'bg-amber-100 text-amber-700'
                         }`}>
-                          {getWritingTaskSubmission(task)!.gradingStatus}
+                          {getWritingTaskSubmission(task.taskId)!.gradingStatus}
                         </span>
                       )}
                     </button>
@@ -531,8 +658,19 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             </div>
 
             {/* Writing Task with Annotation Canvas */}
-            {activeSection === 'writing' && currentWritingSubmission && (
+            {activeSection === 'writing' && currentWritingTaskId && (
               <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                {writingSubmissions.length === 0 && (
+                  <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 text-sm text-amber-900 flex items-start gap-2">
+                    <AlertTriangle size={16} className="mt-0.5 text-amber-700" />
+                    <div>
+                      <p className="font-medium">Writing response may be missing</p>
+                      <p className="text-amber-800">
+                        No `writingTasks` rows were returned for this submission. The student may not have answered writing, or writing was not persisted.
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {/* Prompt */}
                 <div className="p-6 border-b border-gray-200 bg-gray-50">
                   <div className="flex items-center gap-2 mb-3">
@@ -540,17 +678,22 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
                     <h3 className="font-bold text-gray-900">Prompt</h3>
                   </div>
                   <div className="prose prose-sm max-w-none text-gray-800 whitespace-pre-wrap">
-                    {currentWritingSubmission.prompt}
+                    {currentWritingPrompt || <span className="text-gray-500">Prompt unavailable.</span>}
                   </div>
+                  {!currentWritingText && (
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      No writing response recorded for this task.
+                    </div>
+                  )}
                 </div>
 
                 {/* Annotation Canvas */}
                 <div className="p-6">
                   <WritingAnnotationCanvas
-                    taskId={currentWritingSubmission.taskId}
-                    studentText={currentWritingSubmission.studentText}
-                    annotations={(reviewDraft?.annotations || []).filter(a => a.taskId === currentWritingSubmission.taskId)}
-                    drawings={(reviewDraft?.drawings || []).filter(d => d.taskId === currentWritingSubmission.taskId)}
+                    taskId={currentWritingTaskId}
+                    studentText={currentWritingText}
+                    annotations={(reviewDraft?.annotations || []).filter(a => a.taskId === currentWritingTaskId)}
+                    drawings={(reviewDraft?.drawings || []).filter(d => d.taskId === currentWritingTaskId)}
                     commentBank={commentBank}
                     currentTeacherId={currentTeacherId}
                     onAnnotationAdd={handleAnnotationAdd}
@@ -565,15 +708,118 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
 
             {/* Reading/Listening Content */}
             {(activeSection === 'reading' || activeSection === 'listening') && currentSectionSubmission && (
-              <div className="bg-white rounded-xl border border-gray-200 p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <BookOpen size={18} className="text-blue-600" />
-                  <h3 className="font-bold text-gray-900">Section Answers</h3>
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <BookOpen size={18} className="text-blue-600" />
+                    <h3 className="font-bold text-gray-900">Objective Answers</h3>
+                  </div>
+                  {examLoading && (
+                    <span className="text-xs font-medium text-gray-500">Loading exam…</span>
+                  )}
                 </div>
-                <div className="text-sm text-gray-600">
-                  <p>Section submissions will display detailed question-by-question answers here.</p>
-                  <p className="mt-2">This will include student answers, correct answers, scoring rules, and any review overrides.</p>
-                </div>
+
+                {examError && (
+                  <div className="px-6 py-4 border-b border-gray-200 bg-red-50 text-sm text-red-800">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle size={16} className="mt-0.5 text-red-700" />
+                      <div>
+                        <p className="font-medium">Could not load exam content</p>
+                        <p className="mt-1">{examError}</p>
+                        <p className="mt-2 text-red-700">Showing raw answers from the submission bundle:</p>
+                      </div>
+                    </div>
+                    <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-red-200 bg-white p-3 text-xs text-gray-800">
+                      {JSON.stringify(objectiveAnswerMap, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                {!examError && objectiveDescriptors.length === 0 && (
+                  <div className="px-6 py-6 text-sm text-gray-700">
+                    <p className="font-medium text-gray-900">No question schema available</p>
+                    <p className="mt-1 text-gray-600">
+                      The exam version loaded, but no questions were found for this section. Showing raw answers:
+                    </p>
+                    <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
+                      {JSON.stringify(objectiveAnswerMap, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                {!examError && objectiveDescriptors.length > 0 && (
+                  <div className="divide-y divide-gray-200">
+                    {Object.entries(
+                      objectiveDescriptors.reduce<Record<string, { label: string; items: StudentQuestionDescriptor[] }>>(
+                        (acc, descriptor) => {
+                          const key = descriptor.groupId || descriptor.groupLabel || 'group';
+                          if (!acc[key]) {
+                            acc[key] = { label: descriptor.groupLabel || 'Group', items: [] };
+                          }
+                          acc[key]!.items.push(descriptor);
+                          return acc;
+                        },
+                        {},
+                      ),
+                    ).map(([groupId, group]) => (
+                      <div key={groupId} className="px-6 py-5">
+                        <h4 className="text-sm font-bold text-gray-900">{group.label}</h4>
+                        <div className="mt-3 overflow-x-auto">
+                          <table className="w-full text-left border-collapse">
+                            <thead>
+                              <tr className="text-xs uppercase tracking-wider text-gray-500 border-b border-gray-200">
+                                <th className="py-2 pr-4 font-medium">#</th>
+                                <th className="py-2 pr-4 font-medium">Prompt</th>
+                                <th className="py-2 pr-4 font-medium">Student</th>
+                                <th className="py-2 pr-4 font-medium">Correct</th>
+                                <th className="py-2 font-medium text-right">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="text-sm text-gray-800">
+                              {group.items.map((descriptor) => {
+                                const number = getQuestionNumberLabel(objectiveDescriptors, descriptor.id);
+                                const studentText = getStudentAnswerDisplay(descriptor, objectiveAnswerMap);
+                                const correctText = getCorrectAnswerDisplay(descriptor);
+                                const correctness = isStudentAnswerCorrect(descriptor, objectiveAnswerMap);
+                                const prompt = getQuestionPrompt(descriptor);
+
+                                return (
+                                  <tr key={descriptor.id} className="border-b border-gray-100 last:border-b-0 align-top">
+                                    <td className="py-3 pr-4 text-gray-500 whitespace-nowrap">{number}</td>
+                                    <td className="py-3 pr-4">
+                                      <div className="text-gray-900">{prompt || <span className="text-gray-500">—</span>}</div>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <div className="whitespace-pre-wrap break-words">{studentText || <span className="text-gray-500">—</span>}</div>
+                                    </td>
+                                    <td className="py-3 pr-4">
+                                      <div className="whitespace-pre-wrap break-words">{correctText || <span className="text-gray-500">—</span>}</div>
+                                    </td>
+                                    <td className="py-3 text-right">
+                                      {correctness === null ? (
+                                        <span className="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700">
+                                          —
+                                        </span>
+                                      ) : correctness ? (
+                                        <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                          Correct
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                                          Incorrect
+                                        </span>
+                                      )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -599,7 +845,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
           <div className="flex-1 overflow-y-auto p-4">
             <h2 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Rubric Assessment</h2>
             
-            {activeSection === 'writing' && currentWritingSubmission && (
+            {activeSection === 'writing' && currentWritingTaskId && (
               <div className="space-y-4">
                 {[
                   { key: 'taskResponseBand', label: 'Task Response', notesKey: 'taskResponseNotes' },
@@ -619,9 +865,9 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                       placeholder="0-9"
                       value={
-                        reviewDraft?.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.[
+                        ((reviewDraft?.sectionDrafts as any)?.writing?.[activeTask]?.[
                           criterion.key as keyof RubricAssessment
-                        ] as number || ''
+                        ] as number | undefined) ?? ''
                       }
                       onChange={(e) => updateRubricAssessment('writing', {
                         [criterion.key]: parseFloat(e.target.value) || 0
@@ -632,9 +878,9 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
                       rows={2}
                       placeholder="Notes..."
                       value={
-                        reviewDraft?.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.[
+                        ((reviewDraft?.sectionDrafts as any)?.writing?.[activeTask]?.[
                           criterion.notesKey as keyof RubricAssessment
-                        ] as string || ''
+                        ] as string | undefined) ?? ''
                       }
                       onChange={(e) => updateRubricAssessment('writing', {
                         [criterion.notesKey]: e.target.value
@@ -846,25 +1092,25 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
               speaking: 6.5
             },
             writingResults: {
-              task1: currentWritingSubmission ? {
-                taskId: currentWritingSubmission.taskId,
-                taskLabel: currentWritingSubmission.taskLabel,
-                prompt: currentWritingSubmission.prompt,
-                studentText: currentWritingSubmission.studentText,
-                wordCount: currentWritingSubmission.wordCount,
+              task1: currentWritingTaskId ? {
+                taskId: currentWritingTaskId,
+                taskLabel: currentWritingTaskId === 'task1' ? 'Task 1' : currentWritingTaskId === 'task2' ? 'Task 2' : 'Writing Task',
+                prompt: currentWritingPrompt,
+                studentText: currentWritingText,
+                wordCount: currentWritingText ? currentWritingText.trim().split(/\s+/).filter(Boolean).length : 0,
                 rubricScores: {
-                  taskResponse: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.taskResponseBand || 6,
-                  coherence: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.coherenceBand || 6,
-                  lexical: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.lexicalBand || 6,
-                  grammar: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.grammarBand || 6
+                  taskResponse: ((reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.taskResponseBand as number | undefined) ?? 6,
+                  coherence: ((reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.coherenceBand as number | undefined) ?? 6,
+                  lexical: ((reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.lexicalBand as number | undefined) ?? 6,
+                  grammar: ((reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.grammarBand as number | undefined) ?? 6
                 },
-                annotations: reviewDraft.annotations.filter(a => a.taskId === currentWritingSubmission.taskId && a.visibility === 'student_visible'),
-                drawings: reviewDraft.drawings.filter(d => d.taskId === currentWritingSubmission.taskId && d.visibility === 'student_visible'),
+                annotations: reviewDraft.annotations.filter(a => a.taskId === currentWritingTaskId && a.visibility === 'student_visible'),
+                drawings: reviewDraft.drawings.filter(d => d.taskId === currentWritingTaskId && d.visibility === 'student_visible'),
                 criterionFeedback: {
-                  taskResponse: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.taskResponseNotes,
-                  coherence: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.coherenceNotes,
-                  lexical: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.lexicalNotes,
-                  grammar: reviewDraft.sectionDrafts.writing?.[activeTask as 'task1' | 'task2']?.grammarNotes
+                  taskResponse: (reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.taskResponseNotes,
+                  coherence: (reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.coherenceNotes,
+                  lexical: (reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.lexicalNotes,
+                  grammar: (reviewDraft.sectionDrafts as any)?.writing?.[currentWritingTaskId]?.grammarNotes
                 }
               } : undefined,
               task2: undefined
