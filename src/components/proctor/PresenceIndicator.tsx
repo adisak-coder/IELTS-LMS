@@ -63,20 +63,7 @@ export function PresenceIndicator({ proctorPresence, currentProctorId, currentPr
 
   const isCurrentUserPresent = activeProctors.some(p => p.proctorId === currentProctorId);
 
-  return (
-    <div className="flex items-center gap-2">
-      {!isCurrentUserPresent && onJoin ? (
-        <button
-          type="button"
-          onClick={onJoin}
-          className="flex items-center gap-1 px-2 py-1 bg-blue-100 text-blue-800 rounded-md text-xs font-medium hover:bg-blue-200 transition-colors"
-          title="Join session"
-        >
-          Join
-        </button>
-      ) : null}
-    </div>
-  );
+  return null;
 }
 
 interface CollisionWarningProps {
