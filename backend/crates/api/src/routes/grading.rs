@@ -74,12 +74,20 @@ pub async fn get_submission(
     principal: AuthenticatedUser,
     Path(submission_id): Path<Uuid>,
 ) -> Result<ApiResponse<SubmissionReviewBundle>, ApiError> {
-    let schedule_id: Uuid = query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
+    let schedule_id: String =
+        query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
         .bind(submission_id.to_string())
         .fetch_optional(&state.db_pool())
         .await
         .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -100,12 +108,20 @@ pub async fn start_review(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<StartReviewRequest>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
+    let schedule_id: String =
+        query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
         .bind(submission_id.to_string())
         .fetch_optional(&state.db_pool())
         .await
         .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -126,7 +142,7 @@ pub async fn get_review_draft(
     principal: AuthenticatedUser,
     Path(submission_id): Path<Uuid>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -134,6 +150,13 @@ pub async fn get_review_draft(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let service = GradingService::new(state.db_pool());
     let started = Instant::now();
@@ -152,7 +175,7 @@ pub async fn save_review_draft(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<SaveReviewDraftRequest>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -160,6 +183,13 @@ pub async fn save_review_draft(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -182,7 +212,7 @@ pub async fn mark_grading_complete(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<ActorActionRequest>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -190,6 +220,13 @@ pub async fn mark_grading_complete(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -212,7 +249,7 @@ pub async fn mark_ready_to_release(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<ActorActionRequest>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -220,6 +257,13 @@ pub async fn mark_ready_to_release(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -242,7 +286,7 @@ pub async fn release_now(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<ReleaseNowRequest>,
 ) -> Result<ApiResponse<StudentResult>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -250,6 +294,13 @@ pub async fn release_now(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -272,7 +323,7 @@ pub async fn schedule_release(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<ScheduleReleaseRequest>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -280,6 +331,13 @@ pub async fn schedule_release(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -302,7 +360,7 @@ pub async fn reopen_review(
     Path(submission_id): Path<Uuid>,
     Json(req): Json<ActorActionRequest>,
 ) -> Result<ApiResponse<ReviewDraft>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         "SELECT schedule_id FROM student_submissions WHERE id = ?",
     )
     .bind(submission_id.to_string())
@@ -310,6 +368,13 @@ pub async fn reopen_review(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
@@ -330,7 +395,7 @@ pub async fn get_result_events(
     principal: AuthenticatedUser,
     Path(result_id): Path<Uuid>,
 ) -> Result<ApiResponse<Vec<ReleaseEvent>>, ApiError> {
-    let schedule_id: Uuid = query_scalar(
+    let schedule_id: String = query_scalar(
         r#"
         SELECT submissions.schedule_id
         FROM release_events events
@@ -344,6 +409,13 @@ pub async fn get_result_events(
     .await
     .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
     .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id from release_events join: {err}"),
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let service = GradingService::new(state.db_pool());
     let started = Instant::now();
