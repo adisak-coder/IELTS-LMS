@@ -1359,7 +1359,7 @@ function ExamSettingsDrawerComponent({
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                   </div>
-                  <div className="p-4 flex items-center justify-between">
+                  <div className="p-4 border-b border-gray-50 flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold text-gray-900">Prevent Autocorrect</p>
                       <p className="text-[10px] text-gray-500">Disable autocorrect and autocapitalize</p>
@@ -1368,6 +1368,18 @@ function ExamSettingsDrawerComponent({
                       type="checkbox" 
                       checked={config.security.preventAutocorrect}
                       onChange={(e) => updateConfig('security', { preventAutocorrect: e.target.checked })}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </div>
+                  <div className="p-4 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">Prevent Translation</p>
+                      <p className="text-[10px] text-gray-500">Best-effort; does not block extensions/OCR</p>
+                    </div>
+                    <input 
+                      type="checkbox" 
+                      checked={config.security.preventTranslation !== false}
+                      onChange={(e) => updateConfig('security', { preventTranslation: e.target.checked })}
                       className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                     />
                   </div>

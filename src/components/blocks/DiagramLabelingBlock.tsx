@@ -3,6 +3,7 @@ import { DiagramLabelingBlock as DiagramLabelingBlockType } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { normalizeImageUrl } from '../../utils/imageUrl';
 
 interface DiagramLabelingBlockProps {
   block: DiagramLabelingBlockType;
@@ -16,6 +17,7 @@ interface DiagramLabelingBlockProps {
 
 export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }: DiagramLabelingBlockProps) {
   const [imageLoadError, setImageLoadError] = useState(false);
+  const resolvedImageUrl = normalizeImageUrl(block.imageUrl ?? '');
 
   useEffect(() => {
     setImageLoadError(false);
@@ -91,13 +93,14 @@ export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, del
       <div className="mb-6">
         <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">Preview</div>
         <div className="relative overflow-hidden rounded-md border border-gray-200 bg-gray-50" style={{ minHeight: 280 }}>
-          {block.imageUrl && !imageLoadError ? (
+          {resolvedImageUrl && !imageLoadError ? (
             <>
               <img
-                src={block.imageUrl}
+                src={resolvedImageUrl}
                 alt="Diagram preview"
                 className="h-auto w-full object-contain"
                 onError={() => setImageLoadError(true)}
+                referrerPolicy="no-referrer"
               />
               {block.labels.map((label, index) => (
                 <span
@@ -112,7 +115,7 @@ export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, del
             </>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500 text-sm">
-              {block.imageUrl ? (
+              {resolvedImageUrl ? (
                 <>
                   <p className="font-medium text-gray-700">Unable to load image</p>
                   <p className="text-xs text-gray-400 mt-1">Check the URL above and try again.</p>

@@ -139,6 +139,8 @@ export function StudentApp() {
     useState<string | null>(null);
   const [lastAcknowledgedSecondaryScreenViolationId, setLastAcknowledgedSecondaryScreenViolationId] =
     useState<string | null>(null);
+  const [lastAcknowledgedTranslationViolationId, setLastAcknowledgedTranslationViolationId] =
+    useState<string | null>(null);
   const [fullscreenWarningOpen, setFullscreenWarningOpen] = useState(false);
   const [fullscreenWarningMessage, setFullscreenWarningMessage] = useState(
     'Fullscreen mode is required. Please return to fullscreen to continue.',
@@ -240,6 +242,26 @@ export function StudentApp() {
   const shouldShowSecondaryScreenWarning =
     Boolean(latestSecondaryScreenViolation) &&
     latestSecondaryScreenViolation?.id !== lastAcknowledgedSecondaryScreenViolationId &&
+    !fullscreenWarningOpen;
+
+  const latestTranslationViolation = useMemo(() => {
+    if (runtimeState.phase !== 'exam') {
+      return null;
+    }
+
+    if (examState.config.security.preventTranslation === false) {
+      return null;
+    }
+
+    const violations = runtimeState.violations.filter(
+      (violation) => violation.type === 'TRANSLATION_DETECTED',
+    );
+    return violations[violations.length - 1] ?? null;
+  }, [examState.config.security.preventTranslation, runtimeState.phase, runtimeState.violations]);
+
+  const shouldShowTranslationWarning =
+    Boolean(latestTranslationViolation) &&
+    latestTranslationViolation?.id !== lastAcknowledgedTranslationViolationId &&
     !fullscreenWarningOpen;
 
   const latestFullscreenExitViolation = useMemo(() => {
@@ -853,6 +875,23 @@ export function StudentApp() {
           onAcknowledge={() => {
             if (latestTabSwitchViolation) {
               setLastAcknowledgedSecurityViolationId(latestTabSwitchViolation.id);
+            }
+          }}
+        />
+      ) : null}
+
+      {examState.config.progression.showWarnings ? (
+        <WarningOverlay
+          isOpen={shouldShowTranslationWarning}
+          severity="medium"
+          message={
+            latestTranslationViolation?.description ??
+            'Translation tools detected. Please disable translation and continue in the original language.'
+          }
+          showCountdown={false}
+          onAcknowledge={() => {
+            if (latestTranslationViolation) {
+              setLastAcknowledgedTranslationViolationId(latestTranslationViolation.id);
             }
           }}
         />

@@ -4,6 +4,7 @@ import { MoreVertical, Plus, Trash2, GripVertical, Image as ImageIcon, ArrowUp, 
 import { MIN_HEIGHTS } from '../../constants/uiConstants';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { normalizeImageUrl } from '../../utils/imageUrl';
 
 interface Props {
   block: QuestionBlock;
@@ -24,6 +25,7 @@ export const MapLabelingBlock: React.FC<Props> = ({ block, startNum, endNum, upd
   
   const mapBlock = block as MapBlockType;
   const questions = mapBlock.questions || [];
+  const resolvedAssetUrl = normalizeImageUrl(mapBlock.assetUrl ?? '');
   
   const getFieldError = (field: string) => errors.find(e => e.field.includes(field));
 
@@ -133,21 +135,22 @@ export const MapLabelingBlock: React.FC<Props> = ({ block, startNum, endNum, upd
 	          onMouseEnter={() => setIsDragging(true)}
 	          onMouseLeave={() => setIsDragging(false)}
 	        >
-	          {mapBlock.assetUrl && !imageLoadError ? (
+	          {resolvedAssetUrl && !imageLoadError ? (
 	            <img
-	              src={mapBlock.assetUrl}
+	              src={resolvedAssetUrl}
 	              alt="Map"
 	              className="w-full h-full object-contain pointer-events-none"
 	              onError={() => setImageLoadError(true)}
+	              referrerPolicy="no-referrer"
 	            />
 	          ) : (
 	            <div className="absolute inset-0 flex flex-col items-center justify-center text-gray-500">
 	              <ImageIcon size={32} className="mb-2 text-gray-300" />
 	              <p className="text-sm font-medium text-gray-600">
-	                {mapBlock.assetUrl ? 'Unable to load image' : 'Enter an image URL above'}
+	                {resolvedAssetUrl ? 'Unable to load image' : 'Enter an image URL above'}
 	              </p>
 	              <p className="text-[10px] mt-1 text-gray-400 font-bold uppercase tracking-wider">
-	                {mapBlock.assetUrl ? 'Check the URL and try again' : 'or click to add hotspot'}
+	                {resolvedAssetUrl ? 'Check the URL and try again' : 'or click to add hotspot'}
 	              </p>
 	            </div>
 	          )}

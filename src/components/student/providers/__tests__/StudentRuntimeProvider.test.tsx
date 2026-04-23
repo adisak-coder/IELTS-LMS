@@ -2,8 +2,8 @@ import React from 'react';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
-import { ExamConfig, ExamState, ViolationSeverity } from '../../../types';
-import type { StudentAttempt } from '../../../types/studentAttempt';
+import type { ExamConfig, ExamState, ViolationSeverity } from '../../../../types';
+import type { StudentAttempt } from '../../../../types/studentAttempt';
 
 // Mock ExamConfig
 const mockConfig: ExamConfig = {
@@ -93,8 +93,10 @@ const mockConfig: ExamConfig = {
     requireFullscreen: true,
     tabSwitchRule: 'warn',
     detectSecondaryScreen: true,
+    blockClipboard: true,
     preventAutofill: true,
     preventAutocorrect: true,
+    preventTranslation: true,
     fullscreenAutoReentry: true,
     fullscreenMaxViolations: 3,
     proctoringFlags: {

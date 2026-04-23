@@ -50,6 +50,7 @@ export function ProctoringProvider({
 }: ProctoringProviderProps) {
   const { state: runtimeState, actions: runtimeActions } = useStudentRuntime();
   const { state: attemptState } = useStudentAttempt();
+  const shouldPreventTranslation = config.security.preventTranslation !== false;
   const cooldownByTypeRef = useRef<Record<string, number>>({});
   const fullscreenReentryAttempts = useRef(0);
   const fullscreenEntryAttemptedRef = useRef(false);
@@ -232,6 +233,78 @@ export function ProctoringProvider({
     fullscreenEntryAttemptedRef.current = true;
     void requestFullscreen();
   }, [config.security.requireFullscreen, requestFullscreen, runtimeState.phase]);
+
+  useEffect(() => {
+    const translateMetaId = 'student-notranslate-meta';
+    const root = document.documentElement;
+
+    const removeNoTranslateMarkers = () => {
+      root.removeAttribute('translate');
+      root.classList.remove('notranslate');
+      document.head.querySelector(`#${translateMetaId}`)?.remove();
+    };
+
+    if (runtimeState.phase !== 'exam' || !shouldPreventTranslation) {
+      removeNoTranslateMarkers();
+      return;
+    }
+
+    root.setAttribute('translate', 'no');
+    root.classList.add('notranslate');
+
+    if (!document.head.querySelector(`#${translateMetaId}`)) {
+      const meta = document.createElement('meta');
+      meta.id = translateMetaId;
+      meta.name = 'google';
+      meta.content = 'notranslate';
+      document.head.appendChild(meta);
+    }
+
+    return removeNoTranslateMarkers;
+  }, [runtimeState.phase, shouldPreventTranslation]);
+
+  useEffect(() => {
+    if (runtimeState.phase !== 'exam' || !shouldPreventTranslation) {
+      return;
+    }
+
+    const detectTranslation = () => {
+      const root = document.documentElement;
+      const hasTranslateClasses =
+        root.classList.contains('translated-ltr') || root.classList.contains('translated-rtl');
+      const hasTranslateDom =
+        document.querySelector('#goog-gt-tt') != null ||
+        document.querySelector('iframe.goog-te-banner-frame') != null ||
+        document.querySelector('.goog-te-banner-frame') != null;
+
+      if (!hasTranslateClasses && !hasTranslateDom) {
+        return;
+      }
+
+      handleViolation(
+        'TRANSLATION_DETECTED',
+        'Translation tools detected. Please disable translation and continue in the original language.',
+        'medium',
+      );
+    };
+
+    detectTranslation();
+
+    const intervalId = window.setInterval(detectTranslation, 2_000);
+    const observer = new MutationObserver(() => {
+      detectTranslation();
+    });
+
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
+    return () => {
+      window.clearInterval(intervalId);
+      observer.disconnect();
+    };
+  }, [handleViolation, runtimeState.phase, shouldPreventTranslation]);
 
   const detectSecondaryScreens = useCallback(async () => {
     if (!config.security.detectSecondaryScreen || runtimeState.phase !== 'exam') {

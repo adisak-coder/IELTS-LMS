@@ -26,6 +26,7 @@ import {
 import { ProtectedInput } from './ProtectedInput';
 import { FormattedText } from './FormattedText';
 import { stripBoldMarkdown } from '../../utils/boldMarkdown';
+import { normalizeImageUrl } from '../../utils/imageUrl';
 
 interface QuestionRendererProps {
   question:
@@ -61,7 +62,6 @@ export function QuestionRenderer({
   number,
   answer,
   onChange,
-  isFlagged,
   isActive = false,
   slotIds = [],
   currentQuestionId = null,
@@ -308,12 +308,13 @@ export function QuestionRenderer({
 
   const renderMap = (mapBlock: MapBlock, q: MapQuestion, num: number) => (
     <div className="flex flex-col gap-4">
-      {mapBlock.assetUrl ? (
+      {normalizeImageUrl(mapBlock.assetUrl ?? '') ? (
         <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
           <img
-            src={mapBlock.assetUrl}
+            src={normalizeImageUrl(mapBlock.assetUrl ?? '')}
             alt="Map reference"
             className="h-auto w-full object-contain"
+            referrerPolicy="no-referrer"
           />
         </div>
       ) : null}
@@ -491,9 +492,14 @@ export function QuestionRenderer({
   const renderDiagramLabeling = (diagramBlock: DiagramLabelingBlock) => (
     <div className="flex flex-col gap-4">
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
-        {diagramBlock.imageUrl ? (
+        {normalizeImageUrl(diagramBlock.imageUrl ?? '') ? (
           <div className="relative">
-            <img src={diagramBlock.imageUrl} alt="Diagram reference" className="h-auto w-full object-contain" />
+            <img
+              src={normalizeImageUrl(diagramBlock.imageUrl ?? '')}
+              alt="Diagram reference"
+              className="h-auto w-full object-contain"
+              referrerPolicy="no-referrer"
+            />
             {diagramBlock.labels.map((label, index) => (
               <span
                 key={label.id}
@@ -695,14 +701,6 @@ export function QuestionRenderer({
 
   return (
     <div className="relative">
-      {isFlagged ? (
-        <div className="absolute -left-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full border border-amber-200 bg-amber-100 shadow-sm">
-          <span className="text-xs text-amber-600" aria-hidden="true">
-            ⚑
-          </span>
-        </div>
-      ) : null}
-
       {block.type === 'TFNG' && question ? renderTFNG(block as TFNGBlock, question as TFNGQuestion) : null}
       {block.type === 'CLOZE' && question ? renderCloze(block as ClozeBlock, question as ClozeQuestion) : null}
       {block.type === 'MATCHING' && question ? renderMatching(block as MatchingBlock, question as MatchingQuestion) : null}

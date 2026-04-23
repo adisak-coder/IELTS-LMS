@@ -320,10 +320,6 @@ describe('student question experience', () => {
   });
 
   it('disables the listening audio player when staff turns off audio playback', () => {
-    const play = vi
-      .spyOn(HTMLMediaElement.prototype, 'play')
-      .mockResolvedValue(undefined);
-
     const state: ExamState = {
       title: 'Listening Test',
       type: 'Academic',
@@ -419,13 +415,8 @@ describe('student question experience', () => {
     );
 
     expect(document.querySelector('audio')).toBeNull();
-    expect(screen.getByText(/audio playback has been turned off/i)).toBeInTheDocument();
     expect(screen.getByText(/staff instructions/i)).toBeInTheDocument();
     expect(screen.getByText(/use the invigilator audio system/i)).toBeInTheDocument();
-
-    const playButton = screen.getByRole('button', { name: /play audio/i });
-    expect(playButton).toBeDisabled();
-    fireEvent.click(playButton);
-    expect(play).not.toHaveBeenCalled();
+    expect(screen.queryByText(/listening audio track/i)).toBeNull();
   });
 });

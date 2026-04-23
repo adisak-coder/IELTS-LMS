@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { ProctoringProvider, useProctoring } from '../StudentProctoringProvider';
 import { StudentAttemptProvider } from '../StudentAttemptProvider';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
-import type { ExamConfig, ExamState } from '../../../types';
+import type { ExamConfig, ExamState } from '../../../../types';
 import type { StudentAttempt } from '../../../../types/studentAttempt';
 
 const mockConfig: ExamConfig = {
@@ -94,8 +94,10 @@ const mockConfig: ExamConfig = {
     requireFullscreen: true,
     tabSwitchRule: 'warn',
     detectSecondaryScreen: true,
+    blockClipboard: true,
     preventAutofill: true,
     preventAutocorrect: true,
+    preventTranslation: true,
     fullscreenAutoReentry: true,
     fullscreenMaxViolations: 3,
     proctoringFlags: {
@@ -548,5 +550,68 @@ describe('StudentProctoringProvider', () => {
     expect(
       harness.result.current.runtime.state.violations.some((violation) => violation.type === 'SECONDARY_SCREEN'),
     ).toBe(false);
+  });
+
+  it('marks the document as notranslate during the exam when preventTranslation is enabled', async () => {
+    renderHarness({
+      ...mockConfig,
+      security: {
+        ...mockConfig.security,
+        preventTranslation: true,
+      },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.documentElement.getAttribute('translate')).toBe('no');
+    expect(document.documentElement.classList.contains('notranslate')).toBe(true);
+    expect(document.head.querySelector('#student-notranslate-meta')).not.toBeNull();
+  });
+
+  it('removes notranslate markers on unmount', async () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: {
+        ...mockConfig.security,
+        preventTranslation: true,
+      },
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(document.documentElement.getAttribute('translate')).toBe('no');
+    expect(document.head.querySelector('#student-notranslate-meta')).not.toBeNull();
+
+    harness.unmount();
+
+    expect(document.documentElement.getAttribute('translate')).toBeNull();
+    expect(document.documentElement.classList.contains('notranslate')).toBe(false);
+    expect(document.head.querySelector('#student-notranslate-meta')).toBeNull();
+  });
+
+  it('records a translation violation when translation markers are detected', async () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: {
+        ...mockConfig.security,
+        preventTranslation: true,
+      },
+    });
+
+    act(() => {
+      document.documentElement.classList.add('translated-ltr');
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+
+    expect(
+      harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TRANSLATION_DETECTED'),
+    ).toBe(true);
   });
 });

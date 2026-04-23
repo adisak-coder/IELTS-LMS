@@ -31,6 +31,7 @@ export function StudentWriting({ state, writingAnswers, onWritingChange, onSubmi
   const writingConfig = state.config.sections.writing;
   const [activeTaskId, setActiveTaskId] = useState<string>(currentQuestionId || writingConfig.tasks[0]?.id || 'task1');
   const [leftWidth, setLeftWidth] = useState(50);
+  const [isEditorFocused, setIsEditorFocused] = useState(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
@@ -64,6 +65,8 @@ export function StudentWriting({ state, writingAnswers, onWritingChange, onSubmi
 
   const currentTask = writingConfig.tasks.find(t => t.id === activeTaskId) || writingConfig.tasks[0];
   const currentText = writingAnswers[activeTaskId] || '';
+  const currentPlainText = currentText.replace(/<[^>]*>/g, '').trim();
+  const showEditorPlaceholder = !isEditorFocused && currentPlainText.length === 0;
 
   useEffect(() => {
     if (currentQuestionId && currentQuestionId !== activeTaskId) {
@@ -332,32 +335,44 @@ export function StudentWriting({ state, writingAnswers, onWritingChange, onSubmi
 
 	        <div style={{ width: `calc(${100 - leftWidth}% - 16px)` }} className="h-full flex flex-col relative min-w-[280px] md:min-w-[320px]">
 	          <div className="flex-1 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
-	            <div
-	              ref={editorRef}
-	              contentEditable
-	              onInput={handleEditorInput}
-                suppressContentEditableWarning
-                onFocus={() => {
-                  editorHasFocusRef.current = true;
-                }}
-                onBlur={() => {
-                  editorHasFocusRef.current = false;
-                  if (editorRef.current) {
-                    const sanitized = sanitizeHtml(editorRef.current.innerHTML);
-                    if (sanitized !== editorRef.current.innerHTML) {
-                      editorRef.current.innerHTML = sanitized;
+              <div className="relative flex-1 w-full">
+                {showEditorPlaceholder && (
+                  <div className="pointer-events-none absolute left-4 top-4 md:left-6 md:top-6 lg:left-8 lg:top-8 text-base md:text-lg leading-relaxed text-gray-400 font-serif select-none">
+                    Write your answer here…
+                  </div>
+                )}
+	              <div
+	                ref={editorRef}
+	                contentEditable
+	                onInput={handleEditorInput}
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Writing response"
+                  onFocus={() => {
+                    editorHasFocusRef.current = true;
+                    setIsEditorFocused(true);
+                  }}
+                  onBlur={() => {
+                    editorHasFocusRef.current = false;
+                    setIsEditorFocused(false);
+                    if (editorRef.current) {
+                      const sanitized = sanitizeHtml(editorRef.current.innerHTML);
+                      if (sanitized !== editorRef.current.innerHTML) {
+                        editorRef.current.innerHTML = sanitized;
+                      }
+                      onWritingChange(activeTaskId, editorRef.current.innerHTML);
                     }
-                    onWritingChange(activeTaskId, editorRef.current.innerHTML);
-                  }
-                }}
-                onPaste={handleEditorPaste}
-                onDrop={handleEditorDrop}
-	              className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-	              style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
-	              spellCheck={!security.preventAutocorrect}
-	              autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
-	              autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
-	            />
+                  }}
+                  onPaste={handleEditorPaste}
+                  onDrop={handleEditorDrop}
+	                className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+	                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
+	                spellCheck={!security.preventAutocorrect}
+	                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
+	                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
+	              />
+              </div>
             
 	            <div className="border-t border-gray-200 p-3 md:p-5 bg-gray-50 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs md:text-sm flex-shrink-0">
 	              <div className="flex gap-4 md:gap-8 w-full sm:w-auto">
