@@ -4,6 +4,7 @@ import { QuestionBuilderPane } from '../QuestionBuilderPane';
 import { Play, Square, Rewind, FastForward, Volume2, MapPin, Plus, Trash2, Link as LinkIcon, ChevronLeft, ChevronRight } from 'lucide-react';
 import { normalizeAudioUrl } from '../../utils/audioUrl';
 import { createId } from '../../utils/idUtils';
+import { getBlockQuestionCount as getBlockQuestionCountFromUtils } from '../../utils/examUtils';
 
 interface ListeningWorkspaceProps {
   state: ExamState;
@@ -66,9 +67,10 @@ export function ListeningWorkspace({ state, setState }: ListeningWorkspaceProps)
       case 'MATCHING':
       case 'MAP':
       case 'SHORT_ANSWER':
+        return 'questions' in block ? block.questions.length : 0;
       case 'SENTENCE_COMPLETION':
       case 'NOTE_COMPLETION':
-        return 'questions' in block ? block.questions.length : 0;
+        return getBlockQuestionCountFromUtils(block);
       default:
         return 0;
     }
