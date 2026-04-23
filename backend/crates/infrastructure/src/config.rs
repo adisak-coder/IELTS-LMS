@@ -33,6 +33,8 @@ pub struct AppConfig {
     pub websocket_outbound_queue_cap: usize,
     pub websocket_slow_client_disconnect_ms: u64,
     pub websocket_write_timeout_ms: u64,
+    pub runtime_auto_advance_enabled: bool,
+    pub runtime_auto_advance_tick_ms: u64,
     // Rate limiting configurations
     pub rate_limit_login_per_ip: u32,
     pub rate_limit_login_per_ip_window_secs: u64,
@@ -190,6 +192,14 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.websocket_write_timeout_ms),
+            runtime_auto_advance_enabled: env::var("RUNTIME_AUTO_ADVANCE_ENABLED")
+                .ok()
+                .and_then(|value| parse_bool(&value))
+                .unwrap_or(default.runtime_auto_advance_enabled),
+            runtime_auto_advance_tick_ms: env::var("RUNTIME_AUTO_ADVANCE_TICK_MS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.runtime_auto_advance_tick_ms),
             // Rate limiting env vars
             rate_limit_login_per_ip: env::var("RATE_LIMIT_LOGIN_PER_IP")
                 .ok()
@@ -354,6 +364,8 @@ impl Default for AppConfig {
             websocket_outbound_queue_cap: 16,
             websocket_slow_client_disconnect_ms: 200,
             websocket_write_timeout_ms: 200,
+            runtime_auto_advance_enabled: true,
+            runtime_auto_advance_tick_ms: 250,
             // Rate limiting defaults based on spec recommendations
             rate_limit_login_per_ip: 10,
             rate_limit_login_per_ip_window_secs: 60,

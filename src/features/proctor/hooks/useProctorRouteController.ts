@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { useAsyncPolling } from '@app/hooks/useAsyncPolling';
+import { useLiveUpdates, type LiveUpdateEvent } from '@app/hooks/useLiveUpdates';
 import {
   backendGet,
   mapBackendRuntime,
@@ -340,6 +341,15 @@ export function useProctorRouteController(): ProctorRouteController {
       throw loadError;
     }
   }, [loadMonitoringState]);
+
+  const handleLiveUpdate = useCallback(
+    (_event: LiveUpdateEvent) => {
+      void refresh();
+    },
+    [refresh],
+  );
+
+  useLiveUpdates({ onEvent: handleLiveUpdate });
 
   useEffect(() => {
     void refresh().finally(() => {
