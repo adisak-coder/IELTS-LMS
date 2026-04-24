@@ -55,6 +55,16 @@ interface BackendStudentAttempt {
   writingAnswers?: StudentAttempt['writingAnswers'] | null | undefined;
   flags?: StudentAttempt['flags'] | null | undefined;
   violationsSnapshot?: StudentAttempt['violations'] | null | undefined;
+  finalSubmission?:
+    | {
+        submissionId?: string | null | undefined;
+        submittedAt?: string | null | undefined;
+        answers?: StudentAttempt['answers'] | null | undefined;
+        writingAnswers?: StudentAttempt['writingAnswers'] | null | undefined;
+        flags?: StudentAttempt['flags'] | null | undefined;
+      }
+    | null
+    | undefined;
   submittedAt?: string | null | undefined;
   integrity?: Partial<StudentAttempt['integrity']> | null | undefined;
   recovery?: Partial<StudentAttempt['recovery']> | null | undefined;
@@ -412,6 +422,12 @@ function mutationWatermarkKey(attemptId: string, clientSessionId: string): strin
 export function mapBackendStudentAttempt(payload: BackendStudentAttempt): StudentAttempt {
   rememberAttemptSchedule(payload.id, payload.scheduleId);
 
+  // Backend may omit `answers`/`writingAnswers`/`flags` after submission and only return them
+  // nested under `finalSubmission`. The UI still needs these values for completion summary.
+  const answers = payload.answers ?? payload.finalSubmission?.answers ?? {};
+  const writingAnswers = payload.writingAnswers ?? payload.finalSubmission?.writingAnswers ?? {};
+  const flags = payload.flags ?? payload.finalSubmission?.flags ?? {};
+
   return normalizeStudentAttempt({
     id: payload.id,
     scheduleId: payload.scheduleId,
@@ -424,9 +440,9 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
     phase: payload.phase,
     currentModule: payload.currentModule,
     currentQuestionId: payload.currentQuestionId ?? null,
-    answers: payload.answers ?? {},
-    writingAnswers: payload.writingAnswers ?? {},
-    flags: payload.flags ?? {},
+    answers,
+    writingAnswers,
+    flags,
     violations: payload.violationsSnapshot ?? [],
     submittedAt: payload.submittedAt ?? null,
     proctorStatus: 'active',

@@ -19,6 +19,7 @@ import { StudentSpeaking } from './StudentSpeaking';
 import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
+import { getFullscreenElement, requestStudentFullscreen } from './fullscreen';
 import { shouldOfferTimeExtension } from './timeExtensionPolicy';
 import { useStudentAttempt } from './providers/StudentAttemptProvider';
 import { useStudentRuntime } from './providers/StudentRuntimeProvider';
@@ -107,18 +108,6 @@ function formatRuntimeTime(seconds: number) {
   const minutes = Math.floor(safeSeconds / 60);
   const remainingSeconds = safeSeconds % 60;
   return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
-}
-
-function getFullscreenElement() {
-  return (
-    document.fullscreenElement ??
-    (
-      document as Document & {
-        webkitFullscreenElement?: Element | null;
-      }
-    ).webkitFullscreenElement ??
-    null
-  );
 }
 
 export function StudentApp() {
@@ -415,24 +404,45 @@ export function StudentApp() {
     }
   }, [isFullscreen]);
 
+  useEffect(() => {
+    if (effectivePhase !== 'exam') {
+      return;
+    }
+
+    const root = document.documentElement;
+    const body = document.body;
+
+    const updateViewportHeight = () => {
+      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+      root.style.setProperty('--student-viewport-height', `${Math.round(viewportHeight)}px`);
+    };
+
+    updateViewportHeight();
+    root.classList.add('student-exam-active');
+    body.classList.add('student-exam-active');
+    window.addEventListener('resize', updateViewportHeight);
+    window.addEventListener('orientationchange', updateViewportHeight);
+    window.visualViewport?.addEventListener('resize', updateViewportHeight);
+    window.visualViewport?.addEventListener('scroll', updateViewportHeight);
+
+    return () => {
+      root.classList.remove('student-exam-active');
+      body.classList.remove('student-exam-active');
+      root.style.removeProperty('--student-viewport-height');
+      window.removeEventListener('resize', updateViewportHeight);
+      window.removeEventListener('orientationchange', updateViewportHeight);
+      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
+      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+    };
+  }, [effectivePhase]);
+
   const requestFullscreenFromOverlay = useMemo(() => {
     return {
       label: 'Return to Fullscreen',
       onClick: () => {
-        try {
-          if (document.documentElement.requestFullscreen) {
-            void document.documentElement.requestFullscreen();
-            return;
-          }
-
-          void (
-            document.documentElement as HTMLElement & {
-              webkitRequestFullscreen?: () => Promise<void> | void;
-            }
-          ).webkitRequestFullscreen?.();
-        } catch {
+        void requestStudentFullscreen().catch(() => {
           // Best-effort only.
-        }
+        });
       },
     };
   }, []);
@@ -842,10 +852,11 @@ export function StudentApp() {
 
   return (
     <div
-      className={`flex flex-col h-screen w-full bg-gray-50 font-sans text-gray-900 transition-all ${
+      className={`student-exam-shell flex flex-col h-screen w-full bg-gray-50 font-sans text-gray-900 transition-all ${
         uiState.accessibilitySettings.highContrast ? 'high-contrast' : ''
       }`}
       style={{
+        height: 'var(--student-viewport-height, 100dvh)',
         fontSize:
           uiState.accessibilitySettings.fontSize === 'small'
             ? '14px'

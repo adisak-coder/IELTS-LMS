@@ -13,6 +13,7 @@ import type {
 } from '../../types/studentAttempt';
 import { Button } from '../ui/Button';
 import { LoadingMark, SrLoadingText } from '../ui/LoadingMark';
+import { isAppleMobileDevice } from './fullscreen';
 
 interface PreCheckProps {
   config?: ExamConfig | undefined;
@@ -30,7 +31,7 @@ interface CheckItem extends StudentPreCheckCheckResult {
 }
 
 function detectBrowser(userAgent: string): BrowserInfo {
-  const chromeMatch = userAgent.match(/Chrome\/(\d+)/i);
+  const chromeMatch = userAgent.match(/(?:Chrome|CriOS)\/(\d+)/i);
   if (chromeMatch && !/Edg\//i.test(userAgent)) {
     return {
       family: 'chrome',
@@ -38,7 +39,7 @@ function detectBrowser(userAgent: string): BrowserInfo {
     };
   }
 
-  const edgeMatch = userAgent.match(/Edg\/(\d+)/i);
+  const edgeMatch = userAgent.match(/(?:Edg|EdgiOS)\/(\d+)/i);
   if (edgeMatch) {
     return {
       family: 'edge',
@@ -73,8 +74,7 @@ function isMobileDevice(userAgent: string): boolean {
     return true;
   }
 
-  // iPadOS 13+ can identify as "Macintosh" but includes "Mobile"
-  if (/Macintosh/i.test(userAgent) && /Mobile/i.test(userAgent)) {
+  if (isAppleMobileDevice(userAgent)) {
     return true;
   }
 
@@ -99,6 +99,7 @@ function runChecks(config?: ExamConfig): StudentPreCheckResult {
   const userAgent = navigator.userAgent;
   const browser = detectBrowser(userAgent);
   const mobileDevice = isMobileDevice(userAgent);
+  const appleMobileDevice = isAppleMobileDevice(userAgent);
   const policy = getStudentIntegritySecurityPolicy(config);
   const fullscreenRequired = config?.security.requireFullscreen ?? false;
   const fullscreenSupported =
@@ -114,7 +115,7 @@ function runChecks(config?: ExamConfig): StudentPreCheckResult {
   const secureModeEnabled = Boolean(
     config?.security.requireFullscreen || config?.security.detectSecondaryScreen,
   );
-  const mobileAllowed = !secureModeEnabled;
+  const mobileAllowed = !secureModeEnabled || appleMobileDevice;
   const mobileCompatibilityOk = !mobileDevice || mobileAllowed;
 
   const browserSupported =
@@ -128,8 +129,12 @@ function runChecks(config?: ExamConfig): StudentPreCheckResult {
     id: 'browser',
     label: 'Browser compatibility',
     message: browserSupported
-      ? `${browser.family.toUpperCase()} ${browser.version ?? ''}`.trim()
-      : mobileDevice && !mobileAllowed
+      ? appleMobileDevice && secureModeEnabled
+        ? 'iPad secure mode is best-effort; fullscreen may need to be restored after typing or scrolling.'
+        : `${browser.family.toUpperCase()} ${browser.version ?? ''}`.trim()
+      : appleMobileDevice && secureModeEnabled
+        ? 'iPad secure mode is best-effort; fullscreen may need to be restored after typing or scrolling.'
+        : mobileDevice && !mobileAllowed
         ? 'Mobile/iPad is supported only in non-secure mode. Disable fullscreen and secondary screen detection, or use a computer.'
         : 'Use Chrome 111+, Edge, Safari, or Firefox.',
     required: true,

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { studentAttemptRepository } from '../studentAttemptRepository';
+import { mapBackendStudentAttempt, studentAttemptRepository } from '../studentAttemptRepository';
 import type { StudentAttemptMutation } from '../../types/studentAttempt';
 
 const originalFetch = global.fetch;
@@ -205,6 +205,29 @@ describe('studentAttemptRepository backend mode', () => {
 
     const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
     expect(cachedAttempts).toEqual([expect.objectContaining({ id: 'attempt-1' })]);
+  });
+
+  it('hydrates answers from finalSubmission when backend omits answers', () => {
+    const mapped = mapBackendStudentAttempt(
+      buildBackendAttempt({
+        phase: 'post-exam',
+        answers: null,
+        writingAnswers: null,
+        flags: null,
+        finalSubmission: {
+          submissionId: 'submission-1',
+          submittedAt: '2026-01-01T10:00:00.000Z',
+          answers: { q1: 'A' },
+          writingAnswers: { task1: '<p>Draft</p>' },
+          flags: { q1: true },
+        },
+        submittedAt: '2026-01-01T10:00:00.000Z',
+      }),
+    );
+
+    expect(mapped.answers).toEqual({ q1: 'A' });
+    expect(mapped.writingAnswers).toEqual({ task1: '<p>Draft</p>' });
+    expect(mapped.flags).toEqual({ q1: true });
   });
 
   it('flushes pending mutations through the backend before saving the local cache', async () => {
