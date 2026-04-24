@@ -23,6 +23,7 @@ import type {
   StudentAnswerValue,
   StudentAttempt,
 } from '../../../types/studentAttempt';
+import { isRuntimeStructurallyCompleted } from './verifiedTerminalState';
 
 export type ExamPhase = 'pre-check' | 'lobby' | 'exam' | 'post-exam';
 export type StudentAnswer = QuestionAnswer;
@@ -53,6 +54,7 @@ interface RuntimeReducerState {
   fullscreenViolationCount: number;
   proctorStatus: StudentAttempt['proctorStatus'];
   proctorNote: string | null;
+  submittedAt: string | null;
   blockingReasonOverride: Exclude<
     BlockingReason,
     'cohort_paused' | 'not_started' | 'waiting_for_runtime' | 'waiting_for_advance' | null
@@ -73,6 +75,7 @@ interface RuntimeState extends RuntimeReducerState {
   displayTimeRemaining: number | undefined;
   runtimeBacked: boolean;
   runtimeStatus: RuntimeStatus | null;
+  runtimeSnapshot: ExamSessionRuntime | null;
   submitRequiresConfirmation: boolean;
 }
 
@@ -120,8 +123,18 @@ type RuntimeAction =
       nextQuestionId: string | null;
       snapshot: ExamSessionRuntime | null;
     }
-  | { type: 'hydrate_proctor'; snapshot: StudentAttempt }
-  | { type: 'hydrate_attempt'; snapshot: StudentAttempt }
+  | {
+      type: 'hydrate_proctor';
+      snapshot: StudentAttempt;
+      runtimeBacked: boolean;
+      runtimeSnapshot: ExamSessionRuntime | null;
+    }
+  | {
+      type: 'hydrate_attempt';
+      snapshot: StudentAttempt;
+      runtimeBacked: boolean;
+      runtimeSnapshot: ExamSessionRuntime | null;
+    }
   | { type: 'set_phase'; phase: ExamPhase }
   | { type: 'set_current_module'; module: ModuleType; firstQuestionId: string | null }
   | { type: 'set_current_question_id'; id: string | null }
@@ -136,6 +149,7 @@ type RuntimeAction =
       type: 'submit_module';
       runtimeBacked: boolean;
       runtimeStatus: RuntimeStatus | null;
+      runtimeStructurallyCompleted: boolean;
       nextModule: ModuleType | null;
       nextQuestionId: string | null;
       nextDurationSeconds: number;
@@ -246,11 +260,12 @@ function getInitialPhase(
   runtimeSnapshot: ExamSessionRuntime | null,
   attemptSnapshot: StudentAttempt | null,
 ): ExamPhase {
-  if (attemptSnapshot?.proctorStatus === 'terminated') {
-    return 'post-exam';
-  }
+  const verifiedTerminal =
+    attemptSnapshot?.proctorStatus === 'terminated' ||
+    Boolean(attemptSnapshot?.submittedAt) ||
+    isRuntimeStructurallyCompleted(runtimeSnapshot);
 
-  if (runtimeSnapshot?.status === 'completed') {
+  if (verifiedTerminal) {
     return 'post-exam';
   }
 
@@ -260,6 +275,15 @@ function getInitialPhase(
 
   if (runtimeBacked && !attemptSnapshot.integrity.preCheck?.completedAt) {
     return 'pre-check';
+  }
+
+  if (!runtimeBacked && attemptSnapshot.phase === 'post-exam') {
+    return 'post-exam';
+  }
+
+  // Guard against transient/incorrect post-exam phases until terminal state is verified.
+  if (attemptSnapshot.phase === 'post-exam') {
+    return 'exam';
   }
 
   return attemptSnapshot.phase;
@@ -295,6 +319,7 @@ function createInitialRuntimeState(
     fullscreenViolationCount: countFullscreenViolations(attemptSnapshot?.violations ?? []),
     proctorStatus: attemptSnapshot?.proctorStatus ?? 'active',
     proctorNote: attemptSnapshot?.proctorNote ?? null,
+    submittedAt: attemptSnapshot?.submittedAt ?? null,
     blockingReasonOverride: null,
     attemptSyncState: attemptSnapshot?.recovery.syncState ?? 'idle',
   };
@@ -339,12 +364,18 @@ function runtimeReducer(
     case 'hydrate_runtime': {
       const runtimeStatus = action.snapshot?.status ?? 'not_started';
       const moduleChanged = action.nextModule !== state.currentModule;
+      const terminalVerified =
+        state.proctorStatus === 'terminated' ||
+        Boolean(state.submittedAt) ||
+        isRuntimeStructurallyCompleted(action.snapshot);
       const nextPhase =
-        state.proctorStatus === 'terminated' || runtimeStatus === 'completed'
+        terminalVerified
           ? 'post-exam'
           : state.phase === 'pre-check'
             ? 'pre-check'
-            : 'exam';
+            : state.phase === 'lobby'
+              ? 'lobby'
+              : 'exam';
       const nextQuestionId = moduleChanged ? action.nextQuestionId : state.currentQuestionId;
       const snapshotTimeRemaining = action.snapshot?.currentSectionRemainingSeconds;
       const resolvedSnapshotTimeRemaining = snapshotTimeRemaining ?? state.timeRemaining;
@@ -362,7 +393,7 @@ function runtimeReducer(
               ? snapshotTimeRemaining
               : state.timeRemaining;
       const nextWaitingForCohortAdvance =
-        state.waitingForCohortAdvance && !moduleChanged && runtimeStatus !== 'completed';
+        state.waitingForCohortAdvance && !moduleChanged && !terminalVerified;
 
       if (
         state.phase === nextPhase &&
@@ -387,15 +418,27 @@ function runtimeReducer(
       const nextProctorStatus = action.snapshot.proctorStatus;
       const nextProctorNote = action.snapshot.proctorNote ?? null;
       const mergedViolations = mergeViolations(action.snapshot.violations, state.violations);
+      const nextSubmittedAt = state.submittedAt ?? action.snapshot.submittedAt ?? null;
+      const terminalVerified =
+        nextProctorStatus === 'terminated' ||
+        Boolean(nextSubmittedAt) ||
+        isRuntimeStructurallyCompleted(action.runtimeSnapshot);
       const nextPhase =
-        nextProctorStatus === 'terminated' || action.snapshot.phase === 'post-exam'
+        terminalVerified
           ? 'post-exam'
-          : state.phase;
+          : action.snapshot.phase === 'post-exam'
+            ? action.runtimeBacked
+              ? state.phase === 'pre-check'
+                ? 'pre-check'
+                : 'exam'
+              : 'post-exam'
+            : state.phase;
 
       if (
         state.phase === nextPhase &&
         state.proctorStatus === nextProctorStatus &&
         state.proctorNote === nextProctorNote &&
+        state.submittedAt === nextSubmittedAt &&
         JSON.stringify(state.violations) === JSON.stringify(mergedViolations)
       ) {
         return state;
@@ -408,12 +451,23 @@ function runtimeReducer(
         fullscreenViolationCount: countFullscreenViolations(mergedViolations),
         proctorStatus: nextProctorStatus,
         proctorNote: nextProctorNote,
+        submittedAt: nextSubmittedAt,
       };
     }
     case 'hydrate_attempt': {
-      const nextPhase =
-        action.snapshot.proctorStatus === 'terminated'
-          ? 'post-exam'
+      const nextSubmittedAt = state.submittedAt ?? action.snapshot.submittedAt ?? null;
+      const terminalVerified =
+        action.snapshot.proctorStatus === 'terminated' ||
+        Boolean(nextSubmittedAt) ||
+        isRuntimeStructurallyCompleted(action.runtimeSnapshot);
+      const nextPhase = terminalVerified
+        ? 'post-exam'
+        : action.snapshot.phase === 'post-exam'
+          ? action.runtimeBacked
+            ? state.phase === 'pre-check'
+              ? 'pre-check'
+              : 'exam'
+            : 'post-exam'
           : action.snapshot.phase;
       const mergedViolations = mergeViolations(action.snapshot.violations, state.violations);
 
@@ -427,6 +481,7 @@ function runtimeReducer(
         JSON.stringify(state.violations) === JSON.stringify(mergedViolations) &&
         state.proctorStatus === action.snapshot.proctorStatus &&
         state.proctorNote === action.snapshot.proctorNote &&
+        state.submittedAt === nextSubmittedAt &&
         state.attemptSyncState === action.snapshot.recovery.syncState
       ) {
         return state;
@@ -444,6 +499,7 @@ function runtimeReducer(
         fullscreenViolationCount: countFullscreenViolations(mergedViolations),
         proctorStatus: action.snapshot.proctorStatus,
         proctorNote: action.snapshot.proctorNote,
+        submittedAt: nextSubmittedAt,
         attemptSyncState: action.snapshot.recovery.syncState,
       };
     }
@@ -514,7 +570,12 @@ function runtimeReducer(
       };
     case 'submit_module': {
       if (action.runtimeBacked) {
-        return action.runtimeStatus === 'completed'
+        const terminalVerified =
+          state.proctorStatus === 'terminated' ||
+          Boolean(state.submittedAt) ||
+          action.runtimeStructurallyCompleted;
+
+        return terminalVerified && action.runtimeStatus === 'completed'
           ? {
               ...state,
               phase: 'post-exam',
@@ -623,6 +684,7 @@ export function StudentRuntimeProvider({
       attemptSnapshot.proctorNote ?? '',
       attemptSnapshot.lastWarningId ?? '',
       attemptSnapshot.lastAcknowledgedWarningId ?? '',
+      attemptSnapshot.submittedAt ?? '',
       String(attemptSnapshot.violations.length),
     ].join(':');
 
@@ -634,11 +696,13 @@ export function StudentRuntimeProvider({
     dispatch({
       type: 'hydrate_proctor',
       snapshot: attemptSnapshot,
+      runtimeBacked,
+      runtimeSnapshot,
     });
-  }, [attemptSnapshot]);
+  }, [attemptSnapshot, runtimeBacked, runtimeSnapshot]);
 
   useEffect(() => {
-    if (!attemptSnapshot || runtimeState.phase === 'post-exam') {
+    if (!attemptSnapshot) {
       return;
     }
 
@@ -658,8 +722,10 @@ export function StudentRuntimeProvider({
     dispatch({
       type: 'hydrate_attempt',
       snapshot: attemptSnapshot,
+      runtimeBacked,
+      runtimeSnapshot,
     });
-  }, [attemptSnapshot, runtimeState.attemptSyncState, runtimeState.phase]);
+  }, [attemptSnapshot, runtimeBacked, runtimeSnapshot, runtimeState.attemptSyncState]);
 
   useEffect(() => {
     if (!runtimeBacked) {
@@ -850,11 +916,12 @@ export function StudentRuntimeProvider({
       type: 'submit_module',
       runtimeBacked,
       runtimeStatus,
+      runtimeStructurallyCompleted: isRuntimeStructurallyCompleted(runtimeSnapshot),
       nextModule,
       nextQuestionId: nextModule ? getFirstQuestionIdForModule(state, nextModule) : null,
       nextDurationSeconds: nextModule ? state.config.sections[nextModule].duration * 60 : 0,
     });
-  }, [enabledModules, runtimeBacked, runtimeState.currentModule, runtimeStatus, state]);
+  }, [enabledModules, runtimeBacked, runtimeSnapshot, runtimeState.currentModule, runtimeStatus, state]);
 
   const addViolation = useCallback((
     type: string,
@@ -894,6 +961,7 @@ export function StudentRuntimeProvider({
       displayTimeRemaining,
       runtimeBacked,
       runtimeStatus,
+      runtimeSnapshot: runtimeBacked ? runtimeSnapshot : null,
       submitRequiresConfirmation,
     },
     actions: {
@@ -926,6 +994,7 @@ export function StudentRuntimeProvider({
     onExit,
     resetElapsedTime,
     runtimeBacked,
+    runtimeSnapshot,
     runtimeState,
     runtimeStatus,
     setAnswer,

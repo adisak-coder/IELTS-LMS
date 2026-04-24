@@ -20,7 +20,7 @@ describe('Student completion summary', () => {
     vi.spyOn(studentAttemptRepository, 'getAttemptsByScheduleId').mockResolvedValue([]);
   });
 
-  it('shows answered/unanswered counts per enabled section', () => {
+  it('shows answered/unanswered counts per enabled section', async () => {
     const config = createDefaultConfig('Academic', 'Academic');
     config.security.requireFullscreen = false;
     config.security.detectSecondaryScreen = false;
@@ -118,6 +118,7 @@ describe('Student completion summary', () => {
       proctorUpdatedBy: null,
       lastWarningId: null,
       lastAcknowledgedWarningId: null,
+      submittedAt: '2026-01-01T01:23:45.000Z',
       integrity: {
         preCheck: null,
         deviceFingerprintHash: null,
@@ -142,7 +143,7 @@ describe('Student completion summary', () => {
 
     render(<StudentAppWrapper state={state} onExit={() => {}} attemptSnapshot={attemptSnapshot} />);
 
-    expect(screen.getByText(/Examination Complete/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Examination Complete/i)).toBeInTheDocument();
     const readingRow = screen.getByText('Reading').parentElement?.parentElement;
     expect(readingRow).toBeTruthy();
     expect(readingRow).toHaveTextContent('1 answered');

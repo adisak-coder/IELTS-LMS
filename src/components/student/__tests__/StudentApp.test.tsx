@@ -88,6 +88,237 @@ describe('StudentApp runtime-backed mode', () => {
     expect(container).toBeInTheDocument();
   });
 
+  it('does not render the completion screen when attempt phase is post-exam but terminal is unverified (fullscreen exit regression)', async () => {
+    vi.useFakeTimers();
+
+    const runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: 'sched-1',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'writing',
+      currentSectionKey: 'writing',
+      currentSectionRemainingSeconds: 300,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'writing',
+          label: 'Writing',
+          order: 1,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'post-exam',
+      currentModule: 'writing',
+      currentQuestionId: 'task-1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [
+        {
+          id: 'violation-1',
+          type: 'FULLSCREEN_EXIT',
+          severity: 'high',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          description: 'Fullscreen exited',
+        },
+      ],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      submittedAt: null,
+      integrity: {
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: false,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        lastDroppedMutations: null,
+        pendingMutationCount: 0,
+        serverAcceptedThroughSeq: 0,
+        clientSessionId: null,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    render(
+      <StudentAppWrapper
+        state={state}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={runtimeSnapshot}
+      />,
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(250);
+    });
+
+    expect(screen.queryByText(/Examination Complete!/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/Fullscreen exited/i)).toBeInTheDocument();
+
+    vi.useRealTimers();
+  });
+
+  it('renders the completion screen when submittedAt is present (finished early while runtime live)', async () => {
+    const runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: 'sched-1',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'writing',
+      currentSectionKey: 'writing',
+      currentSectionRemainingSeconds: 300,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'writing',
+          label: 'Writing',
+          order: 1,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'writing',
+      currentQuestionId: 'task-1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      submittedAt: '2026-01-01T00:30:00.000Z',
+      integrity: {
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: false,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        lastDroppedMutations: null,
+        pendingMutationCount: 0,
+        serverAcceptedThroughSeq: 0,
+        clientSessionId: null,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    render(
+      <StudentAppWrapper
+        state={state}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={runtimeSnapshot}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/Examination Complete!/i)).toBeInTheDocument();
+    });
+  });
+
   it('locks the UI when Finish is clicked in runtime-backed mode', async () => {
     const user = userEvent.setup();
     window.sessionStorage.clear();

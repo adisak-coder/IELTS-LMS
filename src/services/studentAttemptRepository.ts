@@ -55,6 +55,7 @@ interface BackendStudentAttempt {
   writingAnswers?: StudentAttempt['writingAnswers'] | null | undefined;
   flags?: StudentAttempt['flags'] | null | undefined;
   violationsSnapshot?: StudentAttempt['violations'] | null | undefined;
+  submittedAt?: string | null | undefined;
   integrity?: Partial<StudentAttempt['integrity']> | null | undefined;
   recovery?: Partial<StudentAttempt['recovery']> | null | undefined;
   createdAt: string;
@@ -116,32 +117,129 @@ function generateUuid(): string {
   return `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`;
 }
 
-function getAttemptCredentialStorage(): StoredAttemptCredential[] {
-  if (typeof window === 'undefined') {
-    return [];
+function getBrowserStorage(type: 'localStorage' | 'sessionStorage'): Storage | null {
+  try {
+    const owner =
+      typeof window !== 'undefined'
+        ? (window as any)
+        : typeof globalThis !== 'undefined'
+          ? (globalThis as any)
+          : null;
+    const storage = owner?.[type] as Storage | undefined;
+    return storage ?? null;
+  } catch {
+    return null;
   }
+}
 
-  const raw = window.sessionStorage.getItem(STORAGE_KEY_ATTEMPT_CREDENTIALS);
+function parseAttemptCredentialStorage(raw: string | null): StoredAttemptCredential[] {
   if (!raw) {
     return [];
   }
 
   try {
-    return JSON.parse(raw) as StoredAttemptCredential[];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter((candidate): candidate is StoredAttemptCredential => {
+      if (!candidate || typeof candidate !== 'object') {
+        return false;
+      }
+      const record = candidate as Partial<StoredAttemptCredential>;
+      return (
+        typeof record.attemptId === 'string' &&
+        typeof record.scheduleId === 'string' &&
+        typeof record.attemptToken === 'string' &&
+        typeof record.expiresAt === 'string'
+      );
+    });
   } catch {
     return [];
   }
 }
 
-function setAttemptCredentialStorage(credentials: StoredAttemptCredential[]): void {
-  if (typeof window === 'undefined') {
-    return;
+function mergeAttemptCredentials(
+  localCredentials: StoredAttemptCredential[],
+  sessionCredentials: StoredAttemptCredential[],
+): StoredAttemptCredential[] {
+  const merged = new Map<string, StoredAttemptCredential>();
+
+  const upsert = (credential: StoredAttemptCredential) => {
+    const key = `${credential.scheduleId}:${credential.attemptId}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, credential);
+      return;
+    }
+
+    const existingExpires = Date.parse(existing.expiresAt);
+    const candidateExpires = Date.parse(credential.expiresAt);
+    if (!Number.isFinite(existingExpires) || candidateExpires > existingExpires) {
+      merged.set(key, credential);
+      return;
+    }
+
+    // If expiry timestamps are equal/unparseable, prefer the newer token payload.
+    if (existing.expiresAt === credential.expiresAt) {
+      merged.set(key, credential);
+    }
+  };
+
+  for (const credential of localCredentials) {
+    upsert(credential);
+  }
+  for (const credential of sessionCredentials) {
+    upsert(credential);
   }
 
-  window.sessionStorage.setItem(
-    STORAGE_KEY_ATTEMPT_CREDENTIALS,
-    JSON.stringify(credentials),
+  return [...merged.values()];
+}
+
+function getAttemptCredentialStorage(): StoredAttemptCredential[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  const local = getBrowserStorage('localStorage');
+  const session = getBrowserStorage('sessionStorage');
+
+  const localCredentials = parseAttemptCredentialStorage(
+    local?.getItem(STORAGE_KEY_ATTEMPT_CREDENTIALS) ?? null,
   );
+  const sessionCredentials = parseAttemptCredentialStorage(
+    session?.getItem(STORAGE_KEY_ATTEMPT_CREDENTIALS) ?? null,
+  );
+
+  const merged = mergeAttemptCredentials(localCredentials, sessionCredentials);
+  return merged;
+}
+
+function setAttemptCredentialStorage(credentials: StoredAttemptCredential[]): void {
+  const local = getBrowserStorage('localStorage');
+  const session = getBrowserStorage('sessionStorage');
+  const payload = JSON.stringify(credentials);
+
+  try {
+    local?.setItem(STORAGE_KEY_ATTEMPT_CREDENTIALS, payload);
+  } catch {
+    // ignore
+  }
+
+  try {
+    session?.setItem(STORAGE_KEY_ATTEMPT_CREDENTIALS, payload);
+  } catch {
+    // ignore
+  }
+}
+
+function clearAttemptCredential(attempt: Pick<StudentAttempt, 'id' | 'scheduleId'>): void {
+  const credentials = getAttemptCredentialStorage().filter(
+    (candidate) =>
+      !(candidate.attemptId === attempt.id && candidate.scheduleId === attempt.scheduleId),
+  );
+  setAttemptCredentialStorage(credentials);
 }
 
 function storeAttemptCredential(
@@ -168,12 +266,13 @@ function storeAttemptCredential(
 function loadAttemptCredential(
   attempt: Pick<StudentAttempt, 'id' | 'scheduleId'>,
 ): StoredAttemptCredential | null {
-  return (
+  const credential =
     getAttemptCredentialStorage().find(
       (candidate) =>
         candidate.attemptId === attempt.id && candidate.scheduleId === attempt.scheduleId,
-    ) ?? null
-  );
+    ) ?? null;
+
+  return credential;
 }
 
 function buildAttemptAuthorizationHeader(
@@ -248,17 +347,18 @@ function ensureClientSessionId(
   studentKey: string,
   preferredId?: string | null,
 ): string {
-  if (typeof window === 'undefined') {
+  const session = getBrowserStorage('sessionStorage');
+  if (!session) {
     return generateUuid();
   }
 
   const storageKey = getClientSessionStorageKey(scheduleId, studentKey);
-  const stored = window.sessionStorage.getItem(storageKey);
+  const stored = session.getItem(storageKey);
   const normalizedPreferred = preferredId?.trim() ?? '';
   if (stored && normalizedPreferred && stored !== normalizedPreferred) {
     // If the backend has recorded a clientSessionId for this attempt, treat it as authoritative
     // and override any stale/mismatched sessionStorage value to prevent mutation sequence drift.
-    window.sessionStorage.setItem(storageKey, normalizedPreferred);
+    session.setItem(storageKey, normalizedPreferred);
     return normalizedPreferred;
   }
 
@@ -267,12 +367,12 @@ function ensureClientSessionId(
   }
 
   if (normalizedPreferred) {
-    window.sessionStorage.setItem(storageKey, normalizedPreferred);
+    session.setItem(storageKey, normalizedPreferred);
     return normalizedPreferred;
   }
 
   const generated = generateUuid();
-  window.sessionStorage.setItem(storageKey, generated);
+  session.setItem(storageKey, generated);
   return generated;
 }
 
@@ -287,6 +387,7 @@ export function ensureClientSessionIdForAttempt(attempt: StudentAttempt): string
 export async function refreshAttemptCredentialForAttempt(attempt: StudentAttempt): Promise<boolean> {
   const clientSessionId = ensureClientSessionIdForAttempt(attempt);
   const query = new URLSearchParams({
+    candidateId: attempt.candidateId,
     refreshAttemptCredential: 'true',
     clientSessionId,
   });
@@ -327,6 +428,7 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
     writingAnswers: payload.writingAnswers ?? {},
     flags: payload.flags ?? {},
     violations: payload.violationsSnapshot ?? [],
+    submittedAt: payload.submittedAt ?? null,
     proctorStatus: 'active',
     proctorNote: null,
     proctorUpdatedAt: null,
@@ -931,7 +1033,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     );
 
     const submittedAttempt = mapBackendStudentAttempt(response.attempt);
-    storeAttemptCredential(attempt, response.refreshedAttemptCredential);
+    clearAttemptCredential(attempt);
     await this.cache.saveAttempt(submittedAttempt);
     await this.cache.clearPendingMutations(attempt.id);
     const clientSessionId = ensureClientSessionIdForAttempt(attempt);

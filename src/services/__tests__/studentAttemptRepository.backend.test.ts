@@ -482,13 +482,6 @@ describe('studentAttemptRepository backend mode', () => {
           degradedLiveMode: false,
         }),
       )
-      // refresh attempt credential after sessionStorage clear
-      .mockResolvedValueOnce(
-        jsonResponse({
-          attempt: buildBackendAttempt(),
-          attemptCredential: buildAttemptCredential('attempt-token-2'),
-        }),
-      )
       // mutation batch
       .mockImplementationOnce(async (_url: string, init?: RequestInit) => {
         lastMutationBatchBody = init?.body ? JSON.parse(String(init.body)) : null;

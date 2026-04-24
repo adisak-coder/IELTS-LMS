@@ -31,6 +31,62 @@ function isSafariBrowser() {
   return /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 }
 
+function isAppleMobileDevice(userAgent: string): boolean {
+  if (/(iPhone|iPad|iPod)/i.test(userAgent)) {
+    return true;
+  }
+
+  // iPadOS 13+ can identify as "Macintosh" but includes "Mobile"
+  if (/Macintosh/i.test(userAgent) && /Mobile/i.test(userAgent)) {
+    return true;
+  }
+
+  return false;
+}
+
+function isTextInputElement(element: Element | null): boolean {
+  if (!element) {
+    return false;
+  }
+
+  const tag = element.tagName?.toLowerCase?.() ?? '';
+  if (tag === 'textarea') {
+    return true;
+  }
+
+  if (tag === 'input') {
+    const type = (element as HTMLInputElement).type?.toLowerCase?.() ?? 'text';
+    const nonTextTypes = new Set([
+      'button',
+      'checkbox',
+      'color',
+      'date',
+      'datetime-local',
+      'file',
+      'hidden',
+      'image',
+      'month',
+      'radio',
+      'range',
+      'reset',
+      'submit',
+      'time',
+      'week',
+    ]);
+    return !nonTextTypes.has(type);
+  }
+
+  if ('isContentEditable' in element && Boolean((element as HTMLElement).isContentEditable)) {
+    return true;
+  }
+
+  return false;
+}
+
+function getViewportHeight(): number {
+  return window.visualViewport?.height ?? window.innerHeight;
+}
+
 function getFullscreenElement() {
   return (
     document.fullscreenElement ??
@@ -54,6 +110,7 @@ export function ProctoringProvider({
   const cooldownByTypeRef = useRef<Record<string, number>>({});
   const fullscreenReentryAttempts = useRef(0);
   const fullscreenEntryAttemptedRef = useRef(false);
+  const viewportBaselineHeightRef = useRef<number>(getViewportHeight());
   const defaultViolationCooldownMs = 5_000;
   const secondaryScreenViolationCooldownMs = 15_000;
   const screenDetailsUnsupportedRef = useRef(false);
@@ -377,12 +434,16 @@ export function ProctoringProvider({
     let lastTabSwitchTime = 0;
     let fullscreenReentryTimer: number | null = null;
     let secondaryScreenCheckTimer: number | null = null;
+    let fullscreenExitDeferTimer: number | null = null;
+    let fullscreenExitDeferStartedAt = 0;
     let closeSignalAt = 0;
 
     const closeSignalWindowMs = 1_000;
     const closeSignalDelayMs = 50;
     const tabSwitchDedupeWindowMs = 300;
     const secondaryScreenCheckIntervalMs = 3_000;
+    const fullscreenExitDeferCheckDelayMs = 400;
+    const fullscreenExitMaxDeferMs = 8_000;
 
     const recordCloseSignal = (eventType: string) => {
       if (runtimeState.phase !== 'exam') {
@@ -464,6 +525,32 @@ export function ProctoringProvider({
       recordCloseSignal('beforeunload');
     };
 
+    const isIosWebKit = isAppleMobileDevice(navigator.userAgent);
+
+    const clearFullscreenExitDefer = () => {
+      if (fullscreenExitDeferTimer) {
+        window.clearTimeout(fullscreenExitDeferTimer);
+        fullscreenExitDeferTimer = null;
+      }
+      fullscreenExitDeferStartedAt = 0;
+    };
+
+    const isKeyboardLikelyOpen = () => {
+      const baseline = viewportBaselineHeightRef.current;
+      const current = getViewportHeight();
+      const delta = baseline - current;
+      return delta > 140;
+    };
+
+    const shouldDeferFullscreenExit = () => {
+      if (!isIosWebKit) {
+        return false;
+      }
+
+      const focusedTextInput = isTextInputElement(document.activeElement);
+      return focusedTextInput || isKeyboardLikelyOpen();
+    };
+
     const handleFullscreenChange = async () => {
       if (runtimeState.phase !== 'exam' || !config.security.requireFullscreen) {
         return;
@@ -471,6 +558,40 @@ export function ProctoringProvider({
 
       if (getFullscreenElement()) {
         fullscreenReentryAttempts.current = 0;
+        clearFullscreenExitDefer();
+        const currentHeight = getViewportHeight();
+        viewportBaselineHeightRef.current = Math.max(viewportBaselineHeightRef.current, currentHeight);
+        return;
+      }
+
+      if (shouldDeferFullscreenExit()) {
+        if (!fullscreenExitDeferStartedAt) {
+          fullscreenExitDeferStartedAt = Date.now();
+        }
+
+        if (fullscreenExitDeferTimer) {
+          window.clearTimeout(fullscreenExitDeferTimer);
+        }
+
+        fullscreenExitDeferTimer = window.setTimeout(() => {
+          fullscreenExitDeferTimer = null;
+
+          if (getFullscreenElement()) {
+            clearFullscreenExitDefer();
+            return;
+          }
+
+          const elapsed = Date.now() - fullscreenExitDeferStartedAt;
+          if (shouldDeferFullscreenExit() && elapsed < fullscreenExitMaxDeferMs) {
+            // Keep deferring until the keyboard/focus settles or we hit the cap.
+            void handleFullscreenChange();
+            return;
+          }
+
+          clearFullscreenExitDefer();
+          void handleFullscreenChange();
+        }, fullscreenExitDeferCheckDelayMs);
+
         return;
       }
 
@@ -529,11 +650,42 @@ export function ProctoringProvider({
       await attemptReentry(0);
     };
 
+    const handleFocusOut = () => {
+      if (runtimeState.phase !== 'exam' || !config.security.requireFullscreen) {
+        return;
+      }
+
+      if (fullscreenExitDeferStartedAt) {
+        void handleFullscreenChange();
+      }
+    };
+
+    const handleViewportResize = () => {
+      if (!isIosWebKit) {
+        return;
+      }
+
+      const currentHeight = getViewportHeight();
+      if (!isTextInputElement(document.activeElement) && currentHeight > viewportBaselineHeightRef.current) {
+        viewportBaselineHeightRef.current = currentHeight;
+      }
+
+      if (fullscreenExitDeferStartedAt && !isKeyboardLikelyOpen()) {
+        void handleFullscreenChange();
+      }
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('blur', handleBlur);
     window.addEventListener('pagehide', handlePageHide);
     window.addEventListener('beforeunload', handleBeforeUnload);
     document.addEventListener('fullscreenchange', handleFullscreenChange);
+    document.addEventListener(
+      'webkitfullscreenchange' as unknown as 'fullscreenchange',
+      handleFullscreenChange,
+    );
+    document.addEventListener('focusout', handleFocusOut, true);
+    window.visualViewport?.addEventListener('resize', handleViewportResize);
 
     if (runtimeState.phase === 'exam' && config.security.detectSecondaryScreen) {
       secondaryScreenCheckTimer = window.setInterval(() => {
@@ -547,11 +699,20 @@ export function ProctoringProvider({
       window.removeEventListener('pagehide', handlePageHide);
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      document.removeEventListener(
+        'webkitfullscreenchange' as unknown as 'fullscreenchange',
+        handleFullscreenChange,
+      );
+      document.removeEventListener('focusout', handleFocusOut, true);
+      window.visualViewport?.removeEventListener('resize', handleViewportResize);
       if (tabSwitchDebounceTimer) {
         window.clearTimeout(tabSwitchDebounceTimer);
       }
       if (fullscreenReentryTimer) {
         window.clearTimeout(fullscreenReentryTimer);
+      }
+      if (fullscreenExitDeferTimer) {
+        window.clearTimeout(fullscreenExitDeferTimer);
       }
       if (secondaryScreenCheckTimer) {
         window.clearInterval(secondaryScreenCheckTimer);

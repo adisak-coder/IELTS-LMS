@@ -5,6 +5,7 @@ import { createDefaultConfig } from '../../../../constants/examDefaults';
 import * as studentAttemptRepoModule from '../../../../services/studentAttemptRepository';
 import { studentAttemptRepository } from '../../../../services/studentAttemptRepository';
 import type { ExamState } from '../../../../types';
+import type { ExamSessionRuntime } from '../../../../types/domain';
 import type { StudentAttempt, StudentAttemptMutation } from '../../../../types/studentAttempt';
 import { StudentAttemptProvider, useStudentAttempt } from '../StudentAttemptProvider';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
@@ -279,6 +280,110 @@ describe('StudentAttemptProvider', () => {
         },
       ],
     });
+  });
+
+  it('does not persist an unverified post-exam phase in runtime-backed mode', async () => {
+    vi.useFakeTimers();
+
+    const attemptSnapshot: StudentAttempt = {
+      ...createAttemptSnapshot(),
+      integrity: {
+        ...createAttemptSnapshot().integrity,
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: true,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+      },
+    };
+
+    const runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: attemptSnapshot.scheduleId,
+      examId: attemptSnapshot.examId,
+      examTitle: attemptSnapshot.examTitle,
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'reading',
+      currentSectionKey: 'reading',
+      currentSectionRemainingSeconds: 120,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'reading',
+          label: 'Reading',
+          order: 0,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const wrapperRuntimeBacked = ({ children }: { children: React.ReactNode }) => {
+      const state = createExamState();
+      return (
+        <StudentRuntimeProvider
+          state={state}
+          onExit={vi.fn()}
+          runtimeBacked
+          runtimeSnapshot={runtimeSnapshot}
+          attemptSnapshot={attemptSnapshot}
+        >
+          <StudentAttemptProvider
+            scheduleId={attemptSnapshot.scheduleId}
+            attemptSnapshot={attemptSnapshot}
+          >
+            {children}
+          </StudentAttemptProvider>
+        </StudentRuntimeProvider>
+      );
+    };
+
+    const { result } = renderHook(
+      () => ({
+        attempt: useStudentAttempt(),
+        runtime: useStudentRuntime(),
+      }),
+      { wrapper: wrapperRuntimeBacked },
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    vi.mocked(studentAttemptRepository.saveAttempt).mockClear();
+
+    act(() => {
+      result.current.runtime.actions.setPhase('post-exam');
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+
+    expect(studentAttemptRepository.saveAttempt).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it('coalesces writing answer mutations by task id to avoid unbounded growth', async () => {

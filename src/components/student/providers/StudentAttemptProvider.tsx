@@ -29,6 +29,7 @@ import type {
   StudentPreCheckResult,
 } from '../../../types/studentAttempt';
 import { useStudentRuntime } from './StudentRuntimeProvider';
+import { isVerifiedTerminalStudentState } from './verifiedTerminalState';
 
 interface StudentAttemptState {
   attempt: StudentAttempt | null;
@@ -425,7 +426,10 @@ export function StudentAttemptProvider({
 
       const mergedAttempt = mergeAttempt(currentAttempt, {
         phase:
-          attemptSnapshot.proctorStatus === 'terminated' || attemptSnapshot.phase === 'post-exam'
+          isVerifiedTerminalStudentState({
+            attempt: attemptSnapshot,
+            runtimeSnapshot: runtimeState.runtimeSnapshot,
+          }) !== 'not_terminal'
             ? 'post-exam'
             : currentAttempt.phase,
         proctorStatus: attemptSnapshot.proctorStatus,
@@ -538,7 +542,7 @@ export function StudentAttemptProvider({
     return () => {
       cancelled = true;
     };
-  }, [attemptSnapshot, flushPending, setRuntimeAttemptSyncState]);
+  }, [attemptSnapshot, flushPending, runtimeState.runtimeSnapshot, setRuntimeAttemptSyncState]);
 
   useEffect(() => {
     const currentAttempt = attemptRef.current;
@@ -546,13 +550,24 @@ export function StudentAttemptProvider({
       return;
     }
 
+    const verifiedTerminalState = isVerifiedTerminalStudentState({
+      attempt: currentAttempt,
+      runtimeSnapshot: runtimeState.runtimeSnapshot,
+    });
+    const effectivePhase =
+      runtimeState.runtimeBacked &&
+      runtimeState.phase === 'post-exam' &&
+      verifiedTerminalState === 'not_terminal'
+        ? 'exam'
+        : runtimeState.phase;
+
     const nextObserved: ObservedSnapshot = {
       answers: JSON.stringify(runtimeState.answers),
       writingAnswers: JSON.stringify(runtimeState.writingAnswers),
       flags: JSON.stringify(runtimeState.flags),
       violations: JSON.stringify(runtimeState.violations),
       position: JSON.stringify({
-        phase: runtimeState.phase,
+        phase: effectivePhase,
         currentModule: runtimeState.currentModule,
         currentQuestionId: runtimeState.currentQuestionId,
       }),
@@ -565,7 +580,7 @@ export function StudentAttemptProvider({
     }
 
     if (nextObserved.position !== observedRef.current.position) {
-      objectivePatch.phase = runtimeState.phase;
+      objectivePatch.phase = effectivePhase;
       objectivePatch.currentModule = runtimeState.currentModule;
       objectivePatch.currentQuestionId = runtimeState.currentQuestionId;
     }
@@ -580,7 +595,7 @@ export function StudentAttemptProvider({
     if (nextObserved.position !== observedRef.current.position) {
       void applyPatch(objectivePatch, 'position', 400, {
         changedAreas: ['position'],
-        phase: runtimeState.phase,
+        phase: effectivePhase,
         currentModule: runtimeState.currentModule,
         currentQuestionId: runtimeState.currentQuestionId,
       });
@@ -596,6 +611,8 @@ export function StudentAttemptProvider({
     runtimeState.phase,
     runtimeState.violations,
     runtimeState.writingAnswers,
+    runtimeState.runtimeBacked,
+    runtimeState.runtimeSnapshot,
   ]);
 
   useEffect(() => {
