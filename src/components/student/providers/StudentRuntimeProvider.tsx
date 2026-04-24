@@ -122,6 +122,7 @@ type RuntimeAction =
       nextModule: ModuleType;
       nextQuestionId: string | null;
       snapshot: ExamSessionRuntime | null;
+      preserveLocalAdvance?: boolean;
     }
   | {
       type: 'hydrate_proctor';
@@ -366,12 +367,14 @@ function runtimeReducer(
 ): RuntimeReducerState {
   switch (action.type) {
     case 'hydrate_runtime': {
-      const runtimeStatus = action.snapshot?.status ?? 'not_started';
       const moduleChanged = action.nextModule !== state.currentModule;
       const terminalVerified =
         state.proctorStatus === 'terminated' ||
         Boolean(state.submittedAt) ||
         isRuntimeStructurallyCompleted(action.snapshot);
+      if (action.preserveLocalAdvance && !terminalVerified) {
+        return state;
+      }
       const nextPhase =
         terminalVerified
           ? 'post-exam'
@@ -577,16 +580,34 @@ function runtimeReducer(
           Boolean(state.submittedAt) ||
           action.runtimeStructurallyCompleted;
 
-        return terminalVerified && action.runtimeStatus === 'completed'
-          ? {
-              ...state,
-              phase: 'post-exam',
-              waitingForCohortAdvance: false,
-            }
-          : {
-              ...state,
-              waitingForCohortAdvance: true,
-            };
+        if (terminalVerified && action.runtimeStatus === 'completed') {
+          return {
+            ...state,
+            phase: 'post-exam',
+            waitingForCohortAdvance: false,
+          };
+        }
+
+        if (!action.nextModule) {
+          return {
+            ...state,
+            phase: 'post-exam',
+            currentModule: state.currentModule,
+            currentQuestionId: null,
+            submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
+            waitingForCohortAdvance: false,
+          };
+        }
+
+        return {
+          ...state,
+          currentModule: action.nextModule,
+          currentQuestionId: action.nextQuestionId,
+          timeRemaining: action.nextDurationSeconds,
+          elapsedTime: 0,
+          submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
+          waitingForCohortAdvance: false,
+        };
       }
 
       if (!action.nextModule) {
@@ -743,13 +764,30 @@ export function StudentRuntimeProvider({
 
     const nextModule =
       runtimeSnapshot?.currentSectionKey ?? enabledModules[0] ?? runtimeState.currentModule;
+    const latestSubmittedModule = runtimeState.submittedModules[runtimeState.submittedModules.length - 1] ?? null;
+    const submittedIndex =
+      latestSubmittedModule !== null ? enabledModules.indexOf(latestSubmittedModule) : -1;
+    const expectedLocalModule =
+      submittedIndex >= 0 ? enabledModules[submittedIndex + 1] ?? null : null;
+    const preserveLocalAdvance =
+      latestSubmittedModule !== null &&
+      runtimeSnapshot?.currentSectionKey === latestSubmittedModule &&
+      runtimeState.currentModule === expectedLocalModule;
     dispatch({
       type: 'hydrate_runtime',
       nextModule,
       nextQuestionId: getFirstQuestionIdForModule(state, nextModule),
       snapshot: runtimeSnapshot,
+      preserveLocalAdvance,
     });
-  }, [enabledModules, runtimeBacked, runtimeSnapshot, runtimeState.currentModule, state]);
+  }, [
+    enabledModules,
+    runtimeBacked,
+    runtimeSnapshot,
+    runtimeState.currentModule,
+    runtimeState.submittedModules,
+    state,
+  ]);
 
   useEffect(() => {
     if (

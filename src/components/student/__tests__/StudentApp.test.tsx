@@ -656,7 +656,7 @@ describe('StudentApp runtime-backed mode', () => {
     await user.click(screen.getByRole('button', { name: 'Finish' }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Waiting for cohort advance/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Waiting for cohort advance/i)).not.toBeInTheDocument();
     });
 
     expect(submitAttempt).not.toHaveBeenCalled();
@@ -945,7 +945,7 @@ describe('StudentApp runtime-backed mode', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Waiting for cohort advance/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Waiting for cohort advance/i)).not.toBeInTheDocument();
     });
 
     expect(screen.queryByText(/Examination Complete!/i)).not.toBeInTheDocument();
@@ -1065,7 +1065,7 @@ describe('StudentApp runtime-backed mode', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText(/Waiting for cohort advance/i)).toBeInTheDocument();
+      expect(screen.queryByText(/Waiting for cohort advance/i)).not.toBeInTheDocument();
     });
   });
 
@@ -1256,7 +1256,7 @@ describe('StudentApp runtime-backed mode', () => {
     });
 
     expect(saveAttempt).toHaveBeenCalled();
-    expect(screen.getByText(/Waiting for cohort advance/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for cohort advance/i)).not.toBeInTheDocument();
 
     vi.useRealTimers();
   });

@@ -47,21 +47,8 @@ function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['
         contextLabel: 'Cohort Runtime',
       };
     case 'waiting_for_advance':
-      return {
-        title: 'Waiting for cohort advance',
-        message:
-          'Your section is locked until the cohort advances.',
-        badge: 'Locked',
-        contextLabel: 'Cohort Runtime',
-      };
     case 'waiting_for_runtime':
-      return {
-        title: 'Waiting for cohort advance',
-        message:
-          'The next section will open when the cohort timing allows it.',
-        badge: 'Waiting',
-        contextLabel: 'Cohort Runtime',
-      };
+      return null;
     case 'offline':
       return {
         title: 'Connection lost',

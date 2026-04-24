@@ -606,6 +606,77 @@ describe('StudentRuntimeProvider - Violation Tracking', () => {
       expect(result.current.state.currentModule).toBe('reading');
       expect(result.current.state.currentQuestionId).toBe('reading-q1');
     });
+
+    it('advances immediately to the next section after submitting a runtime-backed module', () => {
+      const attemptSnapshot = withCompletedPrecheck({
+        ...hydratedAttempt,
+        currentModule: 'listening',
+        currentQuestionId: 'listening-q1',
+      });
+      const runtimeSnapshot = createRuntimeSnapshot('listening', 1800);
+      const stateWithQuestions: ExamState = {
+        ...mockExamState,
+        reading: {
+          passages: [
+            {
+              id: 'reading-passage-1',
+              title: 'Reading Passage 1',
+              text: '',
+              blocks: [
+                {
+                  id: 'reading-q1',
+                  type: 'SINGLE_MCQ',
+                  instruction: 'Choose one.',
+                  stem: 'Reading question',
+                  options: [{ id: 'a', text: 'A', isCorrect: true }],
+                },
+              ],
+            },
+          ],
+        },
+        listening: {
+          parts: [
+            {
+              id: 'listening-part-1',
+              title: 'Listening Part 1',
+              audioUrl: '',
+              transcript: '',
+              blocks: [
+                {
+                  id: 'listening-q1',
+                  type: 'SINGLE_MCQ',
+                  instruction: 'Choose one.',
+                  stem: 'Listening question',
+                  options: [{ id: 'a', text: 'A', isCorrect: true }],
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      const runtimeBackedWrapper = ({ children }: { children: React.ReactNode }) => (
+        <StudentRuntimeProvider
+          state={stateWithQuestions}
+          onExit={vi.fn()}
+          runtimeBacked
+          runtimeSnapshot={runtimeSnapshot}
+          attemptSnapshot={attemptSnapshot}
+        >
+          {children}
+        </StudentRuntimeProvider>
+      );
+
+      const { result } = renderHook(() => useStudentRuntime(), { wrapper: runtimeBackedWrapper });
+
+      act(() => {
+        result.current.actions.submitModule();
+      });
+
+      expect(result.current.state.currentModule).toBe('reading');
+      expect(result.current.state.currentQuestionId).toBe('reading-q1');
+      expect(result.current.state.waitingForCohortAdvance).toBe(false);
+    });
   });
 });
 
