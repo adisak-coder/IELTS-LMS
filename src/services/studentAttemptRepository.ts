@@ -20,6 +20,8 @@ const STORAGE_KEY_ATTEMPTS = 'ielts_student_attempts_v1';
 const STORAGE_KEY_PENDING_MUTATIONS = 'ielts_student_attempt_pending_mutations_v1';
 const STORAGE_KEY_HEARTBEAT_EVENTS = 'ielts_student_attempt_heartbeat_events_v1';
 const STORAGE_KEY_ATTEMPT_CREDENTIALS = 'ielts_student_attempt_credentials_v1';
+const STORAGE_KEY_CLIENT_SESSION_PREFIX = 'ielts-student-client-session:v1:';
+const STORAGE_KEY_MUTATION_WATERMARK_PREFIX = 'ielts-student-mutation-watermark:v1:';
 const MAX_HEARTBEAT_EVENTS_PER_ATTEMPT = 200;
 const MAX_HEARTBEAT_FLUSH_EVENTS = 50;
 const MUTATION_BATCH_CHUNK_SIZE = 100;
@@ -349,13 +351,69 @@ function backendConflictReason(error: unknown): string | null {
 }
 
 function getClientSessionStorageKey(scheduleId: string, studentKey: string): string {
-  return `ielts-student-client-session:${scheduleId}:${studentKey}`;
+  return `${STORAGE_KEY_CLIENT_SESSION_PREFIX}${scheduleId}:${studentKey}`;
+}
+
+function getMutationWatermarkStorageKey(attemptId: string, clientSessionId: string): string {
+  return `${STORAGE_KEY_MUTATION_WATERMARK_PREFIX}${attemptId}:${clientSessionId}`;
+}
+
+function readStoredMutationSequenceWatermark(
+  attemptId: string,
+  clientSessionId: string,
+): number | null {
+  const session = getBrowserStorage('sessionStorage');
+  if (!session) {
+    return null;
+  }
+
+  const raw = session.getItem(getMutationWatermarkStorageKey(attemptId, clientSessionId));
+  if (raw == null) {
+    return null;
+  }
+
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function storeMutationSequenceWatermark(
+  attemptId: string,
+  clientSessionId: string,
+  watermark: number,
+): void {
+  mutationSequenceWatermarks.set(mutationWatermarkKey(attemptId, clientSessionId), watermark);
+
+  const session = getBrowserStorage('sessionStorage');
+  if (!session) {
+    return;
+  }
+
+  try {
+    session.setItem(getMutationWatermarkStorageKey(attemptId, clientSessionId), String(watermark));
+  } catch {
+    // ignore
+  }
+}
+
+function readOrPrimeMutationSequenceWatermark(attemptId: string, clientSessionId: string): number {
+  const key = mutationWatermarkKey(attemptId, clientSessionId);
+  const cached = mutationSequenceWatermarks.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const stored = readStoredMutationSequenceWatermark(attemptId, clientSessionId);
+  if (stored !== null) {
+    mutationSequenceWatermarks.set(key, stored);
+    return stored;
+  }
+
+  return 0;
 }
 
 function ensureClientSessionId(
   scheduleId: string,
   studentKey: string,
-  preferredId?: string | null,
 ): string {
   const session = getBrowserStorage('sessionStorage');
   if (!session) {
@@ -364,34 +422,21 @@ function ensureClientSessionId(
 
   const storageKey = getClientSessionStorageKey(scheduleId, studentKey);
   const stored = session.getItem(storageKey);
-  const normalizedPreferred = preferredId?.trim() ?? '';
-  if (stored && normalizedPreferred && stored !== normalizedPreferred) {
-    // If the backend has recorded a clientSessionId for this attempt, treat it as authoritative
-    // and override any stale/mismatched sessionStorage value to prevent mutation sequence drift.
-    session.setItem(storageKey, normalizedPreferred);
-    return normalizedPreferred;
-  }
-
   if (stored) {
     return stored;
   }
 
-  if (normalizedPreferred) {
-    session.setItem(storageKey, normalizedPreferred);
-    return normalizedPreferred;
-  }
-
   const generated = generateUuid();
-  session.setItem(storageKey, generated);
+  try {
+    session.setItem(storageKey, generated);
+  } catch {
+    // ignore
+  }
   return generated;
 }
 
 export function ensureClientSessionIdForAttempt(attempt: StudentAttempt): string {
-  return ensureClientSessionId(
-    attempt.scheduleId,
-    attempt.studentKey,
-    attempt.recovery.clientSessionId ?? attempt.integrity.clientSessionId,
-  );
+  return ensureClientSessionId(attempt.scheduleId, attempt.studentKey);
 }
 
 export async function refreshAttemptCredentialForAttempt(attempt: StudentAttempt): Promise<boolean> {
@@ -483,15 +528,14 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
 
 function primeMutationSequenceWatermark(attempt: StudentAttempt): void {
   const backendSeq = attempt.recovery.serverAcceptedThroughSeq ?? 0;
-  const clientSessionId = attempt.recovery.clientSessionId ?? attempt.integrity.clientSessionId;
+  const clientSessionId = ensureClientSessionIdForAttempt(attempt);
   if (!clientSessionId) {
     return;
   }
 
-  const key = mutationWatermarkKey(attempt.id, clientSessionId);
-  const current = mutationSequenceWatermarks.get(key);
-  if (current === undefined || backendSeq > current) {
-    mutationSequenceWatermarks.set(key, backendSeq);
+  const current = readOrPrimeMutationSequenceWatermark(attempt.id, clientSessionId);
+  if (backendSeq > current) {
+    storeMutationSequenceWatermark(attempt.id, clientSessionId, backendSeq);
   }
 }
 
@@ -835,7 +879,11 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         );
 
         nextSeq = response.serverAcceptedThroughSeq;
-        mutationSequenceWatermarks.set(args.watermarkKey, response.serverAcceptedThroughSeq);
+        storeMutationSequenceWatermark(
+          currentAttempt.id,
+          args.clientSessionId,
+          response.serverAcceptedThroughSeq,
+        );
         storeAttemptCredential(currentAttempt, response.refreshedAttemptCredential);
 
         remainingMutations = remainingMutations.slice(chunk.length);
@@ -907,7 +955,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
     const clientSessionId = ensureClientSessionIdForAttempt(currentAttempt);
     const watermarkKey = mutationWatermarkKey(currentAttempt.id, clientSessionId);
-    const startSeq = mutationSequenceWatermarks.get(watermarkKey) ?? 0;
+    const startSeq = readOrPrimeMutationSequenceWatermark(currentAttempt.id, clientSessionId);
 
     const first = await this.flushMutationQueue({
       attempt: currentAttempt,
@@ -931,6 +979,13 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       // Treat sequence mismatch as "server already accepted these mutations" and resync.
       await this.cache.clearPendingMutations(currentAttempt.id);
       mutationSequenceWatermarks.delete(watermarkKey);
+      try {
+        getBrowserStorage('sessionStorage')?.removeItem(
+          getMutationWatermarkStorageKey(currentAttempt.id, clientSessionId),
+        );
+      } catch {
+        // ignore
+      }
 
       const session = await backendGet<BackendStudentSessionContext>(
         `/v1/student/sessions/${currentAttempt.scheduleId}`,
@@ -1053,10 +1108,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     await this.cache.saveAttempt(submittedAttempt);
     await this.cache.clearPendingMutations(attempt.id);
     const clientSessionId = ensureClientSessionIdForAttempt(attempt);
-    mutationSequenceWatermarks.set(
-      mutationWatermarkKey(attempt.id, clientSessionId),
-      Number.MAX_SAFE_INTEGER,
-    );
+    storeMutationSequenceWatermark(attempt.id, clientSessionId, Number.MAX_SAFE_INTEGER);
     return submittedAttempt;
   }
 
@@ -1068,7 +1120,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         candidateId: seed.candidateId,
         candidateName: seed.candidateName,
         candidateEmail: seed.candidateEmail,
-        clientSessionId: ensureClientSessionId(seed.scheduleId, seed.studentKey, null),
+        clientSessionId: ensureClientSessionId(seed.scheduleId, seed.studentKey),
       },
     );
 
