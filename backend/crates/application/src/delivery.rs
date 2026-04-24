@@ -1792,16 +1792,22 @@ fn index_block(
                 let Some(id) = question.get("id").and_then(Value::as_str) else {
                     continue;
                 };
-                let max_len = question
+                let blanks = question
                     .get("blanks")
-                    .and_then(Value::as_array)
-                    .map(|value| value.len())
-                    .unwrap_or(0);
+                    .and_then(Value::as_array);
+                let max_len = blanks.map(|value| value.len()).unwrap_or(0);
                 constraints.insert(
                     id.to_owned(),
                     AnswerConstraint::ArrayText { max_len },
                 );
                 register_section(sections, id, section_key)?;
+                if let Some(blanks) = blanks {
+                    for blank in blanks {
+                        if let Some(blank_id) = blank.get("id").and_then(Value::as_str) {
+                            register_section(sections, &format!("{id}:{blank_id}"), section_key)?;
+                        }
+                    }
+                }
             }
         }
         "MULTI_MCQ" => {
@@ -1842,41 +1848,70 @@ fn index_block(
         }
         "DIAGRAM_LABELING" => {
             let Some(block_id) = block_id else { return Ok(()); };
-            let max_len = block
+            let labels = block
                 .get("labels")
-                .and_then(Value::as_array)
-                .map(|value| value.len())
-                .unwrap_or(0);
+                .and_then(Value::as_array);
+            let max_len = labels.map(|value| value.len()).unwrap_or(0);
             register_section(sections, &block_id, section_key)?;
+            if let Some(labels) = labels {
+                for label in labels {
+                    if let Some(label_id) = label.get("id").and_then(Value::as_str) {
+                        register_section(
+                            sections,
+                            &format!("{block_id}:{label_id}"),
+                            section_key,
+                        )?;
+                    }
+                }
+            }
             constraints.insert(block_id, AnswerConstraint::ArrayText { max_len });
         }
         "FLOW_CHART" => {
             let Some(block_id) = block_id else { return Ok(()); };
-            let max_len = block
+            let steps = block
                 .get("steps")
-                .and_then(Value::as_array)
-                .map(|value| value.len())
-                .unwrap_or(0);
+                .and_then(Value::as_array);
+            let max_len = steps.map(|value| value.len()).unwrap_or(0);
             register_section(sections, &block_id, section_key)?;
+            if let Some(steps) = steps {
+                for step in steps {
+                    if let Some(step_id) = step.get("id").and_then(Value::as_str) {
+                        register_section(
+                            sections,
+                            &format!("{block_id}:{step_id}"),
+                            section_key,
+                        )?;
+                    }
+                }
+            }
             constraints.insert(block_id, AnswerConstraint::ArrayText { max_len });
         }
         "TABLE_COMPLETION" => {
             let Some(block_id) = block_id else { return Ok(()); };
-            let max_len = block
+            let cells = block
                 .get("cells")
-                .and_then(Value::as_array)
-                .map(|value| value.len())
-                .unwrap_or(0);
+                .and_then(Value::as_array);
+            let max_len = cells.map(|value| value.len()).unwrap_or(0);
             register_section(sections, &block_id, section_key)?;
+            if let Some(cells) = cells {
+                for cell in cells {
+                    if let Some(cell_id) = cell.get("id").and_then(Value::as_str) {
+                        register_section(
+                            sections,
+                            &format!("{block_id}:{cell_id}"),
+                            section_key,
+                        )?;
+                    }
+                }
+            }
             constraints.insert(block_id, AnswerConstraint::ArrayText { max_len });
         }
         "CLASSIFICATION" => {
             let Some(block_id) = block_id else { return Ok(()); };
-            let max_len = block
+            let items = block
                 .get("items")
-                .and_then(Value::as_array)
-                .map(|value| value.len())
-                .unwrap_or(0);
+                .and_then(Value::as_array);
+            let max_len = items.map(|value| value.len()).unwrap_or(0);
             let mut allowed = HashSet::new();
             if let Some(categories) = block.get("categories").and_then(Value::as_array) {
                 for category in categories.iter().filter_map(Value::as_str) {
@@ -1884,6 +1919,17 @@ fn index_block(
                 }
             }
             register_section(sections, &block_id, section_key)?;
+            if let Some(items) = items {
+                for item in items {
+                    if let Some(item_id) = item.get("id").and_then(Value::as_str) {
+                        register_section(
+                            sections,
+                            &format!("{block_id}:{item_id}"),
+                            section_key,
+                        )?;
+                    }
+                }
+            }
             constraints.insert(
                 block_id,
                 AnswerConstraint::EnumArray { allowed, max_len },
@@ -1891,11 +1937,10 @@ fn index_block(
         }
         "MATCHING_FEATURES" => {
             let Some(block_id) = block_id else { return Ok(()); };
-            let max_len = block
+            let features = block
                 .get("features")
-                .and_then(Value::as_array)
-                .map(|value| value.len())
-                .unwrap_or(0);
+                .and_then(Value::as_array);
+            let max_len = features.map(|value| value.len()).unwrap_or(0);
             let mut allowed = HashSet::new();
             if let Some(options) = block.get("options").and_then(Value::as_array) {
                 for option in options.iter().filter_map(Value::as_str) {
@@ -1903,6 +1948,17 @@ fn index_block(
                 }
             }
             register_section(sections, &block_id, section_key)?;
+            if let Some(features) = features {
+                for feature in features {
+                    if let Some(feature_id) = feature.get("id").and_then(Value::as_str) {
+                        register_section(
+                            sections,
+                            &format!("{block_id}:{feature_id}"),
+                            section_key,
+                        )?;
+                    }
+                }
+            }
             constraints.insert(
                 block_id,
                 AnswerConstraint::EnumArray { allowed, max_len },
@@ -2143,7 +2199,7 @@ fn apply_mutation(
                     "This session can no longer accept flag mutations.".to_owned(),
                 ));
             }
-            if !answer_schema.constraints.contains_key(&question_id) {
+            if !answer_schema.sections.contains_key(&question_id) {
                 return Err(DeliveryError::Validation(
                     "Mutation references an unknown `questionId`.".to_owned(),
                 ));
@@ -2204,7 +2260,7 @@ fn apply_mutation(
                 }
             };
             if let Some(ref value) = parsed_question_id {
-                let known_objective = answer_schema.constraints.contains_key(value);
+                let known_objective = answer_schema.sections.contains_key(value);
                 let known_writing = writing_task_ids.contains(value);
                 if !(known_objective || known_writing) {
                     return Err(DeliveryError::Validation(
@@ -2670,6 +2726,43 @@ mod tests {
             "sentence-1:blank-1",
         );
         assert_eq!(flags["sentence-1:blank-1"], true);
+    }
+
+    #[test]
+    fn build_answer_schema_indexes_reading_slot_ids_for_position_and_flags() {
+        let schema = build_answer_schema(&json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [
+                        {
+                            "id": "sentence-block",
+                            "type": "SENTENCE_COMPLETION",
+                            "questions": [{
+                                "id": "sentence-1",
+                                "blanks": [{ "id": "blank-1" }]
+                            }]
+                        },
+                        {
+                            "id": "diagram-block",
+                            "type": "DIAGRAM_LABELING",
+                            "labels": [{ "id": "label-1" }]
+                        }
+                    ]
+                }]
+            }
+        }))
+        .expect("schema");
+
+        assert!(schema.constraints.contains_key("sentence-1"));
+        assert!(!schema.constraints.contains_key("sentence-1:blank-1"));
+        assert_eq!(
+            schema.sections.get("sentence-1:blank-1").map(String::as_str),
+            Some("reading"),
+        );
+        assert_eq!(
+            schema.sections.get("diagram-block:label-1").map(String::as_str),
+            Some("reading"),
+        );
     }
 
     #[test]
