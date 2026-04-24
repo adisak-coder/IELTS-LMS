@@ -407,18 +407,6 @@ fn validate_question_block(
         return 0;
     };
 
-    if block_obj
-        .get("instruction")
-        .and_then(|i| i.as_str())
-        .map(|s| s.trim().is_empty())
-        .unwrap_or(true)
-    {
-        result.add_error(
-            format!("{}.instruction", field_prefix),
-            "Question block instruction is required",
-        );
-    }
-
     let block_type = block_obj
         .get("type")
         .and_then(|t| t.as_str())
@@ -1356,17 +1344,14 @@ mod tests {
         let result = validate_exam_content(&content, &config);
 
         assert!(
-            result.errors.iter().any(|error| {
-                error.message == "Question block instruction is required"
-                    && error.field == "content.listening.parts[0].blocks[0].instruction"
-            }),
-            "expected instruction-required error at listening parts/blocks path, got: {:?}",
+            result.errors.is_empty(),
+            "expected empty-instruction to be allowed for listening blocks, got errors: {:?}",
             result.errors
         );
     }
 
     #[test]
-    fn listening_question_blocks_empty_instruction_reports_parts_question_blocks_path() {
+    fn listening_question_blocks_empty_instruction_is_allowed() {
         let content = json!({
             "listening": {
                 "parts": [{
@@ -1400,17 +1385,14 @@ mod tests {
         let result = validate_exam_content(&content, &config);
 
         assert!(
-            result.errors.iter().any(|error| {
-                error.message == "Question block instruction is required"
-                    && error.field == "content.listening.parts[0].questionBlocks[0].instruction"
-            }),
-            "expected instruction-required error at listening parts/questionBlocks path, got: {:?}",
+            result.errors.is_empty(),
+            "expected empty-instruction to be allowed for listening questionBlocks, got errors: {:?}",
             result.errors
         );
     }
 
     #[test]
-    fn reading_blocks_empty_instruction_reports_passages_blocks_path() {
+    fn reading_blocks_empty_instruction_is_allowed() {
         let content = json!({
             "reading": {
                 "passages": [{
@@ -1444,11 +1426,8 @@ mod tests {
         let result = validate_exam_content(&content, &config);
 
         assert!(
-            result.errors.iter().any(|error| {
-                error.message == "Question block instruction is required"
-                    && error.field == "content.reading.passages[0].blocks[0].instruction"
-            }),
-            "expected instruction-required error at reading passages/blocks path, got: {:?}",
+            result.errors.is_empty(),
+            "expected empty-instruction to be allowed for reading blocks, got errors: {:?}",
             result.errors
         );
     }

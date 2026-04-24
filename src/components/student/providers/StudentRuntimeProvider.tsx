@@ -346,7 +346,21 @@ function runtimeReducer(
             ? 'pre-check'
             : 'exam';
       const nextQuestionId = moduleChanged ? action.nextQuestionId : state.currentQuestionId;
-      const nextTimeRemaining = action.snapshot?.currentSectionRemainingSeconds ?? state.timeRemaining;
+      const snapshotTimeRemaining = action.snapshot?.currentSectionRemainingSeconds;
+      const resolvedSnapshotTimeRemaining = snapshotTimeRemaining ?? state.timeRemaining;
+      const allowSnapshotDecrease =
+        moduleChanged ||
+        runtimeStatus !== 'live' ||
+        Boolean(action.snapshot?.waitingForNextSection) ||
+        (typeof snapshotTimeRemaining === 'number' && snapshotTimeRemaining <= 0);
+      const nextTimeRemaining =
+        allowSnapshotDecrease
+          ? resolvedSnapshotTimeRemaining
+          : snapshotTimeRemaining === undefined
+            ? state.timeRemaining
+            : snapshotTimeRemaining > state.timeRemaining
+              ? snapshotTimeRemaining
+              : state.timeRemaining;
       const nextWaitingForCohortAdvance =
         state.waitingForCohortAdvance && !moduleChanged && runtimeStatus !== 'completed';
 

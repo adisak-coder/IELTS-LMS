@@ -159,8 +159,6 @@ describe('student question experience', () => {
       <StudentHeader
         onExit={() => {}}
         timeRemaining={1200}
-        elapsedTime={0}
-        totalSectionTime={1200}
         isExamActive
         onOpenNavigator={onOpenNavigator}
       />,

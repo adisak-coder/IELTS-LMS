@@ -865,7 +865,6 @@ export function StudentApp() {
         onExit={onExit}
         testTakerId={attemptState.attempt?.candidateId ?? undefined}
         timeRemaining={runtimeState.displayTimeRemaining}
-        totalSectionTime={examState.config.sections[runtimeState.currentModule]?.duration * 60 || 0}
         onOpenAccessibility={() => uiActions.setShowAccessibility(true)}
         onOpenNavigator={
           runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening'
