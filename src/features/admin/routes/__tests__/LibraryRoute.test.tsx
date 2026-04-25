@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import type { PassageLibraryItem, QuestionBankItem } from '../../../../types';
 
@@ -37,6 +38,20 @@ vi.mock('@services/questionBankService', () => ({
 }));
 
 import { LibraryRoute } from '../LibraryRoute';
+
+function renderWithQueryClient(ui: React.ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      {ui}
+    </QueryClientProvider>,
+  );
+}
 
 describe('LibraryRoute', () => {
   it('renders promise-backed library data without crashing', async () => {
@@ -98,7 +113,7 @@ describe('LibraryRoute', () => {
     mocks.deleteQuestion.mockResolvedValue(true);
     mocks.clearQuestions.mockResolvedValue();
 
-    render(<LibraryRoute />);
+    renderWithQueryClient(<LibraryRoute />);
 
     expect(screen.getByText(/loading library/i)).toBeInTheDocument();
 
@@ -108,5 +123,9 @@ describe('LibraryRoute', () => {
 
     expect(screen.getByText('Urban gardening trends')).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Environment' })).toBeInTheDocument();
+    expect(mocks.getAllPassages).toHaveBeenCalledTimes(1);
+    expect(mocks.getAllQuestions).toHaveBeenCalledTimes(1);
+    expect(mocks.queryPassages).not.toHaveBeenCalled();
+    expect(mocks.queryQuestions).not.toHaveBeenCalled();
   });
 });

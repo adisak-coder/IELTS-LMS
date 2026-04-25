@@ -11,6 +11,7 @@ import {
   backendPost,
 } from './backendBridge';
 import { logError } from '../app/error/errorLogger';
+import { queryClient, queryKeys } from '../app/data/queryClient';
 import { createTtlLruCache } from '../utils/ttlLruCache';
 
 type LegacyBackendPassageItem = {
@@ -54,6 +55,10 @@ const passageRevisions = createTtlLruCache<string, number>({
   ttlMs: 30 * 60 * 1000,
 });
 
+function invalidatePassageQueries(): void {
+  queryClient.invalidateQueries({ queryKey: queryKeys.library.passages() });
+}
+
 class BackendPassageLibrary {
   async getAllPassages(): Promise<PassageLibraryItem[]> {
     const raw = await backendGet<unknown>('/v1/library/passages');
@@ -87,6 +92,7 @@ class BackendPassageLibrary {
     if (!mapped) {
       throw new Error('Backend returned an invalid passage record');
     }
+    invalidatePassageQueries();
     return mapped;
   }
 
@@ -128,13 +134,16 @@ class BackendPassageLibrary {
     }
 
     const raw = await backendPatch<unknown>(`/v1/library/passages/${id}`, patchBody);
-    return this.mapBackendItem(raw);
+    const mapped = this.mapBackendItem(raw);
+    invalidatePassageQueries();
+    return mapped;
   }
 
   async deletePassage(id: string): Promise<boolean> {
     try {
       await backendDelete(`/v1/library/passages/${id}`);
       passageRevisions.delete(id);
+      invalidatePassageQueries();
       return true;
     } catch (error) {
       if (this.isNotFound(error)) return false;
@@ -185,6 +194,7 @@ class BackendPassageLibrary {
   async incrementUsageCount(id: string): Promise<void> {
     try {
       await backendPatch(`/v1/library/passages/${id}/increment-usage`, {});
+      invalidatePassageQueries();
     } catch {
       // Some deployments don't implement this endpoint; usage count is best-effort.
     }

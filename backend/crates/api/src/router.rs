@@ -90,6 +90,8 @@ pub fn build_router(state: AppState) -> Router {
                 "/sessions",
                 Router::new()
                     .route("/:schedule_id", get(student::get_student_session))
+                    .route("/:schedule_id/static", get(student::get_student_static_session))
+                    .route("/:schedule_id/live", get(student::get_student_live_session))
                     .route("/:schedule_id/precheck", post(student::save_precheck))
                     .route(
                         "/:schedule_id/bootstrap",

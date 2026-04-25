@@ -1,7 +1,20 @@
 import { renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { createDefaultConfig } from '../../../../constants/examDefaults';
+import type { ReactNode } from 'react';
 import { useProctorRouteController } from '../useProctorRouteController';
+
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
 
 describe('useProctorRouteController', () => {
   beforeEach(() => {
@@ -225,7 +238,9 @@ describe('useProctorRouteController', () => {
     }) as typeof fetch;
 
     try {
-      const { result } = renderHook(() => useProctorRouteController());
+      const { result } = renderHook(() => useProctorRouteController(), {
+        wrapper: createWrapper(),
+      });
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);

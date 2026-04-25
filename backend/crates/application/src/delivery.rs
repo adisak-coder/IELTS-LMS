@@ -154,6 +154,52 @@ impl DeliveryService {
         })
     }
 
+    pub async fn get_static_session_context(
+        &self,
+        schedule_id: Uuid,
+    ) -> Result<ielts_backend_domain::attempt::StudentStaticSessionContext, DeliveryError> {
+        let schedule = self.load_schedule(schedule_id).await?;
+        let version = self
+            .load_version(schedule.published_version_id.clone())
+            .await?;
+
+        Ok(ielts_backend_domain::attempt::StudentStaticSessionContext {
+            schedule,
+            version,
+            degraded_live_mode: false,
+        })
+    }
+
+    pub async fn get_live_session_context(
+        &self,
+        schedule_id: Uuid,
+        wcode: Option<String>,
+        student_key: Option<String>,
+        candidate_id: Option<String>,
+    ) -> Result<ielts_backend_domain::attempt::StudentLiveSessionContext, DeliveryError> {
+        let runtime = self.load_runtime(schedule_id).await?;
+
+        let attempt = if let Some(wcode) = wcode {
+            self.load_attempt_by_wcode(schedule_id.to_string(), &wcode)
+                .await?
+        } else if let Some(student_key) = student_key {
+            self.load_attempt_by_student_key(schedule_id.to_string(), &student_key)
+                .await?
+        } else if let Some(candidate_id) = candidate_id {
+            let derived = derive_student_key(schedule_id, &candidate_id);
+            self.load_attempt_by_student_key(schedule_id.to_string(), &derived)
+                .await?
+        } else {
+            None
+        };
+
+        Ok(ielts_backend_domain::attempt::StudentLiveSessionContext {
+            runtime,
+            attempt,
+            degraded_live_mode: false,
+        })
+    }
+
     pub async fn persist_precheck(
         &self,
         schedule_id: Uuid,

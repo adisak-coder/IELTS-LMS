@@ -1,4 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 let liveUpdateHandler: ((event: { kind: string; id: string; revision: number; event: string }) => void) | null = null;
@@ -14,6 +16,18 @@ vi.mock('@app/hooks/useAsyncPolling', () => ({
 }));
 
 import { useProctorRouteController } from '../useProctorRouteController';
+
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
+}
 
 function buildSchedule() {
   return {
@@ -179,7 +193,9 @@ describe('useProctorRouteController live updates', () => {
     }) as typeof fetch;
 
     try {
-      const { result } = renderHook(() => useProctorRouteController());
+      const { result } = renderHook(() => useProctorRouteController(), {
+        wrapper: createWrapper(),
+      });
 
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);

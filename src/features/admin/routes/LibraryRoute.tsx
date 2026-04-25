@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { BookOpen, HelpCircle, Trash2, Search, Grid, List } from 'lucide-react';
 import { passageLibraryService } from '@services/passageLibraryService';
 import { questionBankService } from '@services/questionBankService';
 import { PassageLibraryItem, QuestionBankItem } from '../../../types';
 import { CollectionLoadingSkeleton } from '@components/ui';
+import { useLibraryPassages, useLibraryQuestions } from '@app/data/libraryQueries';
 
 export function LibraryRoute() {
   const [activeTab, setActiveTab] = useState<'passages' | 'questions'>('passages');
@@ -11,84 +12,42 @@ export function LibraryRoute() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedDifficulty, setSelectedDifficulty] = useState<'easy' | 'medium' | 'hard' | 'all'>('all');
   const [selectedTopic, setSelectedTopic] = useState<string>('all');
-  const [passages, setPassages] = useState<PassageLibraryItem[]>([]);
-  const [questions, setQuestions] = useState<QuestionBankItem[]>([]);
-  const [passageTopics, setPassageTopics] = useState<string[]>([]);
-  const [questionTopics, setQuestionTopics] = useState<string[]>([]);
-  const [filteredPassages, setFilteredPassages] = useState<PassageLibraryItem[]>([]);
-  const [filteredQuestions, setFilteredQuestions] = useState<QuestionBankItem[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [reloadToken, setReloadToken] = useState(0);
 
-  useEffect(() => {
-    let isActive = true;
+  const passagesQuery = useLibraryPassages();
+  const questionsQuery = useLibraryQuestions();
+  const passages = passagesQuery.data ?? [];
+  const questions = questionsQuery.data ?? [];
+  const isLoading = passagesQuery.isLoading || questionsQuery.isLoading;
+  const queryError = passagesQuery.error ?? questionsQuery.error;
 
-    async function loadLibrary(): Promise<void> {
-      setIsLoading(true);
-      setErrorMessage(null);
+  const passageTopics = useMemo(() => {
+    return Array.from(new Set(passages.map((item) => item.metadata.topic))).sort();
+  }, [passages]);
 
-      try {
-        const passageQuery = {
-          difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
-          topic: selectedTopic === 'all' ? undefined : selectedTopic,
-          searchTerm: searchTerm || undefined,
-        };
+  const questionTopics = useMemo(() => {
+    return Array.from(new Set(questions.map((item) => item.metadata.topic))).sort();
+  }, [questions]);
 
-        const questionQuery = {
-          difficulty: selectedDifficulty === 'all' ? undefined : selectedDifficulty,
-          topic: selectedTopic === 'all' ? undefined : selectedTopic,
-          searchTerm: searchTerm || undefined,
-        };
+  const filteredPassages = useMemo(() => {
+    return filterPassages(passages, {
+      difficulty: selectedDifficulty,
+      topic: selectedTopic,
+      searchTerm,
+    });
+  }, [passages, searchTerm, selectedDifficulty, selectedTopic]);
 
-        const [
-          nextPassages,
-          nextQuestions,
-          nextPassageTopics,
-          nextQuestionTopics,
-          nextFilteredPassages,
-          nextFilteredQuestions,
-        ] = await Promise.all([
-          passageLibraryService.getAllPassages(),
-          questionBankService.getAllQuestions(),
-          passageLibraryService.getTopics(),
-          questionBankService.getTopics(),
-          passageLibraryService.queryPassages(passageQuery),
-          questionBankService.queryQuestions(questionQuery),
-        ]);
-
-        if (!isActive) {
-          return;
-        }
-
-        setPassages(nextPassages);
-        setQuestions(nextQuestions);
-        setPassageTopics(nextPassageTopics);
-        setQuestionTopics(nextQuestionTopics);
-        setFilteredPassages(nextFilteredPassages);
-        setFilteredQuestions(nextFilteredQuestions);
-      } catch (error) {
-        if (!isActive) {
-          return;
-        }
-
-        setErrorMessage(error instanceof Error ? error.message : 'Failed to load library content.');
-      } finally {
-        if (isActive) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    void loadLibrary();
-
-    return () => {
-      isActive = false;
-    };
-  }, [reloadToken, searchTerm, selectedDifficulty, selectedTopic]);
+  const filteredQuestions = useMemo(() => {
+    return filterQuestions(questions, {
+      difficulty: selectedDifficulty,
+      topic: selectedTopic,
+      searchTerm,
+    });
+  }, [questions, searchTerm, selectedDifficulty, selectedTopic]);
 
   const refreshLibrary = () => {
-    setReloadToken((current) => current + 1);
+    void passagesQuery.refetch();
+    void questionsQuery.refetch();
   };
 
   const handleDeletePassage = async (id: string) => {
@@ -238,6 +197,10 @@ export function LibraryRoute() {
         <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {errorMessage}
         </div>
+      ) : queryError ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {queryError instanceof Error ? queryError.message : 'Failed to load library content.'}
+        </div>
       ) : null}
 
       {isLoading ? (
@@ -309,6 +272,66 @@ export function LibraryRoute() {
       ) : null}
     </div>
   );
+}
+
+function filterPassages(
+  items: PassageLibraryItem[],
+  filters: {
+    difficulty: 'easy' | 'medium' | 'hard' | 'all';
+    topic: string;
+    searchTerm: string;
+  },
+) {
+  const term = filters.searchTerm.trim().toLowerCase();
+
+  return items.filter((item) => {
+    if (filters.difficulty !== 'all' && item.metadata.difficulty !== filters.difficulty) {
+      return false;
+    }
+    if (filters.topic !== 'all' && item.metadata.topic !== filters.topic) {
+      return false;
+    }
+    if (!term) {
+      return true;
+    }
+
+    return (
+      item.passage.title.toLowerCase().includes(term) ||
+      item.passage.content.toLowerCase().includes(term) ||
+      item.metadata.topic.toLowerCase().includes(term) ||
+      item.metadata.source.toLowerCase().includes(term) ||
+      item.metadata.tags.some((tag) => tag.toLowerCase().includes(term))
+    );
+  });
+}
+
+function filterQuestions(
+  items: QuestionBankItem[],
+  filters: {
+    difficulty: 'easy' | 'medium' | 'hard' | 'all';
+    topic: string;
+    searchTerm: string;
+  },
+) {
+  const term = filters.searchTerm.trim().toLowerCase();
+
+  return items.filter((item) => {
+    if (filters.difficulty !== 'all' && item.metadata.difficulty !== filters.difficulty) {
+      return false;
+    }
+    if (filters.topic !== 'all' && item.metadata.topic !== filters.topic) {
+      return false;
+    }
+    if (!term) {
+      return true;
+    }
+
+    return (
+      JSON.stringify(item.block).toLowerCase().includes(term) ||
+      item.metadata.topic.toLowerCase().includes(term) ||
+      item.metadata.tags.some((tag) => tag.toLowerCase().includes(term))
+    );
+  });
 }
 
 function PassageCard({ item, onDelete }: { item: PassageLibraryItem; onDelete: () => void }) {

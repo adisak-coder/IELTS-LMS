@@ -1,4 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { examDeliveryService } from '@services/examDeliveryService';
 import { useProctorRouteController } from '../useProctorRouteController';
@@ -17,6 +19,18 @@ function jsonFailure(message: string) {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
+  };
 }
 
 function buildSchedule() {
@@ -209,7 +223,7 @@ describe('useProctorRouteController backend mode', () => {
       .mockResolvedValue(jsonResponse(buildDetail()));
     global.fetch = fetchMock as typeof fetch;
 
-    const { result } = renderHook(() => useProctorRouteController());
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -364,7 +378,7 @@ describe('useProctorRouteController backend mode', () => {
       .spyOn(examDeliveryService, 'terminateStudentAttempt')
       .mockResolvedValue({ success: true });
 
-    const { result } = renderHook(() => useProctorRouteController());
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -446,7 +460,7 @@ describe('useProctorRouteController backend mode', () => {
       .spyOn(examDeliveryService, 'terminateStudentAttempt')
       .mockResolvedValue({ success: true });
 
-    const { result } = renderHook(() => useProctorRouteController());
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -505,7 +519,7 @@ describe('useProctorRouteController backend mode', () => {
       .spyOn(examDeliveryService, 'warnStudent')
       .mockResolvedValue({ success: true });
 
-    const { result } = renderHook(() => useProctorRouteController());
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -540,7 +554,7 @@ describe('useProctorRouteController backend mode', () => {
       .mockResolvedValueOnce(jsonFailure('detail down'));
     global.fetch = fetchMock as typeof fetch;
 
-    const { result } = renderHook(() => useProctorRouteController());
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);

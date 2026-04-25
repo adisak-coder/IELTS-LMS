@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthSessionProvider } from '../../../auth/authSession';
 import { authService, type AuthSession } from '../../../../services/authService';
@@ -8,8 +9,18 @@ import { useStudentSessionRouteData } from '../useStudentSessionRouteData';
 const originalFetch = global.fetch;
 
 function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+    },
+  });
+
   return function Wrapper({ children }: { children: ReactNode }) {
-    return <AuthSessionProvider>{children}</AuthSessionProvider>;
+    return (
+      <QueryClientProvider client={queryClient}>
+        <AuthSessionProvider>{children}</AuthSessionProvider>
+      </QueryClientProvider>
+    );
   };
 }
 
@@ -203,7 +214,16 @@ describe('useStudentSessionRouteData backend mode', () => {
     vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(buildSessionContext(null)))
+      .mockResolvedValueOnce(jsonResponse({
+        schedule: buildSessionContext(null).schedule,
+        version: buildSessionContext(null).version,
+        degradedLiveMode: false,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        runtime: buildSessionContext(null).runtime,
+        attempt: null,
+        degradedLiveMode: false,
+      }))
       .mockResolvedValueOnce(jsonResponse(buildSessionContext(buildAttempt())))
       .mockResolvedValue(jsonResponse(buildSessionContext(buildAttempt())));
     global.fetch = fetchMock as typeof fetch;
@@ -237,11 +257,16 @@ describe('useStudentSessionRouteData backend mode', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      '/api/v1/student/sessions/sched-1?candidateId=W250334',
+      '/api/v1/student/sessions/sched-1/static?candidateId=W250334',
       expect.objectContaining({ method: 'GET' }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
+      '/api/v1/student/sessions/sched-1/live?candidateId=W250334',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
       '/api/v1/student/sessions/sched-1/bootstrap',
       expect.objectContaining({ method: 'POST' }),
     );
@@ -260,8 +285,22 @@ describe('useStudentSessionRouteData backend mode', () => {
 
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse(buildSessionContext(null)))
-      .mockResolvedValueOnce(jsonResponse(buildSessionContext(buildAttempt())));
+      .mockResolvedValueOnce(jsonResponse({
+        schedule: buildSessionContext(null).schedule,
+        version: buildSessionContext(null).version,
+        degradedLiveMode: false,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        runtime: buildSessionContext(null).runtime,
+        attempt: null,
+        degradedLiveMode: false,
+      }))
+      .mockResolvedValueOnce(jsonResponse(buildSessionContext(buildAttempt())))
+      .mockResolvedValue(jsonResponse({
+        runtime: buildSessionContext(buildAttempt()).runtime,
+        attempt: buildAttempt(),
+        degradedLiveMode: false,
+      }));
     global.fetch = fetchMock as typeof fetch;
 
     renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {
@@ -275,7 +314,7 @@ describe('useStudentSessionRouteData backend mode', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         1,
-        '/api/v1/student/sessions/sched-1?candidateId=W250334',
+        '/api/v1/student/sessions/sched-1/static?candidateId=W250334',
         expect.objectContaining({ method: 'GET' }),
       );
     });
@@ -283,6 +322,14 @@ describe('useStudentSessionRouteData backend mode', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
         2,
+        '/api/v1/student/sessions/sched-1/live?candidateId=W250334',
+        expect.objectContaining({ method: 'GET' }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        3,
         '/api/v1/student/sessions/sched-1/bootstrap',
         expect.objectContaining({ method: 'POST' }),
       );

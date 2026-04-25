@@ -161,6 +161,22 @@ pub struct StudentSessionContext {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct StudentStaticSessionContext {
+    pub schedule: crate::schedule::ExamSchedule,
+    pub version: crate::exam::ExamVersion,
+    pub degraded_live_mode: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudentLiveSessionContext {
+    pub runtime: Option<crate::schedule::ExamSessionRuntime>,
+    pub attempt: Option<StudentAttempt>,
+    pub degraded_live_mode: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct StudentMutationBatchResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt: Option<StudentAttempt>,

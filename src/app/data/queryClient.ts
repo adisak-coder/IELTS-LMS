@@ -59,6 +59,13 @@ export const queryKeys = {
     active: () => [...queryKeys.schedules.all, 'active'] as const,
   },
 
+  // Library content queries
+  library: {
+    all: ['library'] as const,
+    passages: () => [...queryKeys.library.all, 'passages'] as const,
+    questions: () => [...queryKeys.library.all, 'questions'] as const,
+  },
+
   // Session-related queries
   sessions: {
     all: ['sessions'] as const,
@@ -81,11 +88,17 @@ export const queryKeys = {
     all: ['students'] as const,
     lists: () => [...queryKeys.students.all, 'list'] as const,
     details: (id: string) => [...queryKeys.students.all, 'detail', id] as const,
+    staticSession: (scheduleId: string) =>
+      [...queryKeys.students.all, 'session', scheduleId, 'static'] as const,
+    liveSession: (scheduleId: string) =>
+      [...queryKeys.students.all, 'session', scheduleId, 'live'] as const,
   },
 
   // Proctoring-related queries
   proctoring: {
     all: ['proctoring'] as const,
+    sessions: () => [...queryKeys.proctoring.all, 'sessions'] as const,
+    detail: (scheduleId: string) => [...queryKeys.proctoring.all, 'detail', scheduleId] as const,
     alerts: (scheduleId: string) => [...queryKeys.proctoring.all, scheduleId, 'alerts'] as const,
     audit: (scheduleId: string) => [...queryKeys.proctoring.all, scheduleId, 'audit'] as const,
     runtime: (scheduleId: string) => [...queryKeys.proctoring.all, scheduleId, 'runtime'] as const,

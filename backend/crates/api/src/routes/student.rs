@@ -11,8 +11,8 @@ use ielts_backend_application::delivery::{
 use ielts_backend_domain::attempt::{
     StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
     StudentHeartbeatResponse, StudentMutationBatchRequest, StudentMutationBatchResponse,
-    StudentPrecheckRequest, StudentSessionContext, StudentSessionQuery, StudentSubmitRequest,
-    StudentSubmitResponse,
+    StudentLiveSessionContext, StudentPrecheckRequest, StudentSessionContext, StudentSessionQuery,
+    StudentStaticSessionContext, StudentSubmitRequest, StudentSubmitResponse,
 };
 use ielts_backend_domain::auth::UserRole;
 use serde_json::{json, Value};
@@ -113,6 +113,65 @@ pub async fn get_student_session(
     state
         .telemetry
         .observe_db_operation("delivery.get_session_context", started.elapsed());
+    Ok(ApiResponse::success_with_request_id(session, request_id.0))
+}
+
+pub async fn get_student_static_session(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    principal: AuthenticatedUser,
+    Path(schedule_id): Path<Uuid>,
+) -> Result<ApiResponse<StudentStaticSessionContext>, ApiError> {
+    principal.require_one_of(&[
+        UserRole::Student,
+        UserRole::Admin,
+        UserRole::Builder,
+        UserRole::Proctor,
+    ])?;
+    authorize_student(&state, &principal, schedule_id).await?;
+    let service = delivery_service(&state);
+    let started = Instant::now();
+    let session = service.get_static_session_context(schedule_id).await?;
+    state
+        .telemetry
+        .observe_db_operation("delivery.get_static_session_context", started.elapsed());
+    Ok(ApiResponse::success_with_request_id(session, request_id.0))
+}
+
+pub async fn get_student_live_session(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    principal: AuthenticatedUser,
+    Path(schedule_id): Path<Uuid>,
+    Query(query): Query<StudentSessionQuery>,
+) -> Result<ApiResponse<StudentLiveSessionContext>, ApiError> {
+    principal.require_one_of(&[
+        UserRole::Student,
+        UserRole::Admin,
+        UserRole::Builder,
+        UserRole::Proctor,
+    ])?;
+    let access = authorize_student(&state, &principal, schedule_id).await?;
+    let service = delivery_service(&state);
+    let started = Instant::now();
+
+    let wcode = if !access.wcode.is_empty() {
+        Some(access.wcode.clone())
+    } else {
+        None
+    };
+
+    let session = service
+        .get_live_session_context(
+            schedule_id,
+            wcode,
+            query.student_key.or(access.legacy_student_key.clone()),
+            query.candidate_id,
+        )
+        .await?;
+    state
+        .telemetry
+        .observe_db_operation("delivery.get_live_session_context", started.elapsed());
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 

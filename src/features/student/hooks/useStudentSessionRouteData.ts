@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useAsyncPolling } from '@app/hooks/useAsyncPolling';
 import { useLiveUpdates, type LiveUpdateEvent } from '@app/hooks/useLiveUpdates';
+import {
+  fetchStudentLiveSession,
+  useStudentStaticSession,
+} from '@app/data/studentSessionQueries';
+import { queryKeys } from '@app/data/queryClient';
 import { useAuthSession } from '../../auth/authSession';
 import { hydrateExamState } from '@services/examAdapterService';
 import {
-  backendGet,
   mapBackendExamVersion,
   mapBackendRuntime,
   mapBackendSchedule,
@@ -37,11 +42,6 @@ function isWcodeCandidateId(candidateId: string) {
 
 function buildStudentKey(scheduleId: string, candidateId: string) {
   return `student-${scheduleId}-${candidateId}`;
-}
-
-function buildBackendSessionEndpoint(scheduleId: string, candidateId: string) {
-  const query = new URLSearchParams({ candidateId });
-  return `/v1/student/sessions/${scheduleId}?${query.toString()}`;
 }
 
 function loadStoredCandidateProfile(
@@ -101,6 +101,7 @@ export function useStudentSessionRouteData(
   scheduleId?: string,
   studentId?: string,
 ): StudentSessionRouteData {
+  const queryClient = useQueryClient();
   const { session, status: authStatus } = useAuthSession();
   const [attemptSnapshot, setAttemptSnapshot] = useState<StudentAttempt | null>(null);
   const [schedule, setSchedule] = useState<ExamSchedule | null>(null);
@@ -117,31 +118,44 @@ export function useStudentSessionRouteData(
     () => (scheduleId && candidateId ? buildStudentKey(scheduleId, candidateId) : null),
     [candidateId, scheduleId],
   );
+  const canLoadBackendSession = Boolean(
+    scheduleId &&
+      candidateId &&
+      isWcodeCandidateId(candidateId) &&
+      authStatus === 'authenticated',
+  );
+  const staticSessionQuery = useStudentStaticSession(
+    scheduleId,
+    candidateId,
+    canLoadBackendSession && !error,
+  );
+  const staticSessionData = staticSessionQuery.data;
+  const refetchStaticSession = staticSessionQuery.refetch;
+  const isStaticSessionLoading = staticSessionQuery.isLoading;
+  const staticSessionError = staticSessionQuery.error;
 
   const refreshBackendSessionSnapshot = useCallback(async () => {
     if (!scheduleId || !candidateId || !isWcodeCandidateId(candidateId)) {
       return;
     }
 
-    const session = await backendGet<{
-      schedule: Parameters<typeof mapBackendSchedule>[0];
-      version: Parameters<typeof mapBackendExamVersion>[0];
-      runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-      attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-    }>(buildBackendSessionEndpoint(scheduleId, candidateId));
-    const nextSchedule = mapBackendSchedule(session.schedule);
+    const liveSession = await queryClient.fetchQuery({
+      queryKey: queryKeys.students.liveSession(scheduleId),
+      queryFn: () => fetchStudentLiveSession(scheduleId, candidateId),
+    });
 
-    setSchedule(nextSchedule);
     setRuntimeSnapshot(
-      session.runtime ? mapBackendRuntime(session.runtime, nextSchedule) : null,
+      liveSession.runtime && schedule ? mapBackendRuntime(liveSession.runtime, schedule) : null,
     );
 
-    if (session.attempt) {
-      const nextAttempt = mapBackendStudentAttempt(session.attempt);
+    if (liveSession.attempt) {
+      const nextAttempt = mapBackendStudentAttempt(
+        liveSession.attempt as Parameters<typeof mapBackendStudentAttempt>[0],
+      );
       await studentAttemptRepository.saveAttempt(nextAttempt);
       setAttemptSnapshot(nextAttempt);
     }
-  }, [candidateId, scheduleId]);
+  }, [candidateId, queryClient, schedule, scheduleId]);
 
   const handleLiveUpdate = useCallback(
     (event: LiveUpdateEvent) => {
@@ -196,14 +210,20 @@ export function useStudentSessionRouteData(
         throw new Error('Student identity not found');
       }
 
-      const session = await backendGet<{
-        schedule: Parameters<typeof mapBackendSchedule>[0];
-        version: Parameters<typeof mapBackendExamVersion>[0];
-        runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-        attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-      }>(buildBackendSessionEndpoint(scheduleId, candidateId));
-      const scheduleEntity = mapBackendSchedule(session.schedule);
-      const version = mapBackendExamVersion(session.version);
+      if (staticSessionError) {
+        throw staticSessionError;
+      }
+      if (!staticSessionData && isStaticSessionLoading) {
+        return;
+      }
+
+      const staticSession = staticSessionData ?? (await refetchStaticSession()).data;
+      if (!staticSession) {
+        throw new Error('Failed to load exam data');
+      }
+
+      const scheduleEntity = mapBackendSchedule(staticSession.schedule);
+      const version = mapBackendExamVersion(staticSession.version);
       const examState = hydrateExamState({
         ...version.contentSnapshot,
         config: version.configSnapshot,
@@ -211,15 +231,21 @@ export function useStudentSessionRouteData(
 
       setSchedule(scheduleEntity);
       setState(examState);
+      const liveSession = await queryClient.fetchQuery({
+        queryKey: queryKeys.students.liveSession(scheduleId),
+        queryFn: () => fetchStudentLiveSession(scheduleId, candidateId),
+      });
       setRuntimeSnapshot(
-        session.runtime ? mapBackendRuntime(session.runtime, scheduleEntity) : null,
+        liveSession.runtime ? mapBackendRuntime(liveSession.runtime, scheduleEntity) : null,
       );
 
-      if (session.attempt) {
-        const nextAttempt = mapBackendStudentAttempt(session.attempt);
+      if (liveSession.attempt) {
+        const nextAttempt = mapBackendStudentAttempt(
+          liveSession.attempt as Parameters<typeof mapBackendStudentAttempt>[0],
+        );
         const isSubmittedAttempt = Boolean(
           (
-            session.attempt as {
+            liveSession.attempt as {
               submittedAt?: string | null | undefined;
             }
           ).submittedAt,
@@ -257,8 +283,8 @@ export function useStudentSessionRouteData(
           examTitle: scheduleEntity.examTitle,
           ...createCandidateProfile(candidateId, storedCandidateProfile),
           currentModule:
-            (session.runtime
-              ? mapBackendRuntime(session.runtime, scheduleEntity).currentSectionKey
+            (liveSession.runtime
+              ? mapBackendRuntime(liveSession.runtime, scheduleEntity).currentSectionKey
               : null) ?? firstEnabledModule,
         });
         setAttemptSnapshot(createdAttempt);
@@ -268,7 +294,18 @@ export function useStudentSessionRouteData(
     } finally {
       setIsLoading(false);
     }
-  }, [authStatus, candidateId, scheduleId, storedCandidateProfile, studentKey]);
+  }, [
+    authStatus,
+    candidateId,
+    queryClient,
+    refetchStaticSession,
+    scheduleId,
+    isStaticSessionLoading,
+    staticSessionData,
+    staticSessionError,
+    storedCandidateProfile,
+    studentKey,
+  ]);
 
   useEffect(() => {
     void loadStudentData();

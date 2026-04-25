@@ -11,6 +11,7 @@ import {
   backendPost,
 } from './backendBridge';
 import { logError } from '../app/error/errorLogger';
+import { queryClient, queryKeys } from '../app/data/queryClient';
 import { createTtlLruCache } from '../utils/ttlLruCache';
 
 type LegacyBackendQuestionBankItem = {
@@ -50,6 +51,10 @@ const questionRevisions = createTtlLruCache<string, number>({
   ttlMs: 30 * 60 * 1000,
 });
 
+function invalidateQuestionQueries(): void {
+  queryClient.invalidateQueries({ queryKey: queryKeys.library.questions() });
+}
+
 class BackendQuestionBank {
   async getAllQuestions(): Promise<QuestionBankItem[]> {
     const raw = await backendGet<unknown>('/v1/library/questions');
@@ -81,6 +86,7 @@ class BackendQuestionBank {
     if (!mapped) {
       throw new Error('Backend returned an invalid question record');
     }
+    invalidateQuestionQueries();
     return mapped;
   }
 
@@ -114,13 +120,16 @@ class BackendQuestionBank {
     }
 
     const raw = await backendPatch<unknown>(`/v1/library/questions/${id}`, patchBody);
-    return this.mapBackendItem(raw);
+    const mapped = this.mapBackendItem(raw);
+    invalidateQuestionQueries();
+    return mapped;
   }
 
   async deleteQuestion(id: string): Promise<boolean> {
     try {
       await backendDelete(`/v1/library/questions/${id}`);
       questionRevisions.delete(id);
+      invalidateQuestionQueries();
       return true;
     } catch (error) {
       if (this.isNotFound(error)) return false;
@@ -165,6 +174,7 @@ class BackendQuestionBank {
   async incrementUsageCount(id: string): Promise<void> {
     try {
       await backendPatch(`/v1/library/questions/${id}/increment-usage`, {});
+      invalidateQuestionQueries();
     } catch {
       // Some deployments don't implement this endpoint; usage count is best-effort.
     }
