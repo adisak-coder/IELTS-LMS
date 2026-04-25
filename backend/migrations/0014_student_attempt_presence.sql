@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS student_attempt_presence (
-    attempt_id CHAR(36) PRIMARY KEY,
-    schedule_id CHAR(36) NOT NULL,
-    client_session_id CHAR(36) NOT NULL,
+    attempt_id VARCHAR(36) PRIMARY KEY,
+    schedule_id VARCHAR(36) NOT NULL,
+    client_session_id VARCHAR(36) NOT NULL,
     last_heartbeat_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_heartbeat_status VARCHAR(20) NOT NULL DEFAULT 'ok',
     last_disconnect_at TIMESTAMP NULL,

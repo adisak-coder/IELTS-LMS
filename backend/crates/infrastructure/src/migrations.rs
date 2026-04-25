@@ -205,4 +205,40 @@ CREATE INDEX idx_foo_id ON foo(id);\n";
 
         assert_eq!(resolved, Path::new("/workspace/backend/migrations"));
     }
+
+    #[test]
+    fn student_attempt_presence_fk_columns_match_parent_types() {
+        let delivery_sql = std::fs::read_to_string("../../migrations/0006_delivery.sql")
+            .expect("read delivery migration");
+        let presence_sql =
+            std::fs::read_to_string("../../migrations/0014_student_attempt_presence.sql")
+                .expect("read student attempt presence migration");
+
+        let parent_type =
+            column_type(&delivery_sql, "student_attempts", "id").expect("student_attempts.id type");
+        let presence_attempt_type =
+            column_type(&presence_sql, "student_attempt_presence", "attempt_id")
+                .expect("student_attempt_presence.attempt_id type");
+        let presence_schedule_type =
+            column_type(&presence_sql, "student_attempt_presence", "schedule_id")
+                .expect("student_attempt_presence.schedule_id type");
+
+        assert_eq!(presence_attempt_type, parent_type);
+        assert_eq!(presence_schedule_type, "VARCHAR(36)");
+    }
+
+    fn column_type(sql: &str, table: &str, column: &str) -> Option<String> {
+        let create_marker = format!("CREATE TABLE IF NOT EXISTS {table}");
+        let table_sql = sql.split(&create_marker).nth(1)?;
+        let column_marker = format!("{column} ");
+        let column_line = table_sql
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with(&column_marker))?;
+        column_line
+            .trim_start_matches(&column_marker)
+            .split_whitespace()
+            .next()
+            .map(|value| value.trim_end_matches(',').to_owned())
+    }
 }
