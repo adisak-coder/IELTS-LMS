@@ -63,7 +63,7 @@ export function useStudentStaticSession(
   enabled: boolean,
 ) {
   return useQuery({
-    queryKey: queryKeys.students.staticSession(scheduleId ?? ''),
+    queryKey: queryKeys.students.staticSession(scheduleId ?? '', candidateId ?? ''),
     queryFn: () => fetchStudentStaticSession(scheduleId!, candidateId!),
     enabled: enabled && Boolean(scheduleId && candidateId),
     ...staticQueryPolicy,
@@ -76,7 +76,7 @@ export function useStudentLiveSession(
   enabled: boolean,
 ) {
   return useQuery({
-    queryKey: queryKeys.students.liveSession(scheduleId ?? ''),
+    queryKey: queryKeys.students.liveSession(scheduleId ?? '', candidateId ?? ''),
     queryFn: () => fetchStudentLiveSession(scheduleId!, candidateId!),
     enabled: enabled && Boolean(scheduleId && candidateId),
     ...liveQueryPolicy,

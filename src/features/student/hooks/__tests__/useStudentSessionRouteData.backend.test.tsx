@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthSessionProvider } from '../../../auth/authSession';
 import { authService, type AuthSession } from '../../../../services/authService';
 import { useStudentSessionRouteData } from '../useStudentSessionRouteData';
+import { queryKeys } from '../../../../app/data/queryClient';
 
 const originalFetch = global.fetch;
 
@@ -197,6 +198,13 @@ function buildAttempt() {
   };
 }
 
+function buildSubmittedAttempt() {
+  return {
+    ...buildAttempt(),
+    submittedAt: '2026-01-01T11:00:00.000Z',
+  };
+}
+
 describe('useStudentSessionRouteData backend mode', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -352,5 +360,61 @@ describe('useStudentSessionRouteData backend mode', () => {
 
     expect(result.current.error).toMatch(/invalid access code/i);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('separates cached backend student sessions by candidate id', () => {
+    expect(queryKeys.students.staticSession('sched-1', 'W250334')).not.toEqual(
+      queryKeys.students.staticSession('sched-1', 'W250335'),
+    );
+    expect(queryKeys.students.liveSession('sched-1', 'W250334')).not.toEqual(
+      queryKeys.students.liveSession('sched-1', 'W250335'),
+    );
+  });
+
+  it('refetches the live backend session snapshot on each runtime refresh', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({
+        schedule: buildSessionContext(null).schedule,
+        version: buildSessionContext(null).version,
+        degradedLiveMode: false,
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        runtime: buildSessionContext(null).runtime,
+        attempt: buildSubmittedAttempt(),
+        degradedLiveMode: false,
+      }))
+      .mockImplementation(() => Promise.resolve(jsonResponse({
+        runtime: buildSessionContext(buildSubmittedAttempt()).runtime,
+        attempt: buildSubmittedAttempt(),
+        degradedLiveMode: false,
+      })));
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.attemptSnapshot).not.toBeNull();
+    });
+
+    const liveCallCountBeforeRefresh = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334',
+    ).length;
+
+    await act(async () => {
+      await result.current.refreshRuntime();
+      await result.current.refreshRuntime();
+    });
+
+    const liveCallCountAfterRefresh = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334',
+    ).length;
+    expect(liveCallCountAfterRefresh).toBe(liveCallCountBeforeRefresh + 2);
   });
 });

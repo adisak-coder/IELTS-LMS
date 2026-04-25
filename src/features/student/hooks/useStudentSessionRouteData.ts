@@ -140,8 +140,9 @@ export function useStudentSessionRouteData(
     }
 
     const liveSession = await queryClient.fetchQuery({
-      queryKey: queryKeys.students.liveSession(scheduleId),
+      queryKey: queryKeys.students.liveSession(scheduleId, candidateId),
       queryFn: () => fetchStudentLiveSession(scheduleId, candidateId),
+      staleTime: 0,
     });
 
     setRuntimeSnapshot(
@@ -232,8 +233,9 @@ export function useStudentSessionRouteData(
       setSchedule(scheduleEntity);
       setState(examState);
       const liveSession = await queryClient.fetchQuery({
-        queryKey: queryKeys.students.liveSession(scheduleId),
+        queryKey: queryKeys.students.liveSession(scheduleId, candidateId),
         queryFn: () => fetchStudentLiveSession(scheduleId, candidateId),
+        staleTime: 0,
       });
       setRuntimeSnapshot(
         liveSession.runtime ? mapBackendRuntime(liveSession.runtime, scheduleEntity) : null,

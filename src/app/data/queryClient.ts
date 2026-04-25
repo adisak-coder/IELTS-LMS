@@ -88,10 +88,10 @@ export const queryKeys = {
     all: ['students'] as const,
     lists: () => [...queryKeys.students.all, 'list'] as const,
     details: (id: string) => [...queryKeys.students.all, 'detail', id] as const,
-    staticSession: (scheduleId: string) =>
-      [...queryKeys.students.all, 'session', scheduleId, 'static'] as const,
-    liveSession: (scheduleId: string) =>
-      [...queryKeys.students.all, 'session', scheduleId, 'live'] as const,
+    staticSession: (scheduleId: string, candidateId: string) =>
+      [...queryKeys.students.all, 'session', scheduleId, candidateId, 'static'] as const,
+    liveSession: (scheduleId: string, candidateId: string) =>
+      [...queryKeys.students.all, 'session', scheduleId, candidateId, 'live'] as const,
   },
 
   // Proctoring-related queries
