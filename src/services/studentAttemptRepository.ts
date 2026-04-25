@@ -137,7 +137,7 @@ interface BackendMutationBatchResponse {
 }
 
 interface BackendHeartbeatResponse {
-  attempt: BackendStudentAttempt;
+  attempt?: BackendStudentAttempt | null | undefined;
   refreshedAttemptCredential?: BackendAttemptCredential | null | undefined;
 }
 
@@ -1503,7 +1503,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     try {
       const response = await this.postWithAttemptAuth<BackendHeartbeatResponse>(
         attempt,
-        `/v1/student/sessions/${event.scheduleId}/heartbeat`,
+        `/v1/student/sessions/${event.scheduleId}/heartbeat${event.type === 'heartbeat' ? '?responseMode=ack' : ''}`,
         {
           attemptId: event.attemptId,
           studentKey: attempt.studentKey,
@@ -1516,7 +1516,9 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       );
 
       storeAttemptCredential(attempt, response.refreshedAttemptCredential);
-      await this.cacheAttempt(mapBackendStudentAttempt(response.attempt));
+      if (response.attempt) {
+        await this.cacheAttempt(mapBackendStudentAttempt(response.attempt));
+      }
       await this.cache.deleteHeartbeatEvent(event.attemptId, event.id);
     } catch {
       // Keep the event in storage for replay on reconnect.
@@ -1552,7 +1554,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       try {
         const response = await this.postWithAttemptAuth<BackendHeartbeatResponse>(
           attempt,
-          `/v1/student/sessions/${event.scheduleId}/heartbeat`,
+          `/v1/student/sessions/${event.scheduleId}/heartbeat${event.type === 'heartbeat' ? '?responseMode=ack' : ''}`,
           {
             attemptId: event.attemptId,
             studentKey: attempt.studentKey,
@@ -1565,7 +1567,9 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         );
 
         storeAttemptCredential(attempt, response.refreshedAttemptCredential);
-        await this.cacheAttempt(mapBackendStudentAttempt(response.attempt));
+        if (response.attempt) {
+          await this.cacheAttempt(mapBackendStudentAttempt(response.attempt));
+        }
         await this.cache.deleteHeartbeatEvent(event.attemptId, event.id);
       } catch {
         return false;

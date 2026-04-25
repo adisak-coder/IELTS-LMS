@@ -13,12 +13,11 @@ use uuid::Uuid;
 use ielts_backend_api::{router::build_router, state::AppState};
 use ielts_backend_application::{builder::BuilderService, scheduling::SchedulingService};
 use ielts_backend_domain::{
-    auth::UserRole,
     attempt::{
         StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
-        StudentMutationBatchRequest,
-        StudentPrecheckRequest, StudentSubmitRequest,
+        StudentMutationBatchRequest, StudentPrecheckRequest, StudentSubmitRequest,
     },
+    auth::UserRole,
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
     schedule::CreateScheduleRequest,
 };
@@ -38,6 +37,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0008_grading_results.sql",
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
+    "0014_student_attempt_presence.sql",
 ];
 
 #[tokio::test]
@@ -57,8 +57,8 @@ async fn get_student_session_returns_schedule_and_version_before_bootstrap() {
                 "/api/v1/student/sessions/{}?candidateId=alice",
                 schedule_id
             )))
-                .body(Body::empty())
-                .unwrap(),
+            .body(Body::empty())
+            .unwrap(),
         )
         .await
         .unwrap();
@@ -121,10 +121,7 @@ async fn precheck_persists_integrity_on_the_attempt() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = json_body(response).await;
 
-    assert_eq!(
-        json["data"]["studentKey"],
-        student_key
-    );
+    assert_eq!(json["data"]["studentKey"], student_key);
     assert_eq!(json["data"]["phase"], "lobby");
     assert_eq!(
         json["data"]["integrity"]["preCheck"]["completedAt"],
@@ -178,10 +175,7 @@ async fn bootstrap_creates_or_hydrates_the_attempt_context() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = json_body(response).await;
 
-    assert_eq!(
-        json["data"]["attempt"]["studentKey"],
-        student_key
-    );
+    assert_eq!(json["data"]["attempt"]["studentKey"], student_key);
     assert_eq!(json["data"]["attempt"]["phase"], "pre-check");
     assert_eq!(json["data"]["runtime"]["status"], "not_started");
     assert!(json["data"]["attemptCredential"]["attemptToken"].is_string());
@@ -202,7 +196,10 @@ async fn mutation_batch_persists_answers_and_returns_the_server_watermark() {
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -271,7 +268,10 @@ async fn mutation_batch_ack_mode_returns_only_commit_metadata() {
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -349,11 +349,11 @@ async fn mutation_batch_allows_independent_client_sessions_to_persist_reading_an
         .await;
     start_runtime(database.pool(), schedule_id, "reading").await;
 
-    let attempt_id = bootstrap_phone["data"]["attempt"]["id"].as_str().unwrap().to_owned();
-    assert_eq!(
-        bootstrap_computer["data"]["attempt"]["id"],
-        attempt_id
-    );
+    let attempt_id = bootstrap_phone["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(bootstrap_computer["data"]["attempt"]["id"], attempt_id);
     let attempt_token_phone = bootstrap_phone["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -426,13 +426,12 @@ async fn mutation_batch_allows_independent_client_sessions_to_persist_reading_an
 
     assert_eq!(second.status(), StatusCode::OK);
 
-    let answers: serde_json::Value = sqlx::query_scalar(
-        "SELECT answers FROM student_attempts WHERE id = ?",
-    )
-    .bind(&attempt_id)
-    .fetch_one(database.pool())
-    .await
-    .unwrap();
+    let answers: serde_json::Value =
+        sqlx::query_scalar("SELECT answers FROM student_attempts WHERE id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
 
     assert_eq!(answers["q1"], "A");
     assert_eq!(answers["q2"], "B");
@@ -453,7 +452,10 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -559,6 +561,147 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
 }
 
 #[tokio::test]
+async fn heartbeat_ack_mode_records_presence_without_touching_attempt_revision() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+    let (bootstrap, client_session_id) =
+        bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before_revision: i32 =
+        sqlx::query_scalar("SELECT revision FROM student_attempts WHERE id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
+
+    let response = app
+        .oneshot(
+            with_attempt_token(Request::builder(), &attempt_token)
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/student/sessions/{}/heartbeat?responseMode=ack",
+                    schedule_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&StudentHeartbeatRequest {
+                        attempt_id: Some(attempt_id.clone()),
+                        student_key: student_key.clone(),
+                        client_session_id: client_session_id.clone(),
+                        event_type: "heartbeat".to_owned(),
+                        payload: None,
+                        client_timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 6, 0).unwrap(),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = json_body(response).await;
+    assert!(json["data"].get("attempt").is_none());
+
+    let after_revision: i32 =
+        sqlx::query_scalar("SELECT revision FROM student_attempts WHERE id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
+    assert_eq!(after_revision, before_revision);
+
+    let presence: (String, String) = sqlx::query_as(
+        "SELECT last_heartbeat_status, client_session_id FROM student_attempt_presence WHERE attempt_id = ?",
+    )
+    .bind(&attempt_id)
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(presence.0, "ok");
+    assert_eq!(presence.1, client_session_id);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn heartbeat_defaults_to_ack_response_without_touching_attempt_revision() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+    let (bootstrap, client_session_id) =
+        bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let before_revision: i32 =
+        sqlx::query_scalar("SELECT revision FROM student_attempts WHERE id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
+
+    let response = app
+        .oneshot(
+            with_attempt_token(Request::builder(), &attempt_token)
+                .method("POST")
+                .uri(format!("/api/v1/student/sessions/{}/heartbeat", schedule_id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&StudentHeartbeatRequest {
+                        attempt_id: Some(attempt_id.clone()),
+                        student_key: student_key.clone(),
+                        client_session_id,
+                        event_type: "heartbeat".to_owned(),
+                        payload: None,
+                        client_timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 6, 0).unwrap(),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = json_body(response).await;
+    assert!(json["data"].get("attempt").is_none());
+
+    let after_revision: i32 =
+        sqlx::query_scalar("SELECT revision FROM student_attempts WHERE id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .unwrap();
+    assert_eq!(after_revision, before_revision);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn heartbeat_records_disconnect_transitions() {
     let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
@@ -570,7 +713,10 @@ async fn heartbeat_records_disconnect_transitions() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -604,7 +750,10 @@ async fn heartbeat_records_disconnect_transitions() {
     assert_eq!(response.status(), StatusCode::OK);
     let json = json_body(response).await;
 
-    assert_eq!(json["data"]["attempt"]["integrity"]["lastHeartbeatStatus"], "lost");
+    assert_eq!(
+        json["data"]["attempt"]["integrity"]["lastHeartbeatStatus"],
+        "lost"
+    );
     assert_ne!(
         json["data"]["attempt"]["integrity"]["lastDisconnectAt"],
         serde_json::Value::Null
@@ -643,7 +792,10 @@ async fn heartbeat_records_lost_transitions() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -653,7 +805,10 @@ async fn heartbeat_records_lost_transitions() {
         .oneshot(
             with_attempt_token(Request::builder(), &attempt_token)
                 .method("POST")
-                .uri(format!("/api/v1/student/sessions/{}/heartbeat", schedule_id))
+                .uri(format!(
+                    "/api/v1/student/sessions/{}/heartbeat",
+                    schedule_id
+                ))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&StudentHeartbeatRequest {
@@ -698,7 +853,10 @@ async fn student_audit_inserts_session_log_and_violation_event() {
     ));
     let (bootstrap, _client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -764,7 +922,10 @@ async fn submit_finalizes_the_attempt_idempotently() {
         database.pool().clone(),
     ));
     let (bootstrap, _) = bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -835,7 +996,10 @@ async fn submit_replays_cached_response_for_the_same_idempotency_key() {
         database.pool().clone(),
     ));
     let (bootstrap, _) = bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -952,7 +1116,10 @@ async fn bootstrap_hydrates_existing_attempt_after_crash_reconnect() {
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -989,12 +1156,8 @@ async fn bootstrap_hydrates_existing_attempt_after_crash_reconnect() {
         .unwrap();
     assert_eq!(mutation.status(), StatusCode::OK);
 
-    let (rebootstrap, _) =
-        bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    assert_eq!(
-        rebootstrap["data"]["attempt"]["id"],
-        attempt_id
-    );
+    let (rebootstrap, _) = bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
+    assert_eq!(rebootstrap["data"]["attempt"]["id"], attempt_id);
     assert_eq!(rebootstrap["data"]["attempt"]["answers"]["q1"], "A");
 
     database.shutdown().await;
@@ -1013,7 +1176,10 @@ async fn mutation_batch_persists_writing_answers_separately_and_tracks_current_q
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "writing").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1033,15 +1199,13 @@ async fn mutation_batch_persists_writing_answers_separately_and_tracks_current_q
                         attempt_id: attempt_id.clone(),
                         student_key: student_key.clone(),
                         client_session_id,
-                        mutations: vec![
-                            ielts_backend_domain::attempt::MutationEnvelope {
-                                id: "mutation-1".to_owned(),
-                                seq: 1,
-                                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                                mutation_type: "writing_answer".to_owned(),
-                                payload: json!({"taskId": "task1", "value": "Draft 1"}),
-                            },
-                        ],
+                        mutations: vec![ielts_backend_domain::attempt::MutationEnvelope {
+                            id: "mutation-1".to_owned(),
+                            seq: 1,
+                            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
+                            mutation_type: "writing_answer".to_owned(),
+                            payload: json!({"taskId": "task1", "value": "Draft 1"}),
+                        }],
                     })
                     .unwrap(),
                 ))
@@ -1052,7 +1216,10 @@ async fn mutation_batch_persists_writing_answers_separately_and_tracks_current_q
 
     assert_eq!(response.status(), StatusCode::OK);
     let json = json_body(response).await;
-    assert_eq!(json["data"]["attempt"]["writingAnswers"]["task1"], "Draft 1");
+    assert_eq!(
+        json["data"]["attempt"]["writingAnswers"]["task1"],
+        "Draft 1"
+    );
     assert_eq!(json["data"]["attempt"]["answers"], json!({}));
     assert_eq!(json["data"]["attempt"]["currentQuestionId"], "task1");
 
@@ -1072,7 +1239,10 @@ async fn mutation_batch_rejects_objective_mutations_outside_the_current_section(
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "reading").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1129,7 +1299,10 @@ async fn mutation_batch_surfaces_section_mismatch_with_reason() {
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1185,7 +1358,10 @@ async fn mutation_batch_rejects_objective_mutations_when_proctor_paused_attempt(
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1246,7 +1422,10 @@ async fn mutation_batch_rejects_objective_mutations_when_runtime_paused() {
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1306,7 +1485,10 @@ async fn violation_snapshot_is_append_only_and_client_cannot_erase_entries() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1381,7 +1563,13 @@ async fn violation_snapshot_is_append_only_and_client_cannot_erase_entries() {
         .unwrap();
     assert_eq!(second.status(), StatusCode::OK);
     let json = json_body(second).await;
-    assert_eq!(json["data"]["attempt"]["violationsSnapshot"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        json["data"]["attempt"]["violationsSnapshot"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(json["data"]["attempt"]["violationsSnapshot"][0]["id"], "v1");
 
     database.shutdown().await;
@@ -1400,7 +1588,10 @@ async fn position_mutation_is_telemetry_only_and_does_not_change_authoritative_s
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
     start_runtime(database.pool(), schedule_id, "listening").await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1442,8 +1633,14 @@ async fn position_mutation_is_telemetry_only_and_does_not_change_authoritative_s
     let json = json_body(response).await;
     assert_eq!(json["data"]["attempt"]["phase"], "exam");
     assert_eq!(json["data"]["attempt"]["currentModule"], "listening");
-    assert_eq!(json["data"]["attempt"]["currentQuestionId"], serde_json::Value::Null);
-    assert_eq!(json["data"]["attempt"]["recovery"]["clientPosition"]["phase"], "post-exam");
+    assert_eq!(
+        json["data"]["attempt"]["currentQuestionId"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        json["data"]["attempt"]["recovery"]["clientPosition"]["phase"],
+        "post-exam"
+    );
 
     database.shutdown().await;
 }
@@ -1460,7 +1657,10 @@ async fn oversized_mutation_batch_is_rejected_fast() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1518,7 +1718,10 @@ async fn attempt_token_rejects_schedule_mismatch() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_a_id, "alice", &student_key).await;
-    let attempt_id = bootstrap["data"]["attempt"]["id"].as_str().unwrap().to_owned();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
         .as_str()
         .unwrap()
@@ -1585,7 +1788,6 @@ async fn bootstrap_attempt_with_client_session_id(
     student_key: &str,
     client_session_id: &str,
 ) -> (serde_json::Value, String) {
-
     // First do precheck to set up integrity with client_session_id
     let precheck_response = app
         .clone()

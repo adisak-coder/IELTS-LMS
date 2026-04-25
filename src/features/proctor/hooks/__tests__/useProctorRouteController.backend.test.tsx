@@ -275,7 +275,7 @@ describe('useProctorRouteController backend mode', () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      '/api/v1/proctor/sessions/sched-1',
+      '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100',
       expect.objectContaining({ method: 'GET' }),
     );
   });
@@ -395,7 +395,7 @@ describe('useProctorRouteController backend mode', () => {
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       4,
-      '/api/v1/proctor/sessions/sched-1',
+      '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100',
       expect.objectContaining({ method: 'GET' }),
     );
   });

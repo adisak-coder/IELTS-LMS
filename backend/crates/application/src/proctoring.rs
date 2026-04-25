@@ -2,8 +2,9 @@ use chrono::{DateTime, Utc};
 use ielts_backend_domain::schedule::{
     AlertAckRequest, AttemptCommandRequest, CompleteExamRequest, DegradedLiveState,
     ExamSessionRuntime, ExtendSectionRequest, PresenceAction, ProctorAlert, ProctorPresence,
-    ProctorPresenceRequest, ProctorSessionDetail, ProctorSessionSummary, RuntimeStatus,
-    SectionRuntimeStatus, SessionAuditLog, SessionNote, StudentSessionSummary, ViolationRule,
+    ProctorPresenceRequest, ProctorSessionDetail, ProctorSessionSummary, RuntimeSectionState,
+    RuntimeStatus, SectionRuntimeStatus, SessionAuditLog, SessionNote, StudentSessionSummary,
+    ViolationRule,
 };
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
@@ -12,7 +13,8 @@ use ielts_backend_infrastructure::{
     outbox::OutboxRepository,
 };
 use serde_json::{json, Value};
-use sqlx::{FromRow, MySql, MySqlPool};
+use sqlx::{FromRow, MySql, MySqlPool, QueryBuilder};
+use std::collections::HashMap;
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
@@ -33,6 +35,12 @@ pub enum ProctoringError {
 
 pub struct ProctoringService {
     pool: MySqlPool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProctorSessionDetailOptions {
+    pub audit_limit: Option<u32>,
+    pub alert_limit: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,41 +101,44 @@ impl ProctoringService {
     ) -> Result<Vec<ProctorSessionSummary>, ProctoringError> {
         let actor = system_actor();
         let scheduling = SchedulingService::new(self.pool.clone());
-        let live_mode = LiveModeService::new(self.pool.clone());
         let schedules = scheduling
             .list_schedules(&actor)
             .await
             .map_err(map_scheduling_error)?;
-        let mut items = Vec::with_capacity(schedules.len());
-
-        for schedule in schedules {
-            let schedule_id_uuid = Uuid::parse_str(&schedule.id).map_err(|_| ProctoringError::Validation("Invalid schedule ID".to_string()))?;
-            let runtime = scheduling
-                .get_runtime(&actor, schedule_id_uuid)
-                .await
-                .map_err(map_scheduling_error)?;
-            let student_count: i64 =
-                sqlx::query_scalar("SELECT COUNT(*) FROM student_attempts WHERE schedule_id = ?")
-                    .bind(&schedule.id)
-                    .fetch_one(&self.pool)
-                    .await?;
-            let active_count: i64 = sqlx::query_scalar(
+        let schedule_ids = schedules
+            .iter()
+            .map(|schedule| schedule.id.clone())
+            .collect::<Vec<_>>();
+        let runtimes = self.load_existing_runtimes(&schedule_ids).await?;
+        let student_counts = self
+            .load_grouped_counts(
+                "SELECT schedule_id, COUNT(*) AS count FROM student_attempts WHERE schedule_id IN (",
+                ") GROUP BY schedule_id",
+                &schedule_ids,
+            )
+            .await?;
+        let active_counts = self
+            .load_grouped_counts(
                 r#"
-                SELECT COUNT(*)
+                SELECT schedule_id, COUNT(*) AS count
                 FROM student_attempts
-                WHERE schedule_id = ?
+                WHERE schedule_id IN (
+                "#,
+                r#")
                   AND COALESCE(proctor_status, 'active') NOT IN ('terminated', 'paused')
                   AND phase = 'exam'
-                "#,
+                GROUP BY schedule_id"#,
+                &schedule_ids,
             )
-            .bind(&schedule.id)
-            .fetch_one(&self.pool)
             .await?;
-            let alert_count: i64 = sqlx::query_scalar(
+        let alert_counts = self
+            .load_grouped_counts(
                 r#"
-                SELECT COUNT(*)
+                SELECT schedule_id, COUNT(*) AS count
                 FROM session_audit_logs
-                WHERE schedule_id = ?
+                WHERE schedule_id IN (
+                "#,
+                r#")
                   AND acknowledged_at IS NULL
                   AND action_type IN (
                     'HEARTBEAT_LOST',
@@ -138,33 +149,41 @@ impl ProctoringService {
                     'STUDENT_PAUSE',
                     'STUDENT_TERMINATE'
                   )
-                "#,
+                GROUP BY schedule_id"#,
+                &schedule_ids,
             )
-            .bind(&schedule.id)
-            .fetch_one(&self.pool)
             .await?;
-            let violation_count: i64 = sqlx::query_scalar(
-                r#"
-                SELECT COUNT(*)
-                FROM student_violation_events
-                WHERE schedule_id = ?
-                "#,
+        let violation_counts = self
+            .load_grouped_counts(
+                "SELECT schedule_id, COUNT(*) AS count FROM student_violation_events WHERE schedule_id IN (",
+                ") GROUP BY schedule_id",
+                &schedule_ids,
             )
-            .bind(&schedule.id)
-            .fetch_one(&self.pool)
             .await?;
-            let degraded = live_mode
-                .snapshot(live_mode_enabled, Some(schedule_id_uuid))
-                .await?;
+        let degraded = self
+            .load_degraded_schedule_ids(live_mode_enabled, &schedule_ids)
+            .await?;
 
+        let mut items = Vec::with_capacity(schedules.len());
+        for schedule in schedules {
+            let runtime = if let Some(runtime) = runtimes.get(&schedule.id) {
+                runtime.clone()
+            } else {
+                let schedule_id_uuid = Uuid::parse_str(&schedule.id)
+                    .map_err(|_| ProctoringError::Validation("Invalid schedule ID".to_string()))?;
+                scheduling
+                    .get_runtime(&actor, schedule_id_uuid)
+                    .await
+                    .map_err(map_scheduling_error)?
+            };
             items.push(ProctorSessionSummary {
-                schedule,
+                student_count: *student_counts.get(&schedule.id).unwrap_or(&0),
+                active_count: *active_counts.get(&schedule.id).unwrap_or(&0),
+                alert_count: *alert_counts.get(&schedule.id).unwrap_or(&0),
+                violation_count: *violation_counts.get(&schedule.id).unwrap_or(&0),
+                degraded_live_mode: degraded.get(&schedule.id).copied().unwrap_or(false),
                 runtime,
-                student_count,
-                active_count,
-                alert_count,
-                violation_count,
-                degraded_live_mode: degraded.degraded,
+                schedule,
             });
         }
 
@@ -176,6 +195,21 @@ impl ProctoringService {
         &self,
         schedule_id: Uuid,
         live_mode_enabled: bool,
+    ) -> Result<ProctorSessionDetail, ProctoringError> {
+        self.get_session_detail_with_options(
+            schedule_id,
+            live_mode_enabled,
+            ProctorSessionDetailOptions::default(),
+        )
+        .await
+    }
+
+    #[tracing::instrument(skip(self), fields(schedule_id = %schedule_id))]
+    pub async fn get_session_detail_with_options(
+        &self,
+        schedule_id: Uuid,
+        live_mode_enabled: bool,
+        options: ProctorSessionDetailOptions,
     ) -> Result<ProctorSessionDetail, ProctoringError> {
         let actor = system_actor();
         let scheduling = SchedulingService::new(self.pool.clone());
@@ -191,8 +225,17 @@ impl ProctoringService {
             .snapshot(live_mode_enabled, Some(schedule_id))
             .await?;
         let sessions = self.load_student_sessions(schedule_id, &runtime).await?;
-        let audit_logs = self.load_audit_logs(schedule_id).await?;
-        let alerts = build_alerts(&audit_logs, &sessions);
+        let audit_logs = self
+            .load_audit_logs(schedule_id, options.audit_limit)
+            .await?;
+        let alerts = if options.alert_limit == options.audit_limit {
+            build_alerts(&audit_logs, &sessions)
+        } else {
+            let alert_logs = self
+                .load_alert_logs(schedule_id, options.alert_limit)
+                .await?;
+            build_alerts(&alert_logs, &sessions)
+        };
         let notes = sqlx::query_as::<_, SessionNote>(
             "SELECT * FROM session_notes WHERE schedule_id = ? ORDER BY created_at DESC",
         )
@@ -250,9 +293,16 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_proctor_schedule(ctx, schedule_id.to_string(), org_id.to_string()) {
+            if !AuthorizationService::can_proctor_schedule(
+                ctx,
+                schedule_id.to_string(),
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -341,9 +391,16 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_proctor_schedule(ctx, schedule_id.to_string(), org_id.to_string()) {
+            if !AuthorizationService::can_proctor_schedule(
+                ctx,
+                schedule_id.to_string(),
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -571,9 +628,16 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_proctor_schedule(ctx, schedule_id.to_string(), org_id.to_string()) {
+            if !AuthorizationService::can_proctor_schedule(
+                ctx,
+                schedule_id.to_string(),
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -712,9 +776,16 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_proctor_schedule(ctx, schedule_id.to_string(), org_id.to_string()) {
+            if !AuthorizationService::can_proctor_schedule(
+                ctx,
+                schedule_id.to_string(),
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -835,9 +906,17 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_access_student_data(ctx, schedule_id.to_string(), "", org_id.to_string()) {
+            if !AuthorizationService::can_access_student_data(
+                ctx,
+                schedule_id.to_string(),
+                "",
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -933,9 +1012,17 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_access_student_data(ctx, schedule_id.to_string(), "", org_id.to_string()) {
+            if !AuthorizationService::can_access_student_data(
+                ctx,
+                schedule_id.to_string(),
+                "",
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -965,9 +1052,17 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_access_student_data(ctx, schedule_id.to_string(), "", org_id.to_string()) {
+            if !AuthorizationService::can_access_student_data(
+                ctx,
+                schedule_id.to_string(),
+                "",
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -997,9 +1092,17 @@ impl ProctoringService {
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_access_student_data(ctx, schedule_id.to_string(), "", org_id.to_string()) {
+            if !AuthorizationService::can_access_student_data(
+                ctx,
+                schedule_id.to_string(),
+                "",
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -1104,10 +1207,12 @@ impl ProctoringService {
         let active_index = sections
             .iter()
             .position(|section| section.section_key == active_section_key)
-            .ok_or_else(|| ProctoringError::Conflict("Active section row is missing.".to_owned()))?;
-        let active_section = sections
-            .get(active_index)
-            .ok_or_else(|| ProctoringError::Conflict("Active section row is missing.".to_owned()))?;
+            .ok_or_else(|| {
+                ProctoringError::Conflict("Active section row is missing.".to_owned())
+            })?;
+        let active_section = sections.get(active_index).ok_or_else(|| {
+            ProctoringError::Conflict("Active section row is missing.".to_owned())
+        })?;
         if active_section.status != SectionRuntimeStatus::Live {
             return Ok(None);
         }
@@ -1276,24 +1381,32 @@ impl ProctoringService {
         _req: AlertAckRequest,
     ) -> Result<SessionAuditLog, ProctoringError> {
         // Get the alert to check which schedule it belongs to
-        let alert: SessionAuditLog = sqlx::query_as(
-            "SELECT * FROM session_audit_logs WHERE id = ?"
-        )
-        .bind(alert_id.to_string())
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or(ProctoringError::NotFound)?;
+        let alert: SessionAuditLog =
+            sqlx::query_as("SELECT * FROM session_audit_logs WHERE id = ?")
+                .bind(alert_id.to_string())
+                .fetch_optional(&self.pool)
+                .await?
+                .ok_or(ProctoringError::NotFound)?;
 
         let scheduling = SchedulingService::new(self.pool.clone());
-        let schedule_id_uuid = Uuid::parse_str(&alert.schedule_id).map_err(|_| ProctoringError::Validation("Invalid schedule ID".to_string()))?;
+        let schedule_id_uuid = Uuid::parse_str(&alert.schedule_id)
+            .map_err(|_| ProctoringError::Validation("Invalid schedule ID".to_string()))?;
         let schedule = scheduling
             .get_schedule(ctx, schedule_id_uuid)
             .await
             .map_err(map_scheduling_error)?;
 
-        let organization_id = schedule.organization_id.as_ref().and_then(|s| Uuid::parse_str(s).ok());
+        let organization_id = schedule
+            .organization_id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok());
         if let Some(org_id) = organization_id {
-            if !AuthorizationService::can_access_student_data(ctx, schedule_id_uuid.to_string(), "", org_id.to_string()) {
+            if !AuthorizationService::can_access_student_data(
+                ctx,
+                schedule_id_uuid.to_string(),
+                "",
+                org_id.to_string(),
+            ) {
                 return Err(ProctoringError::NotFound);
             }
         }
@@ -1308,7 +1421,7 @@ impl ProctoringService {
         .bind(&ctx.actor_id.to_string())
         .bind(alert_id.to_string())
         .execute(&self.pool)
-            .await?;
+        .await?;
 
         sqlx::query_as::<_, SessionAuditLog>("SELECT * FROM session_audit_logs WHERE id = ?")
             .bind(alert_id.to_string())
@@ -1395,12 +1508,15 @@ impl ProctoringService {
                 violations_snapshot,
                 exam_id,
                 exam_title,
-                updated_at,
+                student_attempts.updated_at,
                 COALESCE(proctor_status, 'active') AS proctor_status,
-                last_warning_id
+                last_warning_id,
+                presence.last_heartbeat_at AS presence_last_heartbeat_at,
+                presence.last_heartbeat_status AS presence_last_heartbeat_status
             FROM student_attempts
-            WHERE schedule_id = ?
-            ORDER BY updated_at DESC
+            LEFT JOIN student_attempt_presence presence ON presence.attempt_id = student_attempts.id
+            WHERE student_attempts.schedule_id = ?
+            ORDER BY student_attempts.updated_at DESC
             "#,
         )
         .bind(schedule_id.to_string())
@@ -1429,18 +1545,21 @@ impl ProctoringService {
                 candidate_id,
                 candidate_name,
                 candidate_email,
-                schedule_id,
+                student_attempts.schedule_id,
                 current_module,
                 phase,
                 integrity,
                 violations_snapshot,
                 exam_id,
                 exam_title,
-                updated_at,
+                student_attempts.updated_at,
                 COALESCE(proctor_status, 'active') AS proctor_status,
-                last_warning_id
+                last_warning_id,
+                presence.last_heartbeat_at AS presence_last_heartbeat_at,
+                presence.last_heartbeat_status AS presence_last_heartbeat_status
             FROM student_attempts
-            WHERE id = ? AND schedule_id = ?
+            LEFT JOIN student_attempt_presence presence ON presence.attempt_id = student_attempts.id
+            WHERE student_attempts.id = ? AND student_attempts.schedule_id = ?
             "#,
         )
         .bind(attempt_id.to_string())
@@ -1453,13 +1572,11 @@ impl ProctoringService {
     }
 
     async fn load_runtime_row(&self, schedule_id: Uuid) -> Result<RuntimeRow, ProctoringError> {
-        sqlx::query_as::<_, RuntimeRow>(
-            "SELECT * FROM exam_session_runtimes WHERE schedule_id = ?",
-        )
-        .bind(schedule_id.to_string())
-        .fetch_optional(&self.pool)
-        .await?
-        .ok_or(ProctoringError::NotFound)
+        sqlx::query_as::<_, RuntimeRow>("SELECT * FROM exam_session_runtimes WHERE schedule_id = ?")
+            .bind(schedule_id.to_string())
+            .fetch_optional(&self.pool)
+            .await?
+            .ok_or(ProctoringError::NotFound)
     }
 
     async fn load_runtime_section_rows(
@@ -1478,14 +1595,190 @@ impl ProctoringService {
     async fn load_audit_logs(
         &self,
         schedule_id: Uuid,
+        limit: Option<u32>,
     ) -> Result<Vec<SessionAuditLog>, ProctoringError> {
-        sqlx::query_as::<_, SessionAuditLog>(
-            "SELECT * FROM session_audit_logs WHERE schedule_id = ? ORDER BY created_at DESC",
-        )
-        .bind(schedule_id.to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(ProctoringError::from)
+        let mut query =
+            QueryBuilder::<MySql>::new("SELECT * FROM session_audit_logs WHERE schedule_id = ");
+        query.push_bind(schedule_id.to_string());
+        query.push(" ORDER BY created_at DESC");
+        if let Some(limit) = limit {
+            query.push(" LIMIT ");
+            query.push_bind(i64::from(limit));
+        }
+
+        query
+            .build_query_as::<SessionAuditLog>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(ProctoringError::from)
+    }
+
+    async fn load_alert_logs(
+        &self,
+        schedule_id: Uuid,
+        limit: Option<u32>,
+    ) -> Result<Vec<SessionAuditLog>, ProctoringError> {
+        let mut query = QueryBuilder::<MySql>::new(
+            r#"
+            SELECT *
+            FROM session_audit_logs
+            WHERE schedule_id =
+            "#,
+        );
+        query.push_bind(schedule_id.to_string());
+        query.push(
+            r#"
+              AND acknowledged_at IS NULL
+              AND action_type IN (
+                'HEARTBEAT_LOST',
+                'DEVICE_CONTINUITY_FAILED',
+                'NETWORK_DISCONNECTED',
+                'AUTO_ACTION',
+                'STUDENT_WARN',
+                'STUDENT_PAUSE',
+                'STUDENT_TERMINATE'
+              )
+            ORDER BY created_at DESC
+            "#,
+        );
+        if let Some(limit) = limit {
+            query.push(" LIMIT ");
+            query.push_bind(i64::from(limit));
+        }
+
+        query
+            .build_query_as::<SessionAuditLog>()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(ProctoringError::from)
+    }
+
+    async fn load_grouped_counts(
+        &self,
+        prefix: &str,
+        suffix: &str,
+        schedule_ids: &[String],
+    ) -> Result<HashMap<String, i64>, ProctoringError> {
+        if schedule_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut query = QueryBuilder::<MySql>::new(prefix);
+        let mut separated = query.separated(", ");
+        for schedule_id in schedule_ids {
+            separated.push_bind(schedule_id);
+        }
+        separated.push_unseparated(suffix);
+
+        let rows = query
+            .build_query_as::<ScheduleCountRow>()
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.schedule_id, row.count))
+            .collect())
+    }
+
+    async fn load_degraded_schedule_ids(
+        &self,
+        live_mode_enabled: bool,
+        schedule_ids: &[String],
+    ) -> Result<HashMap<String, bool>, ProctoringError> {
+        if !live_mode_enabled || schedule_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let threshold = Utc::now() - chrono::Duration::seconds(15);
+        let mut query = QueryBuilder::<MySql>::new(
+            r#"
+            SELECT aggregate_id AS schedule_id, COUNT(*) AS count
+            FROM outbox_events
+            WHERE aggregate_kind = 'schedule_runtime'
+              AND published_at IS NULL
+              AND created_at <
+            "#,
+        );
+        query.push_bind(threshold);
+        query.push(" AND aggregate_id IN (");
+        let mut separated = query.separated(", ");
+        for schedule_id in schedule_ids {
+            separated.push_bind(schedule_id);
+        }
+        separated.push_unseparated(") GROUP BY aggregate_id");
+
+        let rows = query
+            .build_query_as::<ScheduleCountRow>()
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.schedule_id, row.count > 0))
+            .collect())
+    }
+
+    async fn load_existing_runtimes(
+        &self,
+        schedule_ids: &[String],
+    ) -> Result<HashMap<String, ExamSessionRuntime>, ProctoringError> {
+        if schedule_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut runtime_query = QueryBuilder::<MySql>::new(
+            "SELECT * FROM exam_session_runtimes WHERE schedule_id IN (",
+        );
+        let mut separated = runtime_query.separated(", ");
+        for schedule_id in schedule_ids {
+            separated.push_bind(schedule_id);
+        }
+        separated.push_unseparated(")");
+        let runtime_rows = runtime_query
+            .build_query_as::<RuntimeHydrationRow>()
+            .fetch_all(&self.pool)
+            .await?;
+
+        if runtime_rows.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let runtime_ids = runtime_rows
+            .iter()
+            .map(|row| row.id.to_string())
+            .collect::<Vec<_>>();
+        let mut section_query = QueryBuilder::<MySql>::new(
+            "SELECT * FROM exam_session_runtime_sections WHERE runtime_id IN (",
+        );
+        let mut separated = section_query.separated(", ");
+        for runtime_id in &runtime_ids {
+            separated.push_bind(runtime_id);
+        }
+        separated.push_unseparated(") ORDER BY runtime_id, section_order ASC");
+        let section_rows = section_query
+            .build_query_as::<RuntimeHydrationSectionRow>()
+            .fetch_all(&self.pool)
+            .await?;
+
+        let mut sections_by_runtime: HashMap<String, Vec<RuntimeHydrationSectionRow>> =
+            HashMap::new();
+        for section in section_rows {
+            sections_by_runtime
+                .entry(section.runtime_id.to_string())
+                .or_default()
+                .push(section);
+        }
+
+        Ok(runtime_rows
+            .into_iter()
+            .map(|row| {
+                let runtime_id = row.id.to_string();
+                let sections = sections_by_runtime.remove(&runtime_id).unwrap_or_default();
+                let schedule_id = row.schedule_id.to_string();
+                (schedule_id, runtime_hydration_row_to_runtime(row, sections))
+            })
+            .collect())
     }
 }
 
@@ -1505,6 +1798,55 @@ struct AttemptProjectionRow {
     updated_at: DateTime<Utc>,
     proctor_status: String,
     last_warning_id: Option<String>,
+    presence_last_heartbeat_at: Option<DateTime<Utc>>,
+    presence_last_heartbeat_status: Option<String>,
+}
+
+#[derive(FromRow)]
+struct ScheduleCountRow {
+    schedule_id: String,
+    count: i64,
+}
+
+#[derive(FromRow)]
+struct RuntimeHydrationRow {
+    id: Hyphenated,
+    schedule_id: Hyphenated,
+    exam_id: Hyphenated,
+    status: RuntimeStatus,
+    plan_snapshot: Value,
+    actual_start_at: Option<DateTime<Utc>>,
+    actual_end_at: Option<DateTime<Utc>>,
+    active_section_key: Option<String>,
+    current_section_key: Option<String>,
+    current_section_remaining_seconds: i32,
+    waiting_for_next_section: bool,
+    is_overrun: bool,
+    total_paused_seconds: i32,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    revision: i32,
+}
+
+#[derive(FromRow)]
+struct RuntimeHydrationSectionRow {
+    id: Hyphenated,
+    runtime_id: Hyphenated,
+    section_key: String,
+    label: String,
+    section_order: i32,
+    planned_duration_minutes: i32,
+    gap_after_minutes: i32,
+    status: SectionRuntimeStatus,
+    available_at: Option<DateTime<Utc>>,
+    actual_start_at: Option<DateTime<Utc>>,
+    actual_end_at: Option<DateTime<Utc>>,
+    paused_at: Option<DateTime<Utc>>,
+    accumulated_paused_seconds: i32,
+    extension_minutes: i32,
+    completion_reason: Option<String>,
+    projected_start_at: Option<DateTime<Utc>>,
+    projected_end_at: Option<DateTime<Utc>>,
 }
 
 #[derive(FromRow)]
@@ -1542,8 +1884,8 @@ fn compute_section_remaining_seconds(
     status: SectionRuntimeStatus,
     now: DateTime<Utc>,
 ) -> i32 {
-    let duration_seconds = i64::from(planned_duration_minutes.saturating_add(extension_minutes))
-        .saturating_mul(60);
+    let duration_seconds =
+        i64::from(planned_duration_minutes.saturating_add(extension_minutes)).saturating_mul(60);
 
     let time_base = if status == SectionRuntimeStatus::Paused || paused_at.is_some() {
         paused_at.unwrap_or(now)
@@ -1552,11 +1894,106 @@ fn compute_section_remaining_seconds(
     };
 
     let raw_elapsed_seconds = (time_base - actual_start_at).num_seconds().max(0);
-    let elapsed_seconds = raw_elapsed_seconds
-        .saturating_sub(i64::from(accumulated_paused_seconds.max(0)));
+    let elapsed_seconds =
+        raw_elapsed_seconds.saturating_sub(i64::from(accumulated_paused_seconds.max(0)));
     let remaining_seconds = (duration_seconds - elapsed_seconds).clamp(0, duration_seconds);
 
     remaining_seconds as i32
+}
+
+fn runtime_hydration_row_to_runtime(
+    row: RuntimeHydrationRow,
+    section_rows: Vec<RuntimeHydrationSectionRow>,
+) -> ExamSessionRuntime {
+    let now = Utc::now();
+    let computed_runtime = compute_runtime_remaining_seconds_for_hydration(
+        row.current_section_key.as_deref(),
+        row.active_section_key.as_deref(),
+        &section_rows,
+        now,
+    );
+    let current_section_remaining_seconds = computed_runtime
+        .map(|(remaining_seconds, _)| remaining_seconds)
+        .unwrap_or(row.current_section_remaining_seconds);
+    let is_overrun = computed_runtime
+        .map(|(_, is_overrun)| is_overrun)
+        .unwrap_or(row.is_overrun);
+
+    ExamSessionRuntime {
+        id: row.id.to_string(),
+        schedule_id: row.schedule_id.to_string(),
+        exam_id: row.exam_id.to_string(),
+        status: row.status,
+        plan_snapshot: serde_json::from_value(row.plan_snapshot).unwrap_or_default(),
+        actual_start_at: row.actual_start_at,
+        actual_end_at: row.actual_end_at,
+        active_section_key: row.active_section_key,
+        current_section_key: row.current_section_key,
+        current_section_remaining_seconds,
+        waiting_for_next_section: row.waiting_for_next_section,
+        is_overrun,
+        total_paused_seconds: row.total_paused_seconds,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+        revision: row.revision,
+        sections: section_rows
+            .into_iter()
+            .map(runtime_section_from_hydration)
+            .collect(),
+    }
+}
+
+fn compute_runtime_remaining_seconds_for_hydration(
+    current_section_key: Option<&str>,
+    active_section_key: Option<&str>,
+    sections: &[RuntimeHydrationSectionRow],
+    now: DateTime<Utc>,
+) -> Option<(i32, bool)> {
+    let section_key = current_section_key.or(active_section_key)?;
+    let section = sections
+        .iter()
+        .find(|section| section.section_key == section_key)?;
+    let actual_start_at = section.actual_start_at?;
+    let duration_seconds = i64::from(
+        section
+            .planned_duration_minutes
+            .saturating_add(section.extension_minutes),
+    )
+    .saturating_mul(60);
+    let time_base = if section.status == SectionRuntimeStatus::Paused || section.paused_at.is_some()
+    {
+        section.paused_at.unwrap_or(now)
+    } else {
+        now
+    };
+    let raw_elapsed_seconds = (time_base - actual_start_at).num_seconds().max(0);
+    let elapsed_seconds =
+        raw_elapsed_seconds.saturating_sub(i64::from(section.accumulated_paused_seconds.max(0)));
+    let remaining_seconds = (duration_seconds - elapsed_seconds).clamp(0, duration_seconds);
+
+    Some((remaining_seconds as i32, elapsed_seconds > duration_seconds))
+}
+
+fn runtime_section_from_hydration(value: RuntimeHydrationSectionRow) -> RuntimeSectionState {
+    RuntimeSectionState {
+        id: value.id.to_string(),
+        runtime_id: value.runtime_id.to_string(),
+        section_key: value.section_key,
+        label: value.label,
+        section_order: value.section_order,
+        planned_duration_minutes: value.planned_duration_minutes,
+        gap_after_minutes: value.gap_after_minutes,
+        status: value.status,
+        available_at: value.available_at,
+        actual_start_at: value.actual_start_at,
+        actual_end_at: value.actual_end_at,
+        paused_at: value.paused_at,
+        accumulated_paused_seconds: value.accumulated_paused_seconds,
+        extension_minutes: value.extension_minutes,
+        completion_reason: value.completion_reason,
+        projected_start_at: value.projected_start_at,
+        projected_end_at: value.projected_end_at,
+    }
 }
 
 fn system_actor() -> ActorContext {
@@ -1577,9 +2014,13 @@ fn attempt_row_to_session(
     runtime: &ExamSessionRuntime,
 ) -> StudentSessionSummary {
     let heartbeat_status = row
-        .integrity
-        .get("lastHeartbeatStatus")
-        .and_then(Value::as_str)
+        .presence_last_heartbeat_status
+        .as_deref()
+        .or_else(|| {
+            row.integrity
+                .get("lastHeartbeatStatus")
+                .and_then(Value::as_str)
+        })
         .unwrap_or("idle");
     let status = if row.proctor_status == "terminated" || row.phase == "post-exam" {
         "terminated".to_owned()
@@ -1599,13 +2040,14 @@ fn attempt_row_to_session(
         .iter()
         .find(|section| Some(section.section_key.clone()) == runtime.current_section_key)
         .map(|section| section_status_name(&section.status));
-    let last_activity = row
-        .integrity
-        .get("lastHeartbeatAt")
-        .and_then(Value::as_str)
-        .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
-        .map(|value| value.with_timezone(&Utc))
-        .unwrap_or(row.updated_at);
+    let last_activity = row.presence_last_heartbeat_at.unwrap_or_else(|| {
+        row.integrity
+            .get("lastHeartbeatAt")
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc))
+            .unwrap_or(row.updated_at)
+    });
     let warnings = row
         .violations_snapshot
         .as_array()
@@ -1663,10 +2105,11 @@ fn build_alerts(
             )
         })
         .map(|log| {
-            let session = log
-                .target_student_id
-                .as_ref()
-                .and_then(|target| sessions.iter().find(|session| session.attempt_id == *target));
+            let session = log.target_student_id.as_ref().and_then(|target| {
+                sessions
+                    .iter()
+                    .find(|session| session.attempt_id == *target)
+            });
             let severity = log
                 .payload
                 .as_ref()

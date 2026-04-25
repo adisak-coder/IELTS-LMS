@@ -162,7 +162,7 @@ describe('useProctorRouteController live updates', () => {
         );
       }
 
-      if (url === '/api/v1/proctor/sessions/sched-1') {
+      if (url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100') {
         return new Response(
           JSON.stringify({
             success: true,
@@ -189,7 +189,9 @@ describe('useProctorRouteController live updates', () => {
       });
 
       const initialListCalls = fetchUrls.filter((url) => url === '/api/v1/proctor/sessions');
-      const initialDetailCalls = fetchUrls.filter((url) => url === '/api/v1/proctor/sessions/sched-1');
+      const initialDetailCalls = fetchUrls.filter((url) =>
+        url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100'
+      );
       expect(initialListCalls).toHaveLength(1);
       expect(initialDetailCalls).toHaveLength(1);
 
@@ -204,8 +206,10 @@ describe('useProctorRouteController live updates', () => {
 
       await waitFor(() => {
         const listCalls = fetchUrls.filter((url) => url === '/api/v1/proctor/sessions');
-        const detailCalls = fetchUrls.filter((url) => url === '/api/v1/proctor/sessions/sched-1');
-        expect(listCalls).toHaveLength(1);
+        const detailCalls = fetchUrls.filter((url) =>
+          url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100'
+        );
+        expect(listCalls).toHaveLength(2);
         expect(detailCalls).toHaveLength(2);
       });
     } finally {

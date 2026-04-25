@@ -3,9 +3,11 @@ use axum::{
     http::StatusCode,
     Json,
 };
-use ielts_backend_application::auth::AuthService;
 use chrono::Utc;
-use ielts_backend_application::proctoring::{ProctoringError, ProctoringService};
+use ielts_backend_application::auth::AuthService;
+use ielts_backend_application::proctoring::{
+    ProctorSessionDetailOptions, ProctoringError, ProctoringService,
+};
 use ielts_backend_domain::auth::UserRole;
 use ielts_backend_domain::schedule::{
     AlertAckRequest, AttemptCommandRequest, CompleteExamRequest, ExtendSectionRequest,
@@ -29,6 +31,14 @@ use crate::{
 #[serde(rename_all = "camelCase")]
 pub struct LiveModeQuery {
     pub schedule_id: Option<Uuid>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProctorSessionQuery {
+    pub mode: Option<String>,
+    pub audit_limit: Option<u32>,
+    pub alert_limit: Option<u32>,
 }
 
 pub async fn list_sessions(
@@ -60,13 +70,27 @@ pub async fn get_session(
     Extension(request_id): Extension<RequestId>,
     principal: AuthenticatedUser,
     Path(schedule_id): Path<Uuid>,
+    Query(query): Query<ProctorSessionQuery>,
 ) -> Result<ApiResponse<ProctorSessionDetail>, ApiError> {
     authorize_schedule(&state, &principal, schedule_id).await?;
     let service = ProctoringService::new(state.db_pool());
     let started = std::time::Instant::now();
-    let detail = service
-        .get_session_detail(schedule_id, state.live_mode_enabled)
-        .await?;
+    let detail = if query.mode.as_deref() == Some("dashboard") {
+        service
+            .get_session_detail_with_options(
+                schedule_id,
+                state.live_mode_enabled,
+                ProctorSessionDetailOptions {
+                    audit_limit: Some(query.audit_limit.unwrap_or(200)),
+                    alert_limit: Some(query.alert_limit.unwrap_or(100)),
+                },
+            )
+            .await?
+    } else {
+        service
+            .get_session_detail(schedule_id, state.live_mode_enabled)
+            .await?
+    };
     state
         .telemetry
         .observe_db_operation("proctor.get_session_detail", started.elapsed());
@@ -123,18 +147,18 @@ pub async fn end_section_now(
         .with_schedule_scope_id(schedule_id.to_string());
     let service = ProctoringService::new(state.db_pool());
     let started = std::time::Instant::now();
-    let runtime = service
-        .end_section_now(&ctx, schedule_id, req)
-        .await?;
+    let runtime = service.end_section_now(&ctx, schedule_id, req).await?;
     state
         .telemetry
         .observe_db_operation("proctor.end_section_now", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_runtime".to_owned(),
-        id: schedule_id.to_string(),
-        revision: i64::from(runtime.revision),
-        event: "end_section_now".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_runtime".to_owned(),
+            id: schedule_id.to_string(),
+            revision: i64::from(runtime.revision),
+            event: "end_section_now".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 
@@ -151,18 +175,18 @@ pub async fn extend_section(
         .with_schedule_scope_id(schedule_id.to_string());
     let service = ProctoringService::new(state.db_pool());
     let started = std::time::Instant::now();
-    let runtime = service
-        .extend_section(&ctx, schedule_id, req)
-        .await?;
+    let runtime = service.extend_section(&ctx, schedule_id, req).await?;
     state
         .telemetry
         .observe_db_operation("proctor.extend_section", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_runtime".to_owned(),
-        id: schedule_id.to_string(),
-        revision: i64::from(runtime.revision),
-        event: "extend_section".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_runtime".to_owned(),
+            id: schedule_id.to_string(),
+            revision: i64::from(runtime.revision),
+            event: "extend_section".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 
@@ -179,18 +203,18 @@ pub async fn complete_exam(
         .with_schedule_scope_id(schedule_id.to_string());
     let service = ProctoringService::new(state.db_pool());
     let started = std::time::Instant::now();
-    let runtime = service
-        .complete_exam(&ctx, schedule_id, req)
-        .await?;
+    let runtime = service.complete_exam(&ctx, schedule_id, req).await?;
     state
         .telemetry
         .observe_db_operation("proctor.complete_exam", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_runtime".to_owned(),
-        id: schedule_id.to_string(),
-        revision: i64::from(runtime.revision),
-        event: "complete_exam".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_runtime".to_owned(),
+            id: schedule_id.to_string(),
+            revision: i64::from(runtime.revision),
+            event: "complete_exam".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 
@@ -213,18 +237,22 @@ pub async fn warn_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.warn_attempt", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_roster".to_owned(),
-        id: schedule_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "attempt".to_owned(),
-        id: attempt_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_roster".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "attempt".to_owned(),
+            id: attempt_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -247,18 +275,22 @@ pub async fn pause_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.pause_attempt", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_roster".to_owned(),
-        id: schedule_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "attempt".to_owned(),
-        id: attempt_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_roster".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "attempt".to_owned(),
+            id: attempt_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -281,18 +313,22 @@ pub async fn resume_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.resume_attempt", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_roster".to_owned(),
-        id: schedule_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "attempt".to_owned(),
-        id: attempt_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_roster".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "attempt".to_owned(),
+            id: attempt_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -315,18 +351,22 @@ pub async fn terminate_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.terminate_attempt", started.elapsed());
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "schedule_roster".to_owned(),
-        id: schedule_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
-    state.live_updates.publish(ielts_backend_domain::schedule::LiveUpdateEvent {
-        kind: "attempt".to_owned(),
-        id: attempt_id.to_string(),
-        revision: 0,
-        event: "attempt_changed".to_owned(),
-    });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_roster".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
+    state
+        .live_updates
+        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "attempt".to_owned(),
+            id: attempt_id.to_string(),
+            revision: 0,
+            event: "attempt_changed".to_owned(),
+        });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -338,24 +378,34 @@ pub async fn acknowledge_alert(
     Path(alert_id): Path<Uuid>,
     Json(req): Json<AlertAckRequest>,
 ) -> Result<ApiResponse<SessionAuditLog>, ApiError> {
-    let schedule_id_str: String = sqlx::query_scalar(
-        "SELECT schedule_id FROM session_audit_logs WHERE id = ?",
-    )
-    .bind(alert_id.to_string())
-    .fetch_optional(&state.db_pool())
-    .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
-    .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))?;
-    let schedule_id: Uuid = Uuid::parse_str(&schedule_id_str)
-        .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "PARSE_ERROR", "Invalid schedule ID in audit log"))?;
+    let schedule_id_str: String =
+        sqlx::query_scalar("SELECT schedule_id FROM session_audit_logs WHERE id = ?")
+            .bind(alert_id.to_string())
+            .fetch_optional(&state.db_pool())
+            .await
+            .map_err(|err| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DATABASE_ERROR",
+                    &err.to_string(),
+                )
+            })?
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found")
+            })?;
+    let schedule_id: Uuid = Uuid::parse_str(&schedule_id_str).map_err(|_| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "PARSE_ERROR",
+            "Invalid schedule ID in audit log",
+        )
+    })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
     let service = ProctoringService::new(state.db_pool());
     let started = std::time::Instant::now();
-    let alert = service
-        .acknowledge_alert(&ctx, alert_id, req)
-        .await?;
+    let alert = service.acknowledge_alert(&ctx, alert_id, req).await?;
     state
         .telemetry
         .observe_db_operation("proctor.acknowledge_alert", started.elapsed());
@@ -427,7 +477,13 @@ async fn assigned_schedule_ids(
     .bind(role)
     .fetch_all(&state.db_pool())
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?;
+    .map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATABASE_ERROR",
+            &err.to_string(),
+        )
+    })?;
     Ok(rows.into_iter().collect())
 }
 

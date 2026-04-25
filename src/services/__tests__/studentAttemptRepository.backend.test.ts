@@ -912,7 +912,7 @@ describe('studentAttemptRepository backend mode', () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      '/api/v1/student/sessions/sched-1/heartbeat',
+      '/api/v1/student/sessions/sched-1/heartbeat?responseMode=ack',
       expect.objectContaining({ method: 'POST' }),
     );
     const storedEvents = await studentAttemptRepository.getHeartbeatEvents(attempt.id);

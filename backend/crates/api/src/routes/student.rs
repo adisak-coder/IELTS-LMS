@@ -5,14 +5,16 @@ use axum::{
 };
 use chrono::Utc;
 use ielts_backend_application::auth::{AuthService, StudentAccess};
-use ielts_backend_application::delivery::{DeliveryError, DeliveryService, MutationBatchResponseMode};
-use ielts_backend_domain::auth::UserRole;
-use ielts_backend_domain::attempt::{
-    StudentBootstrapRequest, StudentHeartbeatRequest, StudentMutationBatchRequest,
-    StudentHeartbeatResponse, StudentMutationBatchResponse, StudentPrecheckRequest,
-    StudentSessionContext, StudentSessionQuery, StudentSubmitRequest, StudentSubmitResponse,
-    StudentAuditLogRequest,
+use ielts_backend_application::delivery::{
+    DeliveryError, DeliveryService, MutationBatchResponseMode,
 };
+use ielts_backend_domain::attempt::{
+    StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
+    StudentHeartbeatResponse, StudentMutationBatchRequest, StudentMutationBatchResponse,
+    StudentPrecheckRequest, StudentSessionContext, StudentSessionQuery, StudentSubmitRequest,
+    StudentSubmitResponse,
+};
+use ielts_backend_domain::auth::UserRole;
 use serde_json::{json, Value};
 use sqlx::query_scalar;
 use std::time::Instant;
@@ -52,13 +54,13 @@ pub async fn get_student_session(
     let access = authorize_student(&state, &principal, schedule_id).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
-    
+
     let wcode = if !access.wcode.is_empty() {
         Some(access.wcode.clone())
     } else {
         None
     };
-    
+
     let mut session = service
         .get_session_context(schedule_id, wcode, access.legacy_student_key.clone(), None)
         .await?;
@@ -114,6 +116,19 @@ pub async fn get_student_session(
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
+#[derive(Debug, Clone, Copy, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum HeartbeatResponseMode {
+    Full,
+    Ack,
+}
+
+#[derive(Debug, Default, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeartbeatQuery {
+    pub response_mode: Option<HeartbeatResponseMode>,
+}
+
 pub async fn save_precheck(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -131,13 +146,13 @@ pub async fn save_precheck(
     let access = authorize_student(&state, &principal, schedule_id).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
-    
+
     let wcode = if !access.wcode.is_empty() {
         Some(access.wcode.clone())
     } else {
         None
     };
-    
+
     let attempt = service
         .persist_precheck(
             schedule_id,
@@ -179,7 +194,9 @@ pub async fn bootstrap_student_session(
     let key = RateLimitKey::User(principal.user.id.clone());
     let config = RateLimitConfig::new(
         state.config.rate_limit_student_bootstrap_per_user,
-        state.config.rate_limit_student_bootstrap_per_user_window_secs,
+        state
+            .config
+            .rate_limit_student_bootstrap_per_user_window_secs,
     );
     match state.rate_limiter.check_with_config(&key, &config).await {
         RateLimitResult::Allowed { .. } => {}
@@ -187,14 +204,17 @@ pub async fn bootstrap_student_session(
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "RATE_LIMIT_EXCEEDED",
-                &format!("Too many bootstrap attempts. Retry after {} seconds.", retry_after.as_secs()),
+                &format!(
+                    "Too many bootstrap attempts. Retry after {} seconds.",
+                    retry_after.as_secs()
+                ),
             ));
         }
     }
     let access = authorize_student(&state, &principal, schedule_id).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
-    
+
     let wcode = if !access.wcode.is_empty() {
         Some(access.wcode.clone())
     } else {
@@ -202,7 +222,7 @@ pub async fn bootstrap_student_session(
     };
 
     let client_session_id = req.client_session_id.clone();
-    
+
     let mut session = service
         .bootstrap(
             schedule_id,
@@ -219,7 +239,11 @@ pub async fn bootstrap_student_session(
         .await?;
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
     let attempt = session.attempt.as_ref().ok_or_else(|| {
-        ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Missing student attempt context.")
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "INTERNAL_ERROR",
+            "Missing student attempt context.",
+        )
     })?;
     session.attempt_credential = Some(
         auth_service
@@ -268,14 +292,18 @@ pub async fn apply_mutation_batch(
     let config = RateLimitConfig::new(
         state.config.rate_limit_mutation_per_attempt,
         state.config.rate_limit_mutation_per_attempt_window_secs,
-    ).with_burst(50); // Allow burst for reconnect replay
+    )
+    .with_burst(50); // Allow burst for reconnect replay
     match state.rate_limiter.check_with_config(&key, &config).await {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "RATE_LIMIT_EXCEEDED",
-                &format!("Too many mutation attempts. Retry after {} seconds.", retry_after.as_secs()),
+                &format!(
+                    "Too many mutation attempts. Retry after {} seconds.",
+                    retry_after.as_secs()
+                ),
             ));
         }
     }
@@ -340,8 +368,7 @@ pub async fn apply_mutation_batch(
 
     req.attempt_id = attempt_id.clone();
     req.client_session_id = claims_client_session_id;
-    req.student_key = load_attempt_student_key(&state, &attempt_id)
-        .await?;
+    req.student_key = load_attempt_student_key(&state, &attempt_id).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
     let mut result = service
@@ -398,6 +425,7 @@ pub async fn record_heartbeat(
     Extension(request_id): Extension<RequestId>,
     principal: AttemptPrincipal,
     Path(schedule_id): Path<Uuid>,
+    Query(query): Query<HeartbeatQuery>,
     Json(mut req): Json<StudentHeartbeatRequest>,
 ) -> Result<ApiResponse<StudentHeartbeatResponse>, ApiError> {
     let attempt_id = principal.authorization.claims.attempt_id.clone();
@@ -409,14 +437,18 @@ pub async fn record_heartbeat(
     let config = RateLimitConfig::new(
         state.config.rate_limit_heartbeat_per_attempt,
         state.config.rate_limit_heartbeat_per_attempt_window_secs,
-    ).with_burst(20); // Small burst allowance
+    )
+    .with_burst(20); // Small burst allowance
     match state.rate_limiter.check_with_config(&key, &config).await {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "RATE_LIMIT_EXCEEDED",
-                &format!("Too many heartbeat attempts. Retry after {} seconds.", retry_after.as_secs()),
+                &format!(
+                    "Too many heartbeat attempts. Retry after {} seconds.",
+                    retry_after.as_secs()
+                ),
             ));
         }
     }
@@ -430,11 +462,12 @@ pub async fn record_heartbeat(
     }
     req.attempt_id = Some(attempt_id.clone());
     req.client_session_id = claims_client_session_id;
-    req.student_key = load_attempt_student_key(&state, &attempt_id)
-        .await?;
+    req.student_key = load_attempt_student_key(&state, &attempt_id).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
     let event_type = req.event_type.clone();
+    let ack_only = event_type == "heartbeat"
+        && query.response_mode != Some(HeartbeatResponseMode::Full);
     let attempt = service.record_heartbeat(schedule_id, req).await?;
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
     state
@@ -458,7 +491,7 @@ pub async fn record_heartbeat(
     }
     Ok(ApiResponse::success_with_request_id(
         StudentHeartbeatResponse {
-            attempt,
+            attempt: if ack_only { None } else { Some(attempt) },
             refreshed_attempt_credential: auth_service
                 .maybe_refresh_attempt_token(&principal.authorization)
                 .await
@@ -545,7 +578,13 @@ pub async fn record_audit(
     .bind(payload_value.clone())
     .execute(&state.db_pool())
     .await
-    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?;
+    .map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATABASE_ERROR",
+            &err.to_string(),
+        )
+    })?;
 
     if req.action_type == "VIOLATION_DETECTED" {
         let violation_type = payload_value
@@ -564,10 +603,7 @@ pub async fn record_audit(
             .to_owned();
 
         if let (Some(violation_type), Some(severity)) = (violation_type, severity) {
-            let allowed = matches!(
-                severity.as_str(),
-                "low" | "medium" | "high" | "critical"
-            );
+            let allowed = matches!(severity.as_str(), "low" | "medium" | "high" | "critical");
             if allowed {
                 let violation_id = Uuid::new_v4();
                 sqlx::query(
@@ -664,7 +700,10 @@ pub async fn submit_student_session(
             return Err(ApiError::new(
                 StatusCode::TOO_MANY_REQUESTS,
                 "RATE_LIMIT_EXCEEDED",
-                &format!("Too many submit attempts. Retry after {} seconds.", retry_after.as_secs()),
+                &format!(
+                    "Too many submit attempts. Retry after {} seconds.",
+                    retry_after.as_secs()
+                ),
             ));
         }
     }
@@ -677,8 +716,7 @@ pub async fn submit_student_session(
         ));
     }
     req.attempt_id = attempt_id.clone();
-    req.student_key = load_attempt_student_key(&state, &attempt_id)
-        .await?;
+    req.student_key = load_attempt_student_key(&state, &attempt_id).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
     let mut submission = service
@@ -786,36 +824,59 @@ async fn load_attempt_student_key(state: &AppState, attempt_id: &str) -> Result<
         .bind(attempt_id)
         .fetch_optional(&state.db_pool())
         .await
-        .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
+        .map_err(|err| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DATABASE_ERROR",
+                &err.to_string(),
+            )
+        })?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))
 }
 
-async fn load_attempt_candidate_name(state: &AppState, attempt_id: &str) -> Result<String, ApiError> {
+async fn load_attempt_candidate_name(
+    state: &AppState,
+    attempt_id: &str,
+) -> Result<String, ApiError> {
     query_scalar("SELECT candidate_name FROM student_attempts WHERE id = ?")
         .bind(attempt_id)
         .fetch_optional(&state.db_pool())
         .await
-        .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?
+        .map_err(|err| {
+            ApiError::new(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "DATABASE_ERROR",
+                &err.to_string(),
+            )
+        })?
         .ok_or_else(|| ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found"))
 }
 
 fn map_auth_error(error: ielts_backend_application::auth::AuthError) -> ApiError {
     match error {
-        ielts_backend_application::auth::AuthError::Database(err) => {
-            ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string())
-        }
+        ielts_backend_application::auth::AuthError::Database(err) => ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATABASE_ERROR",
+            &err.to_string(),
+        ),
         ielts_backend_application::auth::AuthError::InvalidCredentials
-        | ielts_backend_application::auth::AuthError::Unauthorized => {
-            ApiError::new(StatusCode::UNAUTHORIZED, "UNAUTHORIZED", "Authentication is required for this route.")
-        }
-        ielts_backend_application::auth::AuthError::Forbidden => {
-            ApiError::new(StatusCode::FORBIDDEN, "FORBIDDEN", "The authenticated user is not allowed to access this route.")
-        }
+        | ielts_backend_application::auth::AuthError::Unauthorized => ApiError::new(
+            StatusCode::UNAUTHORIZED,
+            "UNAUTHORIZED",
+            "Authentication is required for this route.",
+        ),
+        ielts_backend_application::auth::AuthError::Forbidden => ApiError::new(
+            StatusCode::FORBIDDEN,
+            "FORBIDDEN",
+            "The authenticated user is not allowed to access this route.",
+        ),
         ielts_backend_application::auth::AuthError::Conflict(message) => {
             ApiError::new(StatusCode::CONFLICT, "CONFLICT", &message)
         }
-        ielts_backend_application::auth::AuthError::Validation(message) => {
-            ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", &message)
-        }
+        ielts_backend_application::auth::AuthError::Validation(message) => ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &message,
+        ),
     }
 }

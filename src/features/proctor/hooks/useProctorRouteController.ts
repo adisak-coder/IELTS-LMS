@@ -183,6 +183,10 @@ type ProctorSessionDetailPayload = {
   degradedLiveMode: boolean;
 };
 
+function buildDashboardDetailEndpoint(scheduleId: string) {
+  return `/v1/proctor/sessions/${scheduleId}?mode=dashboard&auditLimit=200&alertLimit=100`;
+}
+
 function buildScheduleMetrics(detail: ProctorSessionDetailPayload) {
   const sessions = detail.sessions.map(mapBackendSessionSummary);
   const alerts = detail.alerts.map(mapBackendAlert);
@@ -288,7 +292,6 @@ export function useProctorRouteController(): ProctorRouteController {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pollIntervalMs, setPollIntervalMs] = useState(4_000);
-  const [hasHydrated, setHasHydrated] = useState(false);
   const scheduleStudentIdsRef = useRef<Map<string, Set<string>>>(new Map());
 
   const loadMonitoringState = useCallback(async () => {
@@ -348,7 +351,7 @@ export function useProctorRouteController(): ProctorRouteController {
 
     const detailResults = await Promise.allSettled(
       [...detailScheduleIds].map((scheduleId) =>
-        backendGet<ProctorSessionDetailPayload>(`/v1/proctor/sessions/${scheduleId}`),
+        backendGet<ProctorSessionDetailPayload>(buildDashboardDetailEndpoint(scheduleId)),
       ),
     );
 
@@ -401,7 +404,6 @@ export function useProctorRouteController(): ProctorRouteController {
   const refresh = useCallback(async () => {
     try {
       await loadMonitoringState();
-      setHasHydrated(true);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load proctor data');
@@ -411,7 +413,7 @@ export function useProctorRouteController(): ProctorRouteController {
 
   const refreshSchedule = useCallback(async (scheduleId: string) => {
     const detail = await backendGet<ProctorSessionDetailPayload>(
-      `/v1/proctor/sessions/${scheduleId}`,
+      buildDashboardDetailEndpoint(scheduleId),
     );
     const schedule = mapBackendSchedule(detail.schedule);
     const runtime = mapBackendRuntime(detail.runtime, schedule);
@@ -459,11 +461,18 @@ export function useProctorRouteController(): ProctorRouteController {
         return;
       }
 
+      if (selectedScheduleId !== scheduleId) {
+        void refresh().catch((loadError) => {
+          setError(loadError instanceof Error ? loadError.message : 'Failed to refresh live data');
+        });
+        return;
+      }
+
       void refreshSchedule(scheduleId).catch((loadError) => {
         setError(loadError instanceof Error ? loadError.message : 'Failed to refresh live data');
       });
     },
-    [refresh, refreshSchedule],
+    [refresh, refreshSchedule, selectedScheduleId],
   );
 
   useLiveUpdates({ onEvent: handleLiveUpdate });
@@ -473,14 +482,6 @@ export function useProctorRouteController(): ProctorRouteController {
       setIsLoading(false);
     });
   }, [refresh]);
-
-  useEffect(() => {
-    if (!hasHydrated || !selectedScheduleId) {
-      return;
-    }
-
-    void refresh();
-  }, [hasHydrated, refresh, selectedScheduleId]);
 
   useAsyncPolling(refresh, {
     enabled: true,

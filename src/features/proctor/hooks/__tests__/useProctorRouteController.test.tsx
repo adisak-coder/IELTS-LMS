@@ -87,7 +87,7 @@ describe('useProctorRouteController', () => {
         );
       }
 
-      if (url === '/api/v1/proctor/sessions/sched-1') {
+      if (url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100') {
         return new Response(
           JSON.stringify({
             success: true,

@@ -125,16 +125,21 @@ impl DeliveryService {
         candidate_id: Option<String>,
     ) -> Result<StudentSessionContext, DeliveryError> {
         let schedule = self.load_schedule(schedule_id).await?;
-        let version = self.load_version(schedule.published_version_id.clone()).await?;
+        let version = self
+            .load_version(schedule.published_version_id.clone())
+            .await?;
         let runtime = self.load_runtime(schedule_id).await?;
-        
+
         let attempt = if let Some(wcode) = wcode {
-            self.load_attempt_by_wcode(schedule_id.to_string(), &wcode).await?
+            self.load_attempt_by_wcode(schedule_id.to_string(), &wcode)
+                .await?
         } else if let Some(student_key) = student_key {
-            self.load_attempt_by_student_key(schedule_id.to_string(), &student_key).await?
+            self.load_attempt_by_student_key(schedule_id.to_string(), &student_key)
+                .await?
         } else if let Some(candidate_id) = candidate_id {
             let derived = derive_student_key(schedule_id, &candidate_id);
-            self.load_attempt_by_student_key(schedule_id.to_string(), &derived).await?
+            self.load_attempt_by_student_key(schedule_id.to_string(), &derived)
+                .await?
         } else {
             None
         };
@@ -156,7 +161,9 @@ impl DeliveryService {
     ) -> Result<StudentAttempt, DeliveryError> {
         let has_device_fingerprint = req.device_fingerprint_hash.is_some();
         let schedule = self.load_schedule(schedule_id).await?;
-        let version = self.load_version(schedule.published_version_id.clone()).await?;
+        let version = self
+            .load_version(schedule.published_version_id.clone())
+            .await?;
         let runtime = self.load_runtime(schedule_id).await?;
         let attempt = self
             .get_or_create_attempt(
@@ -190,30 +197,31 @@ impl DeliveryService {
 
         let phase = determine_phase(runtime.as_ref(), true, attempt.submitted_at.is_some());
 
-        let updated = self.update_attempt(
-            attempt.id,
-            phase,
-            attempt.current_module.clone(),
-            attempt.current_question_id.clone(),
-            attempt.answers.clone(),
-            attempt.writing_answers.clone(),
-            attempt.flags.clone(),
-            attempt.violations_snapshot.clone(),
-            Value::Object(integrity),
-            merge_recovery(
-                attempt.recovery.clone(),
-                json!({
-                    "lastRecoveredAt": Value::Null,
-                    "lastPersistedAt": Value::Null,
-                    "pendingMutationCount": 0,
-                    "syncState": "idle",
-                    "serverAcceptedThroughSeq": 0
-                }),
-            ),
-            attempt.final_submission.clone(),
-            attempt.submitted_at,
-        )
-        .await?;
+        let updated = self
+            .update_attempt(
+                attempt.id,
+                phase,
+                attempt.current_module.clone(),
+                attempt.current_question_id.clone(),
+                attempt.answers.clone(),
+                attempt.writing_answers.clone(),
+                attempt.flags.clone(),
+                attempt.violations_snapshot.clone(),
+                Value::Object(integrity),
+                merge_recovery(
+                    attempt.recovery.clone(),
+                    json!({
+                        "lastRecoveredAt": Value::Null,
+                        "lastPersistedAt": Value::Null,
+                        "pendingMutationCount": 0,
+                        "syncState": "idle",
+                        "serverAcceptedThroughSeq": 0
+                    }),
+                ),
+                attempt.final_submission.clone(),
+                attempt.submitted_at,
+            )
+            .await?;
 
         sqlx::query(
             r#"
@@ -245,7 +253,9 @@ impl DeliveryService {
         req: StudentBootstrapRequest,
     ) -> Result<StudentSessionContext, DeliveryError> {
         let schedule = self.load_schedule(schedule_id).await?;
-        let version = self.load_version(schedule.published_version_id.clone()).await?;
+        let version = self
+            .load_version(schedule.published_version_id.clone())
+            .await?;
         let runtime = self.load_runtime(schedule_id).await?;
         let attempt = self
             .get_or_create_attempt(
@@ -280,7 +290,10 @@ impl DeliveryService {
             .is_none();
         let next_integrity = if needs_client_session_id_in_integrity {
             let mut integrity = ensure_object(attempt.integrity.clone());
-            integrity.insert("clientSessionId".to_owned(), client_session_id_value.clone());
+            integrity.insert(
+                "clientSessionId".to_owned(),
+                client_session_id_value.clone(),
+            );
             Value::Object(integrity)
         } else {
             attempt.integrity.clone()
@@ -379,7 +392,8 @@ impl DeliveryService {
             .load_attempt_by_id_for_update(tx.as_mut(), req.attempt_id.clone())
             .await?
             .ok_or(DeliveryError::NotFound)?;
-        if attempt.schedule_id != schedule_id.to_string() || attempt.student_key != req.student_key {
+        if attempt.schedule_id != schedule_id.to_string() || attempt.student_key != req.student_key
+        {
             return Err(DeliveryError::Validation(
                 "Attempt does not belong to the provided schedule or student key.".to_owned(),
             ));
@@ -403,12 +417,11 @@ impl DeliveryService {
             ));
         }
 
-        let schedule_status: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM exam_schedules WHERE id = ?",
-        )
-        .bind(schedule_id.to_string())
-        .fetch_optional(tx.as_mut())
-        .await?;
+        let schedule_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM exam_schedules WHERE id = ?")
+                .bind(schedule_id.to_string())
+                .fetch_optional(tx.as_mut())
+                .await?;
         if schedule_status.as_deref() == Some("cancelled") {
             return Err(DeliveryError::conflict_reason(
                 DeliveryConflictReason::ObjectiveLocked,
@@ -422,19 +435,20 @@ impl DeliveryService {
         .bind(schedule_id.to_string())
         .fetch_optional(tx.as_mut())
         .await?;
-        let proctor_status: Option<String> = sqlx::query_scalar(
-            "SELECT proctor_status FROM student_attempts WHERE id = ?",
-        )
-        .bind(&req.attempt_id)
-        .fetch_optional(tx.as_mut())
-        .await?;
+        let proctor_status: Option<String> =
+            sqlx::query_scalar("SELECT proctor_status FROM student_attempts WHERE id = ?")
+                .bind(&req.attempt_id)
+                .fetch_optional(tx.as_mut())
+                .await?;
         let objective_mutation_gate =
             objective_mutation_gate(runtime_gate.as_ref(), proctor_status.as_deref());
         let active_section_key = runtime_gate
             .as_ref()
             .and_then(|gate| gate.current_section_key.as_deref());
 
-        let version = self.load_version(attempt.published_version_id.clone()).await?;
+        let version = self
+            .load_version(attempt.published_version_id.clone())
+            .await?;
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
 
@@ -584,10 +598,11 @@ impl DeliveryService {
         .execute(tx.as_mut())
         .await?;
 
-        attempt = sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
-            .bind(&req.attempt_id)
-            .fetch_one(tx.as_mut())
-            .await?;
+        attempt =
+            sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
+                .bind(&req.attempt_id)
+                .fetch_one(tx.as_mut())
+                .await?;
 
         let seq_from = req.mutations.iter().map(|mutation| mutation.seq).min();
         let seq_to = req.mutations.iter().map(|mutation| mutation.seq).max();
@@ -670,6 +685,18 @@ impl DeliveryService {
         }
 
         let now = Utc::now();
+        if req.event_type == "heartbeat" {
+            self.upsert_attempt_presence(
+                &attempt.id,
+                &attempt.schedule_id,
+                &req.client_session_id,
+                "ok",
+                None,
+            )
+            .await?;
+            return Ok(attempt);
+        }
+
         let mut integrity = ensure_object(attempt.integrity.clone());
         integrity.insert(
             "lastHeartbeatAt".to_owned(),
@@ -715,6 +742,19 @@ impl DeliveryService {
                 attempt.submitted_at,
             )
             .await?;
+
+        let heartbeat_status = match req.event_type.as_str() {
+            "disconnect" | "lost" => "lost",
+            _ => "ok",
+        };
+        self.upsert_attempt_presence(
+            &updated.id,
+            &updated.schedule_id,
+            &req.client_session_id,
+            heartbeat_status,
+            Some(req.event_type.as_str()),
+        )
+        .await?;
 
         if req.event_type != "heartbeat" {
             let action_type = match req.event_type.as_str() {
@@ -767,6 +807,54 @@ impl DeliveryService {
         Ok(updated)
     }
 
+    async fn upsert_attempt_presence(
+        &self,
+        attempt_id: &str,
+        schedule_id: &str,
+        client_session_id: &str,
+        heartbeat_status: &str,
+        transition: Option<&str>,
+    ) -> Result<(), DeliveryError> {
+        let set_disconnect = transition == Some("disconnect") || transition == Some("lost");
+        let set_reconnect = transition == Some("reconnect");
+
+        sqlx::query(
+            r#"
+            INSERT INTO student_attempt_presence (
+                attempt_id,
+                schedule_id,
+                client_session_id,
+                last_heartbeat_at,
+                last_heartbeat_status,
+                last_disconnect_at,
+                last_reconnect_at,
+                updated_at
+            )
+            VALUES (?, ?, ?, NOW(), ?, IF(?, NOW(), NULL), IF(?, NOW(), NULL), NOW())
+            ON DUPLICATE KEY UPDATE
+                schedule_id = VALUES(schedule_id),
+                client_session_id = VALUES(client_session_id),
+                last_heartbeat_at = VALUES(last_heartbeat_at),
+                last_heartbeat_status = VALUES(last_heartbeat_status),
+                last_disconnect_at = IF(?, NOW(), last_disconnect_at),
+                last_reconnect_at = IF(?, NOW(), last_reconnect_at),
+                updated_at = NOW()
+            "#,
+        )
+        .bind(attempt_id)
+        .bind(schedule_id)
+        .bind(client_session_id)
+        .bind(heartbeat_status)
+        .bind(set_disconnect)
+        .bind(set_reconnect)
+        .bind(set_disconnect)
+        .bind(set_reconnect)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+
     #[tracing::instrument(
         skip(self, req),
         fields(schedule_id = %schedule_id, attempt_id = %req.attempt_id)
@@ -798,7 +886,8 @@ impl DeliveryService {
             .load_attempt_by_id_for_update(tx.as_mut(), req.attempt_id.clone())
             .await?
             .ok_or(DeliveryError::NotFound)?;
-        if attempt.schedule_id != schedule_id.to_string() || attempt.student_key != req.student_key {
+        if attempt.schedule_id != schedule_id.to_string() || attempt.student_key != req.student_key
+        {
             return Err(DeliveryError::Validation(
                 "Attempt does not belong to the provided schedule or student key.".to_owned(),
             ));
@@ -822,12 +911,11 @@ impl DeliveryService {
             ));
         }
 
-        let schedule_status: Option<String> = sqlx::query_scalar(
-            "SELECT status FROM exam_schedules WHERE id = ?",
-        )
-        .bind(schedule_id.to_string())
-        .fetch_optional(tx.as_mut())
-        .await?;
+        let schedule_status: Option<String> =
+            sqlx::query_scalar("SELECT status FROM exam_schedules WHERE id = ?")
+                .bind(schedule_id.to_string())
+                .fetch_optional(tx.as_mut())
+                .await?;
         if schedule_status.as_deref() == Some("cancelled") {
             return Err(DeliveryError::conflict(
                 "Cancelled schedules cannot accept submissions.".to_owned(),
@@ -875,7 +963,9 @@ impl DeliveryService {
             return Ok(response);
         }
 
-        let version = self.load_version(attempt.published_version_id.clone()).await?;
+        let version = self
+            .load_version(attempt.published_version_id.clone())
+            .await?;
         let unanswered_submission_policy = version
             .config_snapshot
             .get("progression")
@@ -936,10 +1026,11 @@ impl DeliveryService {
         .execute(tx.as_mut())
         .await?;
 
-        let attempt = sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
-            .bind(&req.attempt_id)
-            .fetch_one(tx.as_mut())
-            .await?;
+        let attempt =
+            sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
+                .bind(&req.attempt_id)
+                .fetch_one(tx.as_mut())
+                .await?;
 
         let submitted_at = attempt.submitted_at.unwrap_or(now);
         sqlx::query(
@@ -1156,9 +1247,7 @@ impl DeliveryService {
     }
 
     async fn load_schedule(&self, schedule_id: Uuid) -> Result<ExamSchedule, DeliveryError> {
-        sqlx::query_as::<_, ExamSchedule>(
-            "SELECT * FROM exam_schedules WHERE id = ?"
-        )
+        sqlx::query_as::<_, ExamSchedule>("SELECT * FROM exam_schedules WHERE id = ?")
             .bind(schedule_id.to_string())
             .fetch_optional(&self.pool)
             .await?
@@ -1275,10 +1364,7 @@ impl DeliveryService {
     }
 
     fn idempotency_repository(&self) -> IdempotencyRepository {
-        IdempotencyRepository::with_usable_hours(
-            self.pool.clone(),
-            self.idempotency_usable_hours,
-        )
+        IdempotencyRepository::with_usable_hours(self.pool.clone(), self.idempotency_usable_hours)
     }
 
     fn idempotency_request_hash<T: Serialize>(
@@ -1290,8 +1376,9 @@ impl DeliveryService {
             return Ok(None);
         }
 
-        let serialized = serde_json::to_string(request)
-            .map_err(|err| DeliveryError::Internal(format!("Failed to serialize request: {err}")))?;
+        let serialized = serde_json::to_string(request).map_err(|err| {
+            DeliveryError::Internal(format!("Failed to serialize request: {err}"))
+        })?;
         Ok(Some(sha256_hex(&serialized)))
     }
 
@@ -1677,9 +1764,17 @@ fn derive_authoritative_phase(
 enum AnswerConstraint {
     Text,
     Enum(HashSet<String>),
-    MultiChoice { allowed: HashSet<String>, max: usize },
-    ArrayText { max_len: usize },
-    EnumArray { allowed: HashSet<String>, max_len: usize },
+    MultiChoice {
+        allowed: HashSet<String>,
+        max: usize,
+    },
+    ArrayText {
+        max_len: usize,
+    },
+    EnumArray {
+        allowed: HashSet<String>,
+        max_len: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -1714,9 +1809,13 @@ fn slots_for_constraint(constraint: &AnswerConstraint) -> usize {
 
 fn answered_slots_for_constraint(constraint: &AnswerConstraint, value: Option<&Value>) -> usize {
     match constraint {
-        AnswerConstraint::Text | AnswerConstraint::Enum(_) => value.map_or(0, |v| usize::from(is_answered_value(v))),
+        AnswerConstraint::Text | AnswerConstraint::Enum(_) => {
+            value.map_or(0, |v| usize::from(is_answered_value(v)))
+        }
         AnswerConstraint::MultiChoice { max, .. } => {
-            let Some(Value::Array(values)) = value else { return 0 };
+            let Some(Value::Array(values)) = value else {
+                return 0;
+            };
             values
                 .iter()
                 .filter(|entry| is_answered_value(entry))
@@ -1724,7 +1823,9 @@ fn answered_slots_for_constraint(constraint: &AnswerConstraint, value: Option<&V
                 .count()
         }
         AnswerConstraint::ArrayText { max_len } | AnswerConstraint::EnumArray { max_len, .. } => {
-            let Some(Value::Array(values)) = value else { return 0 };
+            let Some(Value::Array(values)) = value else {
+                return 0;
+            };
             (0..*max_len)
                 .filter(|index| values.get(*index).is_some_and(is_answered_value))
                 .count()
@@ -1801,7 +1902,10 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
         }
     }
 
-    Ok(AnswerSchema { constraints, sections })
+    Ok(AnswerSchema {
+        constraints,
+        sections,
+    })
 }
 
 fn index_block(
@@ -1813,7 +1917,10 @@ fn index_block(
     let Some(block_type) = block.get("type").and_then(Value::as_str) else {
         return Ok(());
     };
-    let block_id = block.get("id").and_then(Value::as_str).map(ToOwned::to_owned);
+    let block_id = block
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
 
     match block_type {
         "TFNG" | "CLOZE" | "MATCHING" | "MAP" | "SHORT_ANSWER" => {
@@ -1863,14 +1970,9 @@ fn index_block(
                 let Some(id) = question.get("id").and_then(Value::as_str) else {
                     continue;
                 };
-                let blanks = question
-                    .get("blanks")
-                    .and_then(Value::as_array);
+                let blanks = question.get("blanks").and_then(Value::as_array);
                 let max_len = blanks.map(|value| value.len()).unwrap_or(0);
-                constraints.insert(
-                    id.to_owned(),
-                    AnswerConstraint::ArrayText { max_len },
-                );
+                constraints.insert(id.to_owned(), AnswerConstraint::ArrayText { max_len });
                 register_section(sections, id, section_key)?;
                 if let Some(blanks) = blanks {
                     for blank in blanks {
@@ -1882,7 +1984,9 @@ fn index_block(
             }
         }
         "MULTI_MCQ" => {
-            let Some(block_id) = block_id else { return Ok(()); };
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
             let required = block
                 .get("requiredSelections")
                 .and_then(Value::as_u64)
@@ -1905,7 +2009,9 @@ fn index_block(
             );
         }
         "SINGLE_MCQ" => {
-            let Some(block_id) = block_id else { return Ok(()); };
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
             let mut allowed = HashSet::new();
             if let Some(options) = block.get("options").and_then(Value::as_array) {
                 for option in options {
@@ -1918,70 +2024,58 @@ fn index_block(
             constraints.insert(block_id, AnswerConstraint::Enum(allowed));
         }
         "DIAGRAM_LABELING" => {
-            let Some(block_id) = block_id else { return Ok(()); };
-            let labels = block
-                .get("labels")
-                .and_then(Value::as_array);
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
+            let labels = block.get("labels").and_then(Value::as_array);
             let max_len = labels.map(|value| value.len()).unwrap_or(0);
             register_section(sections, &block_id, section_key)?;
             if let Some(labels) = labels {
                 for label in labels {
                     if let Some(label_id) = label.get("id").and_then(Value::as_str) {
-                        register_section(
-                            sections,
-                            &format!("{block_id}:{label_id}"),
-                            section_key,
-                        )?;
+                        register_section(sections, &format!("{block_id}:{label_id}"), section_key)?;
                     }
                 }
             }
             constraints.insert(block_id, AnswerConstraint::ArrayText { max_len });
         }
         "FLOW_CHART" => {
-            let Some(block_id) = block_id else { return Ok(()); };
-            let steps = block
-                .get("steps")
-                .and_then(Value::as_array);
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
+            let steps = block.get("steps").and_then(Value::as_array);
             let max_len = steps.map(|value| value.len()).unwrap_or(0);
             register_section(sections, &block_id, section_key)?;
             if let Some(steps) = steps {
                 for step in steps {
                     if let Some(step_id) = step.get("id").and_then(Value::as_str) {
-                        register_section(
-                            sections,
-                            &format!("{block_id}:{step_id}"),
-                            section_key,
-                        )?;
+                        register_section(sections, &format!("{block_id}:{step_id}"), section_key)?;
                     }
                 }
             }
             constraints.insert(block_id, AnswerConstraint::ArrayText { max_len });
         }
         "TABLE_COMPLETION" => {
-            let Some(block_id) = block_id else { return Ok(()); };
-            let cells = block
-                .get("cells")
-                .and_then(Value::as_array);
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
+            let cells = block.get("cells").and_then(Value::as_array);
             let max_len = cells.map(|value| value.len()).unwrap_or(0);
             register_section(sections, &block_id, section_key)?;
             if let Some(cells) = cells {
                 for cell in cells {
                     if let Some(cell_id) = cell.get("id").and_then(Value::as_str) {
-                        register_section(
-                            sections,
-                            &format!("{block_id}:{cell_id}"),
-                            section_key,
-                        )?;
+                        register_section(sections, &format!("{block_id}:{cell_id}"), section_key)?;
                     }
                 }
             }
             constraints.insert(block_id, AnswerConstraint::ArrayText { max_len });
         }
         "CLASSIFICATION" => {
-            let Some(block_id) = block_id else { return Ok(()); };
-            let items = block
-                .get("items")
-                .and_then(Value::as_array);
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
+            let items = block.get("items").and_then(Value::as_array);
             let max_len = items.map(|value| value.len()).unwrap_or(0);
             let mut allowed = HashSet::new();
             if let Some(categories) = block.get("categories").and_then(Value::as_array) {
@@ -1993,24 +2087,17 @@ fn index_block(
             if let Some(items) = items {
                 for item in items {
                     if let Some(item_id) = item.get("id").and_then(Value::as_str) {
-                        register_section(
-                            sections,
-                            &format!("{block_id}:{item_id}"),
-                            section_key,
-                        )?;
+                        register_section(sections, &format!("{block_id}:{item_id}"), section_key)?;
                     }
                 }
             }
-            constraints.insert(
-                block_id,
-                AnswerConstraint::EnumArray { allowed, max_len },
-            );
+            constraints.insert(block_id, AnswerConstraint::EnumArray { allowed, max_len });
         }
         "MATCHING_FEATURES" => {
-            let Some(block_id) = block_id else { return Ok(()); };
-            let features = block
-                .get("features")
-                .and_then(Value::as_array);
+            let Some(block_id) = block_id else {
+                return Ok(());
+            };
+            let features = block.get("features").and_then(Value::as_array);
             let max_len = features.map(|value| value.len()).unwrap_or(0);
             let mut allowed = HashSet::new();
             if let Some(options) = block.get("options").and_then(Value::as_array) {
@@ -2030,10 +2117,7 @@ fn index_block(
                     }
                 }
             }
-            constraints.insert(
-                block_id,
-                AnswerConstraint::EnumArray { allowed, max_len },
-            );
+            constraints.insert(block_id, AnswerConstraint::EnumArray { allowed, max_len });
         }
         _ => {}
     }
@@ -2077,7 +2161,10 @@ fn register_section(
     ))
 }
 
-fn validate_answer_value(constraint: &AnswerConstraint, value: &Value) -> Result<(), DeliveryError> {
+fn validate_answer_value(
+    constraint: &AnswerConstraint,
+    value: &Value,
+) -> Result<(), DeliveryError> {
     match constraint {
         AnswerConstraint::Text => match value {
             Value::Null | Value::String(_) => Ok(()),
@@ -2217,24 +2304,17 @@ fn apply_mutation(
             let value = mutation
                 .payload
                 .get("value")
-                .ok_or_else(|| DeliveryError::Validation(
-                    "Mutation payload is missing `value`.".to_owned(),
-                ))?
+                .ok_or_else(|| {
+                    DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
+                })?
                 .clone();
-            let constraint = answer_schema
-                .constraints
-                .get(&question_id)
-                .ok_or_else(|| DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ))?;
+            let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
+                DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
+            })?;
             validate_answer_value(constraint, &value)?;
             let next_answers = ensure_object(std::mem::take(answers));
             *current_question_id = Some(question_id.clone());
-            *answers = Value::Object(set_value(
-                next_answers,
-                question_id,
-                value,
-            ));
+            *answers = Value::Object(set_value(next_answers, question_id, value));
         }
         "writing_answer" => {
             let task_id = required_string(&mutation.payload, "taskId")?;
@@ -2261,9 +2341,9 @@ fn apply_mutation(
             let value = mutation
                 .payload
                 .get("value")
-                .ok_or_else(|| DeliveryError::Validation(
-                    "Mutation payload is missing `value`.".to_owned(),
-                ))?
+                .ok_or_else(|| {
+                    DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
+                })?
                 .clone();
             if !matches!(value, Value::String(_) | Value::Null) {
                 return Err(DeliveryError::Validation(
@@ -2272,11 +2352,7 @@ fn apply_mutation(
             }
             let next_writing_answers = ensure_object(std::mem::take(writing_answers));
             *current_question_id = Some(task_id.clone());
-            *writing_answers = Value::Object(set_value(
-                next_writing_answers,
-                task_id,
-                value,
-            ));
+            *writing_answers = Value::Object(set_value(next_writing_answers, task_id, value));
         }
         "flag" => {
             let question_id = required_string(&mutation.payload, "questionId")?;
@@ -2297,21 +2373,15 @@ fn apply_mutation(
             let value = mutation
                 .payload
                 .get("value")
-                .ok_or_else(|| DeliveryError::Validation(
-                    "Mutation payload is missing `value`.".to_owned(),
-                ))?
+                .ok_or_else(|| {
+                    DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
+                })?
                 .clone();
-            let flag_value = value
-                .as_bool()
-                .ok_or_else(|| DeliveryError::Validation(
-                    "Flag values must be boolean.".to_owned(),
-                ))?;
+            let flag_value = value.as_bool().ok_or_else(|| {
+                DeliveryError::Validation("Flag values must be boolean.".to_owned())
+            })?;
             let next_flags = ensure_object(std::mem::take(flags));
-            *flags = Value::Object(set_value(
-                next_flags,
-                question_id,
-                Value::Bool(flag_value),
-            ));
+            *flags = Value::Object(set_value(next_flags, question_id, Value::Bool(flag_value)));
         }
         "position" => {
             // Client position is telemetry only. Never treat it as authoritative state.
@@ -2373,11 +2443,8 @@ fn apply_mutation(
             // Payloads vary; apply only when the client includes an authoritative snapshot.
             if let Some(snapshot) = mutation.payload.get("violations") {
                 if snapshot.is_array() {
-                    *violations_snapshot = merge_violations_snapshot(
-                        violations_snapshot,
-                        snapshot,
-                        500,
-                    )?;
+                    *violations_snapshot =
+                        merge_violations_snapshot(violations_snapshot, snapshot, 500)?;
                 } else {
                     return Err(DeliveryError::Validation(
                         "`violations` must be an array when present.".to_owned(),
@@ -2445,9 +2512,7 @@ fn enforce_section_membership(
         .get(question_id)
         .map(String::as_str)
         .ok_or_else(|| {
-            DeliveryError::Validation(
-                "Mutation references an unknown `questionId`.".to_owned(),
-            )
+            DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
         })?;
     if expected != active_section_key {
         return Err(DeliveryError::conflict_reason(
@@ -2577,8 +2642,7 @@ mod tests {
             )]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
         };
-        let writing_task_ids: HashSet<String> =
-            ["task-1".to_owned()].into_iter().collect();
+        let writing_task_ids: HashSet<String> = ["task-1".to_owned()].into_iter().collect();
 
         let mut answers = json!({});
         let mut writing_answers = json!({});
@@ -2693,8 +2757,7 @@ mod tests {
             constraints: HashMap::from_iter([("q1".to_owned(), AnswerConstraint::Text)]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
         };
-        let writing_task_ids: HashSet<String> =
-            ["task1".to_owned()].into_iter().collect();
+        let writing_task_ids: HashSet<String> = ["task1".to_owned()].into_iter().collect();
         let mut answers = json!({});
         let mut writing_answers = json!({});
         let mut flags = json!({});
@@ -2845,11 +2908,17 @@ mod tests {
         assert!(schema.constraints.contains_key("sentence-1"));
         assert!(!schema.constraints.contains_key("sentence-1:blank-1"));
         assert_eq!(
-            schema.sections.get("sentence-1:blank-1").map(String::as_str),
+            schema
+                .sections
+                .get("sentence-1:blank-1")
+                .map(String::as_str),
             Some("reading"),
         );
         assert_eq!(
-            schema.sections.get("diagram-block:label-1").map(String::as_str),
+            schema
+                .sections
+                .get("diagram-block:label-1")
+                .map(String::as_str),
             Some("reading"),
         );
     }

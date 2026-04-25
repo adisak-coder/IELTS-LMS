@@ -15,16 +15,14 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use ielts_backend_api::{
-    router::build_router,
-    runtime_auto_advance::spawn_runtime_auto_advance,
-    state::AppState,
+    router::build_router, runtime_auto_advance::spawn_runtime_auto_advance, state::AppState,
 };
 use ielts_backend_application::{
     builder::BuilderService, delivery::DeliveryService, scheduling::SchedulingService,
 };
 use ielts_backend_domain::{
-    auth::UserRole,
     attempt::StudentBootstrapRequest,
+    auth::UserRole,
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
     schedule::{
         CreateScheduleRequest, LiveUpdateEvent, ProctorPresenceRequest, RuntimeCommandAction,
@@ -32,11 +30,11 @@ use ielts_backend_domain::{
     },
 };
 
-use mysql::{assign_staff_to_schedule, create_authenticated_user};
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
     config::AppConfig,
 };
+use mysql::{assign_staff_to_schedule, create_authenticated_user};
 
 const PROCTOR_MIGRATIONS: &[&str] = &[
     "0001_roles.sql",
@@ -49,6 +47,7 @@ const PROCTOR_MIGRATIONS: &[&str] = &[
     "0008_grading_results.sql",
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
+    "0014_student_attempt_presence.sql",
 ];
 
 #[tokio::test]
@@ -121,6 +120,91 @@ async fn list_sessions_and_detail_include_runtime_and_attempts() {
 }
 
 #[tokio::test]
+async fn dashboard_detail_mode_bounds_audit_logs_and_alerts() {
+    let database = mysql::TestDatabase::new(PROCTOR_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let attempt_id = bootstrap_attempt(database.pool(), schedule_id, "alice").await;
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Proctor,
+        "proctor@example.com",
+        "Test Proctor",
+    )
+    .await;
+    assign_staff_to_schedule(database.pool(), schedule_id, auth.user_id, "proctor").await;
+    for index in 0..5 {
+        sqlx::query(
+            r#"
+            INSERT INTO session_audit_logs (
+                id, schedule_id, actor, action_type, target_student_id, payload, created_at
+            )
+            VALUES (?, ?, ?, 'STUDENT_WARN', ?, ?, ?)
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(schedule_id.to_string())
+        .bind("Test Proctor")
+        .bind(attempt_id.to_string())
+        .bind(json!({ "message": format!("Warning {index}") }))
+        .bind(Utc.with_ymd_and_hms(2026, 1, 10, 9, index, 0).unwrap())
+        .execute(database.pool())
+        .await
+        .unwrap();
+    }
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let default_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(
+                Request::builder().uri(format!("/api/v1/proctor/sessions/{}", schedule_id)),
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(default_detail.status(), StatusCode::OK);
+    let default_json = json_body(default_detail).await;
+    assert_eq!(
+        default_json["data"]["auditLogs"].as_array().unwrap().len(),
+        5
+    );
+    assert_eq!(default_json["data"]["alerts"].as_array().unwrap().len(), 5);
+
+    let dashboard_detail = app
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/proctor/sessions/{}?mode=dashboard&auditLimit=2&alertLimit=1",
+                schedule_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(dashboard_detail.status(), StatusCode::OK);
+    let dashboard_json = json_body(dashboard_detail).await;
+    assert_eq!(
+        dashboard_json["data"]["auditLogs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        dashboard_json["data"]["alerts"].as_array().unwrap().len(),
+        1
+    );
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn presence_and_student_commands_update_session_state_and_alerts() {
     let database = mysql::TestDatabase::new(PROCTOR_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
@@ -158,7 +242,10 @@ async fn presence_and_student_commands_update_session_state_and_alerts() {
         .unwrap();
     assert_eq!(presence.status(), StatusCode::OK);
     let presence_json = json_body(presence).await;
-    assert_eq!(presence_json["data"][0]["proctorId"], auth.user_id.to_string());
+    assert_eq!(
+        presence_json["data"][0]["proctorId"],
+        auth.user_id.to_string()
+    );
 
     let warn = issue_attempt_command(
         &app,
@@ -196,7 +283,10 @@ async fn presence_and_student_commands_update_session_state_and_alerts() {
             })
         })
         .unwrap_or(false);
-    assert!(contains_warning, "violations snapshot should contain the proctor warning");
+    assert!(
+        contains_warning,
+        "violations snapshot should contain the proctor warning"
+    );
 
     let violation_events: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM student_violation_events WHERE attempt_id = ? AND violation_type = 'PROCTOR_WARNING'",
@@ -228,15 +318,8 @@ async fn presence_and_student_commands_update_session_state_and_alerts() {
     .await;
     assert_eq!(pause["data"]["status"], "paused");
 
-    let resume = issue_attempt_command(
-        &app,
-        &auth,
-        schedule_id,
-        attempt_id,
-        "resume",
-        json!({}),
-    )
-    .await;
+    let resume =
+        issue_attempt_command(&app, &auth, schedule_id, attempt_id, "resume", json!({})).await;
     assert_eq!(resume["data"]["status"], "idle");
 
     let detail = app
@@ -523,7 +606,7 @@ async fn end_section_now_rejects_stale_expected_active_section_key() {
 #[tokio::test]
 async fn websocket_live_endpoint_rejects_unauthenticated_connections() {
     let database = mysql::TestDatabase::new(PROCTOR_MIGRATIONS).await;
-    
+
     let state = AppState::with_pool(AppConfig::default(), database.pool().clone());
     let router_state = state.clone();
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -540,12 +623,18 @@ async fn websocket_live_endpoint_rejects_unauthenticated_connections() {
     // Attempt connection without authentication
     let ws_url = format!("ws://{address}/api/v1/ws/live?scheduleId=schedule-123");
     let result = connect_async(&ws_url).await;
-    
+
     // Should fail with 401 Unauthorized
-    assert!(result.is_err(), "Unauthenticated WebSocket connection should be rejected");
+    assert!(
+        result.is_err(),
+        "Unauthenticated WebSocket connection should be rejected"
+    );
     let err_msg = format!("{:?}", result.unwrap_err());
-    assert!(err_msg.contains("401") || err_msg.contains("UNAUTHORIZED"), 
-            "Error should indicate unauthorized: {}", err_msg);
+    assert!(
+        err_msg.contains("401") || err_msg.contains("UNAUTHORIZED"),
+        "Error should indicate unauthorized: {}",
+        err_msg
+    );
 
     server.abort();
     database.shutdown().await;
@@ -561,7 +650,7 @@ async fn websocket_live_endpoint_accepts_authenticated_connections_with_cookie()
         "Test Proctor",
     )
     .await;
-    
+
     let state = AppState::with_pool(AppConfig::default(), database.pool().clone());
     let router_state = state.clone();
     let listener = TcpListener::bind("127.0.0.1:0")
@@ -578,7 +667,9 @@ async fn websocket_live_endpoint_accepts_authenticated_connections_with_cookie()
     // Connect with authenticated session cookie using custom request
     let ws_request = Request::builder()
         .method("GET")
-        .uri(format!("ws://{address}/api/v1/ws/live?scheduleId=schedule-123"))
+        .uri(format!(
+            "ws://{address}/api/v1/ws/live?scheduleId=schedule-123"
+        ))
         .header("Host", format!("{address}"))
         .header("Cookie", format!("__Host-session={}", auth.session_token))
         .header("Connection", "Upgrade")
@@ -587,7 +678,7 @@ async fn websocket_live_endpoint_accepts_authenticated_connections_with_cookie()
         .header("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
         .body(())
         .expect("build websocket request");
-    
+
     let (mut socket, _) = connect_async(ws_request)
         .await
         .expect("connect websocket route with auth");
@@ -699,14 +790,11 @@ async fn websocket_live_emits_runtime_command_events() {
     let start_json = json_body(start_response).await;
     let expected_revision = start_json["data"]["revision"].as_i64().unwrap();
 
-    let update_message = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        socket.next(),
-    )
-    .await
-    .expect("wait for update message")
-    .expect("update message")
-    .expect("websocket frame");
+    let update_message = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
+        .await
+        .expect("wait for update message")
+        .expect("update message")
+        .expect("websocket frame");
     let update_text = update_message.into_text().expect("text frame");
     let update_payload: serde_json::Value =
         serde_json::from_str(&update_text).expect("parse update payload");
@@ -1011,7 +1099,10 @@ async fn runtime_auto_advance_completes_expired_section_and_emits_event() {
         saw_auto_advance = true;
         break;
     }
-    assert!(saw_auto_advance, "expected auto_advance_section websocket event");
+    assert!(
+        saw_auto_advance,
+        "expected auto_advance_section websocket event"
+    );
 
     let new_active_section: Option<String> = sqlx::query_scalar(
         "SELECT active_section_key FROM exam_session_runtimes WHERE schedule_id = ?",
@@ -1020,7 +1111,10 @@ async fn runtime_auto_advance_completes_expired_section_and_emits_event() {
     .fetch_optional(database.pool())
     .await
     .expect("load runtime active section");
-    assert_ne!(new_active_section.as_deref(), Some(active_section_key.as_str()));
+    assert_ne!(
+        new_active_section.as_deref(),
+        Some(active_section_key.as_str())
+    );
 
     auto_advance_task.abort();
     server.abort();
