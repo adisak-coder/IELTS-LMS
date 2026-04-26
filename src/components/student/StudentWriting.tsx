@@ -7,8 +7,6 @@ import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
-import { WritingChartPreview } from '../writing/WritingChartPreview';
-import { useSplitPaneResize } from './useSplitPaneResize';
 
 interface StudentWritingProps {
   state: ExamState;
@@ -400,10 +398,10 @@ export function StudentWriting({
                 </p>
                 {currentChart.imageSrc ? (
                   <StudentZoomableMedia
-                    sources={getImageUrlCandidates(currentChart.imageSrc)}
+                    sources={[currentChart.imageSrc]}
                     alt={currentChart.title}
                     label={currentChart.title}
-                    showZoomUi={false}
+                    hint="Tap to zoom the chart"
                     className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50"
                   />
                 ) : (

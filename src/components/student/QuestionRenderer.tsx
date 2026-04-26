@@ -513,23 +513,31 @@ export function QuestionRenderer({
     );
   };
 
-  const renderDiagramFallbackFields = (diagramBlock: DiagramLabelingBlock) => (
-    <div className="space-y-3" data-testid="diagram-answer-panel">
-      {diagramBlock.labels.map((label, index) => {
-        const prompt = label.prompt?.trim() ? label.prompt : `Label ${index + 1}`;
-        return (
-          <React.Fragment key={label.id}>
-            {renderTextField(
-              getSlotId(index, `${diagramBlock.id}:${label.id}`),
-              number + index,
-              stringArrayAnswer[index] ?? '',
-              (nextValue) => updateIndexedAnswer(index, nextValue, diagramBlock.labels.length),
-              prompt,
-              'top',
-            )}
-          </React.Fragment>
-        );
-      })}
+  const renderDiagramLabeling = (diagramBlock: DiagramLabelingBlock) => (
+    <div className="flex flex-col gap-4">
+      {getImageUrlCandidates(diagramBlock.imageUrl ?? '')[0] ? (
+        <StudentZoomableMedia
+          sources={getImageUrlCandidates(diagramBlock.imageUrl ?? '')}
+          alt="Diagram reference"
+          label="Diagram reference image"
+          hint="Tap to zoom the diagram"
+        />
+      ) : (
+        <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
+          <div className="p-6 text-center text-sm text-gray-500">Add a diagram to support this question.</div>
+        </div>
+      )}
+      <div className="space-y-3">
+        {diagramBlock.labels.map((label, index) =>
+          renderTextField(
+            getSlotId(index, `${diagramBlock.id}:${label.id}`),
+            number + index,
+            stringArrayAnswer[index] ?? '',
+            (nextValue) => updateIndexedAnswer(index, nextValue, diagramBlock.labels.length),
+            `Label ${index + 1}`,
+          ),
+        )}
+      </div>
     </div>
   );
 
