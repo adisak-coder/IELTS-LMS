@@ -20,7 +20,14 @@ import { StudentReportPreview } from './StudentReportPreview';
 import { QuestionTracebackPanel } from './QuestionTracebackPanel';
 import { logger } from '../../utils/logger';
 import { SectionLoadingSkeleton } from '@components/ui';
-import { sanitizeHtml } from '../../utils/sanitizeHtml';
+import {
+  extractObjectiveAnswerMap,
+  getCorrectAnswerDisplay,
+  getQuestionPrompt,
+  getStudentAnswerDisplay,
+  isStudentAnswerCorrect,
+} from './gradingAnswerUtils';
+import { htmlToPlainText } from '../../utils/htmlText';
 
 export interface StudentReviewWorkspaceProps {
   submissionId: string;
@@ -674,15 +681,18 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     );
   }
 
-  if (!submission) {
-    return (
-      <div className="h-full bg-gray-50 p-6">
-        <div className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {summaryError || 'Submission is unavailable.'}
-        </div>
-      </div>
-    );
-  }
+  const currentSectionSubmission = getSectionSubmission(activeSection);
+  const objectiveAnswerMap = currentSectionSubmission
+    ? extractObjectiveAnswerMap(currentSectionSubmission.answers)
+    : {};
+  const objectiveDescriptors: StudentQuestionDescriptor[] =
+    examState && (activeSection === 'reading' || activeSection === 'listening')
+      ? getStudentQuestionsForModule(examState, activeSection)
+      : [];
+  const currentWritingTaskId = activeSection === 'writing' ? activeTask : null;
+  const currentWritingPrompt = currentWritingTaskId ? getWritingPrompt(currentWritingTaskId) : '';
+  const currentWritingText = currentWritingTaskId ? htmlToPlainText(getWritingResponseText(currentWritingTaskId)) : '';
+
   return (
     <div className="flex flex-col h-full bg-gray-50">
       <style>{`

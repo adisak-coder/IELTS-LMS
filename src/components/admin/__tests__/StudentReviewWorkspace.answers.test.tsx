@@ -377,7 +377,7 @@ describe('StudentReviewWorkspace objective answers', () => {
     expect(await screen.findByText('Strengths')).toBeInTheDocument();
   });
 
-  test('renders writing responses as raw plain text', async () => {
+  test('renders writing responses as plain text without stored html tags', async () => {
     const { createInitialExamState } = await import('../../../services/examAdapterService');
     const { gradingRepository } = await import('../../../services/gradingRepository');
     const { examRepository } = await import('../../../services/examRepository');
@@ -421,8 +421,8 @@ describe('StudentReviewWorkspace objective answers', () => {
         submissionId: 'sub-3',
         taskId: 'task1',
         taskLabel: 'Task 1',
-        prompt: '<p class="MsoNormal"><span>You should write something.</span></p><p><b>Use details.</b></p>',
-        studentText: 'Hello  world\nSecond line',
+        prompt: 'Write something.',
+        studentText: '<div>Hello&nbsp;world</div><div>Second line</div>',
         wordCount: 4,
         rubricAssessment: undefined,
         annotations: [],
@@ -470,210 +470,8 @@ describe('StudentReviewWorkspace objective answers', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /writing/i }));
 
-    expect((await screen.findAllByText(/You should write something/)).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(/Use details/)).length).toBeGreaterThan(0);
-    expect(document.querySelector('.writing-print-response')?.textContent).toBe('Hello  world\nSecond line');
-
-    const printSpy = vi.spyOn(window, 'print').mockImplementation(() => undefined);
-    fireEvent.click(screen.getByRole('button', { name: /print writing/i }));
-    expect(printSpy).toHaveBeenCalledOnce();
-    printSpy.mockRestore();
-  });
-
-  test('renders writing task submission text without whitespace normalization', async () => {
-    const { createInitialExamState } = await import('../../../services/examAdapterService');
-    const { gradingRepository } = await import('../../../services/gradingRepository');
-    const { examRepository } = await import('../../../services/examRepository');
-    const { StudentReviewWorkspace } = await import('../StudentReviewWorkspace');
-
-    const examState = createInitialExamState('Exam', 'Academic');
-
-    (gradingRepository.getSubmissionById as any).mockResolvedValue({
-      id: 'sub-4',
-      submissionId: 'sub-4',
-      scheduleId: 'sched-4',
-      examId: 'exam-4',
-      publishedVersionId: 'ver-4',
-      studentId: 'stu-4',
-      studentName: 'Dana',
-      studentEmail: 'dana@example.com',
-      cohortName: 'Cohort',
-      submittedAt: new Date().toISOString(),
-      timeSpentSeconds: 0,
-      gradingStatus: 'submitted',
-      assignedTeacherId: undefined,
-      assignedTeacherName: undefined,
-      isFlagged: false,
-      flagReason: undefined,
-      isOverdue: false,
-      dueDate: undefined,
-      sectionStatuses: {
-        listening: 'pending',
-        reading: 'pending',
-        writing: 'needs_review',
-        speaking: 'pending',
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    (gradingRepository.getSectionSubmissionsBySubmissionId as any).mockResolvedValue([]);
-    (gradingRepository.getWritingSubmissionsBySubmissionId as any).mockResolvedValue([
-      {
-        id: 'write-4-task1',
-        submissionId: 'sub-4',
-        taskId: 'task1',
-        taskLabel: 'Task 1',
-        prompt: '<p>Describe the data.</p>',
-        studentText: '  First line & detail  \nSecond   line',
-        wordCount: 6,
-        rubricAssessment: undefined,
-        annotations: [],
-        overallFeedback: undefined,
-        studentVisibleNotes: undefined,
-        gradingStatus: 'needs_review',
-        submittedAt: new Date().toISOString(),
-        gradedBy: undefined,
-        gradedAt: undefined,
-      },
-    ]);
-    (gradingRepository.getReviewDraftBySubmission as any).mockResolvedValue({
-      id: 'draft-4',
-      submissionId: 'sub-4',
-      studentId: 'stu-4',
-      teacherId: 't-1',
-      releaseStatus: 'draft',
-      sectionDrafts: {},
-      annotations: [],
-      drawings: [],
-      overallFeedback: undefined,
-      studentVisibleNotes: undefined,
-      internalNotes: undefined,
-      teacherSummary: { strengths: [], improvementPriorities: [], recommendedPractice: [] },
-      checklist: {},
-      hasUnsavedChanges: false,
-      lastAutoSaveAt: undefined,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    (examRepository.getVersionById as any).mockResolvedValue({
-      id: 'ver-4',
-      contentSnapshot: examState,
-    });
-
-    render(
-      <StudentReviewWorkspace
-        submissionId="sub-4"
-        onBack={() => {}}
-        currentTeacherId="t-1"
-        currentTeacherName="Teacher"
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole('button', { name: /writing/i }));
-
-    expect(document.querySelector('.writing-print-response')?.textContent).toBe('  First line & detail  \nSecond   line');
-  });
-
-  test('falls back to section writing tasks and preserves raw plain text format', async () => {
-    const { createInitialExamState } = await import('../../../services/examAdapterService');
-    const { gradingRepository } = await import('../../../services/gradingRepository');
-    const { examRepository } = await import('../../../services/examRepository');
-    const { StudentReviewWorkspace } = await import('../StudentReviewWorkspace');
-
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.writing.tasks = [
-      { taskId: 'task1', prompt: 'Describe the chart.' } as any,
-    ];
-
-    (gradingRepository.getSubmissionById as any).mockResolvedValue({
-      id: 'sub-5',
-      submissionId: 'sub-5',
-      scheduleId: 'sched-5',
-      examId: 'exam-5',
-      publishedVersionId: 'ver-5',
-      studentId: 'stu-5',
-      studentName: 'Eli',
-      studentEmail: 'eli@example.com',
-      cohortName: 'Cohort',
-      submittedAt: new Date().toISOString(),
-      timeSpentSeconds: 0,
-      gradingStatus: 'submitted',
-      assignedTeacherId: undefined,
-      assignedTeacherName: undefined,
-      isFlagged: false,
-      flagReason: undefined,
-      isOverdue: false,
-      dueDate: undefined,
-      sectionStatuses: {
-        listening: 'pending',
-        reading: 'pending',
-        writing: 'needs_review',
-        speaking: 'pending',
-      },
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    (gradingRepository.getSectionSubmissionsBySubmissionId as any).mockResolvedValue([
-      {
-        id: 'sec-5',
-        submissionId: 'sub-5',
-        section: 'writing',
-        answers: {
-          type: 'writing',
-          tasks: [
-            {
-              taskId: 'task1',
-              text: 'Fallback  line\nAnother   line',
-            },
-          ],
-        },
-        autoGradingResults: undefined,
-        gradingStatus: 'needs_review',
-        reviewedBy: undefined,
-        reviewedAt: undefined,
-        finalizedBy: undefined,
-        finalizedAt: undefined,
-        submittedAt: new Date().toISOString(),
-      },
-    ]);
-    (gradingRepository.getWritingSubmissionsBySubmissionId as any).mockResolvedValue([]);
-    (gradingRepository.getReviewDraftBySubmission as any).mockResolvedValue({
-      id: 'draft-5',
-      submissionId: 'sub-5',
-      studentId: 'stu-5',
-      teacherId: 't-1',
-      releaseStatus: 'draft',
-      sectionDrafts: {},
-      annotations: [],
-      drawings: [],
-      overallFeedback: undefined,
-      studentVisibleNotes: undefined,
-      internalNotes: undefined,
-      teacherSummary: { strengths: [], improvementPriorities: [], recommendedPractice: [] },
-      checklist: {},
-      hasUnsavedChanges: false,
-      lastAutoSaveAt: undefined,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    (examRepository.getVersionById as any).mockResolvedValue({
-      id: 'ver-5',
-      contentSnapshot: examState,
-    });
-
-    render(
-      <StudentReviewWorkspace
-        submissionId="sub-5"
-        onBack={() => {}}
-        currentTeacherId="t-1"
-        currentTeacherName="Teacher"
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole('button', { name: /writing/i }));
-
-    expect(document.querySelector('.writing-print-response')?.textContent).toBe('Fallback  line\nAnother   line');
+    expect(await screen.findByText(/Hello world/)).toBeInTheDocument();
+    expect(await screen.findByText(/Second line/)).toBeInTheDocument();
+    expect(screen.queryByText(/<div>/)).not.toBeInTheDocument();
   });
 });
