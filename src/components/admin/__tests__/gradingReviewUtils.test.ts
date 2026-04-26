@@ -5,7 +5,6 @@ import {
   buildObjectiveExportRows,
   buildQuestionTracebackGroups,
   buildWideObjectiveExport,
-  buildWideWritingExport,
   escapeCsvValue,
   OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS,
   WRITING_EXPORT_COLUMNS,
@@ -83,62 +82,6 @@ function createSectionSubmission(
     finalizedBy: undefined,
     finalizedAt: undefined,
     submittedAt: '2026-01-01T00:00:00.000Z',
-  } as any;
-}
-
-function createWritingTaskSubmission(
-  submissionId: string,
-  taskId: string,
-  studentText: string,
-  wordCount: number,
-) {
-  return {
-    id: `${submissionId}-${taskId}`,
-    submissionId,
-    taskId,
-    taskLabel: taskId === 'task1' ? 'Task 1' : 'Task 2',
-    prompt: `${taskId} prompt`,
-    studentText,
-    wordCount,
-    rubricAssessment: {
-      taskResponseBand: 7,
-      coherenceBand: 6.5,
-      lexicalBand: 7.5,
-      grammarBand: 6,
-      overallBand: 7,
-    },
-    annotations: [
-      {
-        id: `${submissionId}-${taskId}-annotation-1`,
-        taskId,
-        type: 'highlight',
-        startOffset: 0,
-        endOffset: 5,
-        selectedText: 'Hello',
-        comment: '',
-        visibility: 'student_visible',
-        createdBy: 'teacher-1',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      },
-      {
-        id: `${submissionId}-${taskId}-annotation-2`,
-        taskId,
-        type: 'inline_comment',
-        startOffset: 6,
-        endOffset: 11,
-        selectedText: 'world',
-        comment: 'Internal',
-        visibility: 'internal_only',
-        createdBy: 'teacher-1',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      },
-    ],
-    overallFeedback: `${taskId} feedback`,
-    studentVisibleNotes: `${taskId} notes`,
-    gradingStatus: 'finalized',
-    submittedAt: '2026-01-01T00:00:00.000Z',
-    gradedBy: 'teacher-1',
-    gradedAt: '2026-01-02T00:00:00.000Z',
   } as any;
 }
 
@@ -268,310 +211,6 @@ describe('gradingReviewUtils', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.questionId).toBe('q-1');
     expect(rows[0]?.isCorrect).toBe('Correct');
-  });
-
-  test('keeps objective raw-fidelity for array answers and CSV parity', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'mcq-block-1',
-            type: 'MULTI_MCQ',
-            instruction: 'Choose two',
-            stem: 'Choose two',
-            requiredSelections: 2,
-            options: [
-              { id: 'A', text: 'Alpha', isCorrect: true },
-              { id: 'B', text: 'Beta', isCorrect: false },
-              { id: 'C', text: 'Charlie', isCorrect: true },
-            ],
-          },
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ];
-
-    const storedAnswer = [' A ', '', 'C,C'];
-    const sectionSubmission = createSectionSubmission(
-      'sub-1',
-      'reading',
-      { 'mcq-block-1': storedAnswer },
-      [createQuestionResult('mcq-block-1', false, 0)],
-    );
-
-    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.items).toHaveLength(2);
-    expect(groups[0]?.items[0]?.studentAnswerSlots).toEqual(storedAnswer);
-    expect(groups[0]?.items[1]?.studentAnswerSlots).toEqual(storedAnswer);
-    expect(groups[0]?.items[0]?.studentAnswer).toBe('[" A ","","C,C"]');
-    expect(groups[0]?.items[1]?.studentAnswer).toBe('[" A ","","C,C"]');
-
-    const exportData = buildWideObjectiveExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
-      examState,
-      moduleType: 'reading',
-    });
-
-    expect(exportData.rows[0]?.['answer:mcq-block-1:slot:1']).toBe(groups[0]?.items[0]?.studentAnswer);
-    expect(exportData.rows[0]?.['answer:mcq-block-1:slot:2']).toBe(groups[0]?.items[1]?.studentAnswer);
-  });
-
-  test('scores MULTI_MCQ with partial credit across slot descriptors in wide export totals', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'mcq-block-2',
-            type: 'MULTI_MCQ',
-            instruction: 'Choose two',
-            stem: 'Choose two',
-            requiredSelections: 2,
-            options: [
-              { id: 'A', text: 'Alpha', isCorrect: true },
-              { id: 'B', text: 'Beta', isCorrect: false },
-              { id: 'C', text: 'Charlie', isCorrect: true },
-            ],
-          },
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ];
-
-    const sectionSubmission = createSectionSubmission(
-      'sub-1',
-      'reading',
-      { 'mcq-block-2': ['A'] },
-      [],
-    );
-
-    const exportData = buildWideObjectiveExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
-      examState,
-      moduleType: 'reading',
-    });
-
-    expect(exportData.rows[0]?.totalScore).toBe(1);
-    expect(exportData.rows[0]?.maxScore).toBe(2);
-    expect(exportData.rows[0]?.correctCount).toBe(1);
-  });
-
-  test('awards one point for grouped sentence scoring when 2/2 slots are correct', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'sentence-block-1',
-            type: 'SENTENCE_COMPLETION',
-            instruction: 'Complete the sentence.',
-            questions: [
-              {
-                id: 'q-1',
-                sentence: 'The ____ and ____ are linked.',
-                answerRule: 'ONE_WORD',
-                blanks: [
-                  { id: 'b-1', position: 0, correctAnswer: 'sun', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 1 },
-                  { id: 'b-2', position: 1, correctAnswer: 'moon', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 0 },
-                ],
-              },
-            ],
-          },
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ] as any;
-
-    const sectionSubmission = createSectionSubmission(
-      'sub-1',
-      'reading',
-      { 'q-1': ['sun', 'moon'] },
-      [],
-    );
-
-    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
-    const groupedItems = groups[0]?.items ?? [];
-    expect(groupedItems).toHaveLength(2);
-    expect(groupedItems[0]?.rootCorrectness).toBe(true);
-    expect(groupedItems[0]?.awardedScore).toBe(1);
-    expect(groupedItems[0]?.maxScore).toBe(1);
-    expect(groupedItems[0]?.rootRuleLabel).toContain('2 answers required');
-
-    const exportData = buildWideObjectiveExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
-      examState,
-      moduleType: 'reading',
-    });
-
-    expect(exportData.rows[0]?.totalScore).toBe(1);
-    expect(exportData.rows[0]?.maxScore).toBe(1);
-    expect(exportData.rows[0]?.correctCount).toBe(1);
-  });
-
-  test('awards zero for grouped sentence scoring when only 1/2 slots are correct', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'sentence-block-2',
-            type: 'SENTENCE_COMPLETION',
-            instruction: 'Complete the sentence.',
-            questions: [
-              {
-                id: 'q-2',
-                sentence: 'The ____ and ____ are linked.',
-                answerRule: 'ONE_WORD',
-                blanks: [
-                  { id: 'b-1', position: 0, correctAnswer: 'sun', scoreGroupId: 'pair-2', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 1 },
-                  { id: 'b-2', position: 1, correctAnswer: 'moon', scoreGroupId: 'pair-2', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 0 },
-                ],
-              },
-            ],
-          },
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ] as any;
-
-    const sectionSubmission = createSectionSubmission(
-      'sub-1',
-      'reading',
-      { 'q-2': ['sun', 'wrong'] },
-      [],
-    );
-
-    const exportData = buildWideObjectiveExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
-      examState,
-      moduleType: 'reading',
-    });
-
-    expect(exportData.rows[0]?.totalScore).toBe(0);
-    expect(exportData.rows[0]?.maxScore).toBe(1);
-    expect(exportData.rows[0]?.correctCount).toBe(0);
-  });
-
-  test('uses root-only scoring for sub-answer tree mode with unordered leaf matching', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'tree-block-1',
-            type: 'SHORT_ANSWER',
-            instruction: 'Tree mode',
-            subAnswerModeEnabled: true,
-            answerTree: [
-              {
-                id: 'root-a',
-                label: 'Root A',
-                children: [
-                  { id: 'leaf-a', label: 'Leaf A', acceptedAnswers: ['cat'], required: true },
-                  { id: 'leaf-b', label: 'Leaf B', acceptedAnswers: ['dog'], required: true },
-                ],
-              },
-            ],
-            questions: [],
-          } as any,
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ];
-
-    const answers = {
-      'tree-block-1::tree::root-a::leaf-a': 'dog',
-      'tree-block-1::tree::root-a::leaf-b': 'cat',
-    };
-    const sectionSubmission = createSectionSubmission('sub-1', 'reading', answers, []);
-
-    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
-    expect(groups[0]?.items).toHaveLength(2);
-    expect(groups[0]?.items[0]?.rootCorrectness).toBe(true);
-    expect(groups[0]?.items[1]?.rootCorrectness).toBe(true);
-
-    const exportData = buildWideObjectiveExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
-      examState,
-      moduleType: 'reading',
-    });
-
-    expect(exportData.rows[0]?.totalScore).toBe(1);
-    expect(exportData.rows[0]?.maxScore).toBe(1);
-    expect(exportData.rows[0]?.correctCount).toBe(1);
-  });
-
-  test('tree traceback prompt does not expose legacy node ids when label is empty', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'tree-blank-prompt',
-            type: 'SHORT_ANSWER',
-            instruction: 'Tree mode',
-            subAnswerModeEnabled: true,
-            answerTree: [
-              {
-                id: 'root-a',
-                label: '',
-                children: [
-                  { id: 'legacy-node-id', label: '   ', acceptedAnswers: ['cat'], required: true },
-                ],
-              },
-            ],
-            questions: [],
-          } as any,
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ];
-
-    const answers = {
-      'tree-blank-prompt::tree::root-a::legacy-node-id': 'cat',
-    };
-    const sectionSubmission = createSectionSubmission('sub-1', 'reading', answers, []);
-
-    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
-    expect(groups[0]?.items).toHaveLength(1);
-    expect(groups[0]?.items[0]?.prompt).toBe('1.1');
-    expect(groups[0]?.items[0]?.prompt).not.toContain('legacy-node-id');
   });
 
   test('prefers stored objective correctness when it differs from the raw answer', () => {
@@ -743,73 +382,16 @@ describe('gradingReviewUtils', () => {
       'Correct Count',
       'Q1 Answer',
       'Q2 Answer',
-      'Q1 Right Answer',
-      'Q2 Right Answer',
       'Q1 Score',
       'Q2 Score',
-      'IELTS Band Score',
     ]);
     expect(exportData.rows[0]?.['answer:q-1']).toBe('Alpha');
     expect(exportData.rows[0]?.['answer:q-2']).toBe('Wrong');
-    expect(exportData.rows[0]?.['correct:q-1']).toBe('Alpha');
-    expect(exportData.rows[0]?.['correct:q-2']).toBe('Beta');
     expect(exportData.rows[0]?.['score:q-1']).toBe(1);
     expect(exportData.rows[0]?.['score:q-2']).toBe(0);
     expect(exportData.rows[1]?.['answer:q-1']).toBe('Other');
     expect(exportData.rows[1]?.['answer:q-2']).toBe('Beta');
-    expect(exportData.rows[1]?.['correct:q-1']).toBe('Alpha');
-    expect(exportData.rows[1]?.['correct:q-2']).toBe('Beta');
     expect(exportData.rows[1]?.correctCount).toBe(1);
-    expect(exportData.rows[1]?.totalScore).toBe(1);
-  });
-
-  test('recomputes correct count from per-question scores and adds IELTS band score', () => {
-    const examState = createInitialExamState('Exam', 'Academic');
-    examState.reading.passages = [
-      {
-        id: 'passage-1',
-        title: 'Passage 1',
-        content: 'Content',
-        blocks: [
-          {
-            id: 'block-1',
-            type: 'SHORT_ANSWER',
-            instruction: 'Answer the questions.',
-            questions: Array.from({ length: 40 }, (_, index) => ({
-              id: `q-${index + 1}`,
-              prompt: `Question ${index + 1}?`,
-              correctAnswer: `A${index + 1}`,
-              answerRule: 'ONE_WORD' as const,
-            })),
-          },
-        ],
-        images: [],
-        wordCount: 1,
-      },
-    ];
-    const questionResults = Array.from({ length: 40 }, (_, index) =>
-      createQuestionResult(`q-${index + 1}`, true, 1),
-    );
-    const sectionSubmission = createSectionSubmission(
-      'sub-1',
-      'reading',
-      Object.fromEntries(questionResults.map((result, index) => [result.questionId, `A${index + 1}`])),
-      questionResults,
-    );
-    sectionSubmission.autoGradingResults.totalScore = 0;
-
-    const exportData = buildWideObjectiveExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
-      examState,
-      moduleType: 'reading',
-    });
-
-    expect(exportData.columns.at(-1)?.label).toBe('IELTS Band Score');
-    expect(exportData.rows[0]?.correctCount).toBe(40);
-    expect(exportData.rows[0]?.totalScore).toBe(40);
-    expect(exportData.rows[0]?.ieltsBandScore).toBe(9);
   });
 
   test('builds listening export with the same wide format', () => {
@@ -849,16 +431,13 @@ describe('gradingReviewUtils', () => {
     });
 
     expect(exportData.rows).toHaveLength(1);
-    expect(exportData.columns.at(-4)?.label).toBe('Q1 Answer');
-    expect(exportData.columns.at(-3)?.label).toBe('Q1 Right Answer');
-    expect(exportData.columns.at(-2)?.label).toBe('Q1 Score');
-    expect(exportData.columns.at(-1)?.label).toBe('IELTS Band Score');
+    expect(exportData.columns.at(-2)?.label).toBe('Q1 Answer');
+    expect(exportData.columns.at(-1)?.label).toBe('Q1 Score');
     expect(exportData.rows[0]?.section).toBe('listening');
     expect(exportData.rows[0]?.['answer:lq-1']).toBe('Train');
-    expect(exportData.rows[0]?.['correct:lq-1']).toBe('Train');
   });
 
-  test('uses computed auto scores when stored question scores are missing', () => {
+  test('leaves missing objective answers and unscored questions blank', () => {
     const examState = createInitialExamState('Exam', 'Academic');
     examState.reading.passages = [
       {
@@ -897,9 +476,7 @@ describe('gradingReviewUtils', () => {
     });
 
     expect(exportData.rows[0]?.['answer:q-2']).toBe('');
-    expect(exportData.rows[0]?.['correct:q-2']).toBe('Beta');
-    expect(exportData.rows[0]?.['score:q-1']).toBe(1);
-    expect(exportData.rows[0]?.['score:q-2']).toBe(0);
+    expect(exportData.rows[0]?.['score:q-2']).toBe('');
   });
 
   test('writing export columns remain stable', () => {
@@ -916,92 +493,5 @@ describe('gradingReviewUtils', () => {
 
     expect(csv).toContain('Exam');
     expect(csv).toContain('Student');
-  });
-
-  test('builds wide writing export with one row per student and plain text responses', () => {
-    const submissions = [
-      createStudentSubmission('sub-1', 'stu-1', 'Student One'),
-      createStudentSubmission('sub-2', 'stu-2', 'Student Two'),
-    ];
-
-    const exportData = buildWideWritingExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions,
-      writingSubmissions: [
-        {
-          submissionId: 'sub-1',
-          writing: [
-            createWritingTaskSubmission(
-              'sub-1',
-              'task1',
-              '<div>Hello&nbsp;world</div><div>Second line</div>',
-              4,
-            ),
-            createWritingTaskSubmission('sub-1', 'task2', '<p>Task two &amp; more</p>', 4),
-          ],
-        },
-        {
-          submissionId: 'sub-2',
-          writing: [
-            createWritingTaskSubmission('sub-2', 'task1', '<span>Another answer</span>', 2),
-            createWritingTaskSubmission('sub-2', 'task2', '=formula-like text', 2),
-          ],
-        },
-      ],
-    });
-
-    expect(exportData.rows).toHaveLength(2);
-    expect(exportData.columns.map((column) => column.label)).toContain('Task 1 Response');
-    expect(exportData.columns.map((column) => column.label)).toContain('Task 2 Overall Band');
-    expect(exportData.rows[0]?.['task1:response']).toBe('Hello world\nSecond line');
-    expect(exportData.rows[0]?.['task2:response']).toBe('Task two & more');
-    expect(exportData.rows[0]?.['task1:wordCount']).toBe(4);
-    expect(exportData.rows[0]?.['task1:overallBand']).toBe(7);
-    expect(exportData.rows[0]?.['task1:annotationCount']).toBe(2);
-    expect(exportData.rows[0]?.['task1:studentVisibleAnnotationCount']).toBe(1);
-    expect(exportData.rows[1]?.studentName).toBe('Student Two');
-    expect(exportData.rows[1]?.['task2:response']).toBe('=formula-like text');
-  });
-
-  test('leaves missing writing task columns blank', () => {
-    const exportData = buildWideWritingExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      writingSubmissions: [
-        {
-          submissionId: 'sub-1',
-          writing: [createWritingTaskSubmission('sub-1', 'task1', '<p>Task one only</p>', 3)],
-        },
-      ],
-    });
-
-    expect(exportData.rows[0]?.['task1:response']).toBe('Task one only');
-    expect(exportData.rows[0]?.['task2:response']).toBe('');
-    expect(exportData.rows[0]?.['task2:wordCount']).toBe('');
-    expect(exportData.rows[0]?.['task2:overallBand']).toBe('');
-  });
-
-  test('wide writing csv keeps escaping and formula protection', () => {
-    const exportData = buildWideWritingExport({
-      session: { sessionId: 'session-1', examTitle: 'Exam' },
-      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
-      writingSubmissions: [
-        {
-          submissionId: 'sub-1',
-          writing: [
-            createWritingTaskSubmission(
-              'sub-1',
-              'task1',
-              '<p>Hello, "world"</p><p>=SUM(A1:A2)</p>',
-              3,
-            ),
-          ],
-        },
-      ],
-    });
-
-    const csv = buildCsvContent(exportData.columns, exportData.rows);
-
-    expect(csv).toContain('"Hello, ""world""\n=SUM(A1:A2)"');
   });
 });

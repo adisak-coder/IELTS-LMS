@@ -1,149 +1,22 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Search, Filter, ArrowLeft, Clock, AlertCircle, CheckCircle, User, ChevronRight } from 'lucide-react';
-import type { GradingSession, StudentSubmission, SessionDetailFilters, OverallGradingStatus, SectionGradingStatus, WritingTaskSubmission } from '../../types/grading';
+import { GradingSession, StudentSubmission, SessionDetailFilters, OverallGradingStatus, SectionGradingStatus } from '../../types/grading';
 import { gradingService } from '../../services/gradingService';
 import { gradingRepository } from '../../services/gradingRepository';
 import { examRepository } from '../../services/examRepository';
-import { seedDevelopmentFixtures } from '../../services/developmentFixtures';
 import { TableLoadingSkeleton } from '@components/ui';
+import { seedDevelopmentFixtures } from '../../services/developmentFixtures';
 import { GradingExportButtons } from './GradingExportButtons';
 import {
   buildCsvContent,
   buildCsvFilename,
   buildWideObjectiveExport,
+  buildWritingExportRows,
   downloadCsvFile,
+  WRITING_EXPORT_COLUMNS,
   type GradingExportSection,
 } from './gradingReviewUtils';
 import type { ExamState } from '../../types';
-import { sanitizeHtml } from '../../utils/sanitizeHtml';
-import { htmlToPlainText } from '../../utils/htmlText';
-
-interface SessionWritingPrintDocument {
-  pages: SessionWritingPrintPage[];
-  requestId: number;
-}
-
-type WritingTaskSlot = 'task1' | 'task2';
-
-interface SessionWritingPrintPage {
-  id: string;
-  studentName: string;
-  studentId: string;
-  taskLabel: string;
-  submittedAt: string;
-  task: WritingTaskSubmission | null;
-}
-
-const waitForPrintPaint = () =>
-  new Promise<void>((resolve) => {
-    if (typeof window === 'undefined') {
-      resolve();
-      return;
-    }
-
-    if (typeof window.requestAnimationFrame !== 'function') {
-      window.setTimeout(resolve, 0);
-      return;
-    }
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => resolve());
-    });
-  });
-
-const waitForFontsReady = async () => {
-  if (typeof document === 'undefined' || !document.fonts?.ready) {
-    return;
-  }
-
-  try {
-    await document.fonts.ready;
-  } catch {
-    // Continue printing even if font readiness cannot be observed.
-  }
-};
-
-const formatPrintDate = (value?: string) => {
-  if (!value) {
-    return 'Not submitted';
-  }
-
-  return new Intl.DateTimeFormat('en', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value));
-};
-
-const getWritingTaskSlot = (task: Pick<WritingTaskSubmission, 'taskId' | 'taskLabel'>): WritingTaskSlot | null => {
-  const normalizedId = task.taskId.trim().toLowerCase();
-  const normalizedLabel = task.taskLabel.trim().toLowerCase();
-
-  if (normalizedId === 'task1' || normalizedId === 'task-1' || normalizedLabel === 'task 1') {
-    return 'task1';
-  }
-
-  if (normalizedId === 'task2' || normalizedId === 'task-2' || normalizedLabel === 'task 2') {
-    return 'task2';
-  }
-
-  return null;
-};
-
-const getTaskLabelForSlot = (slot: WritingTaskSlot) => (slot === 'task1' ? 'Task 1' : 'Task 2');
-
-const buildWritingPrintPages = (
-  submission: StudentSubmission,
-  writing: WritingTaskSubmission[],
-): SessionWritingPrintPage[] => {
-  const taskBySlot = new Map<WritingTaskSlot, WritingTaskSubmission>();
-
-  for (const task of writing) {
-    const slot = getWritingTaskSlot(task);
-    if (slot && !taskBySlot.has(slot)) {
-      taskBySlot.set(slot, task);
-    }
-  }
-
-  return (['task1', 'task2'] as const).map((slot) => {
-    const task = taskBySlot.get(slot) ?? null;
-    return {
-      id: `${submission.id}-${slot}`,
-      studentName: submission.studentName,
-      studentId: submission.studentId || submission.submissionId,
-      taskLabel: getTaskLabelForSlot(slot),
-      submittedAt: task?.submittedAt ?? submission.submittedAt,
-      task,
-    };
-  });
-};
-
-const getAssessmentRows = (task: WritingTaskSubmission | null) => [
-  {
-    criterion: 'Task Response / Achievement',
-    band: task?.rubricAssessment?.taskResponseBand,
-    notes: task?.rubricAssessment?.taskResponseNotes,
-  },
-  {
-    criterion: 'Coherence and Cohesion',
-    band: task?.rubricAssessment?.coherenceBand,
-    notes: task?.rubricAssessment?.coherenceNotes,
-  },
-  {
-    criterion: 'Lexical Resource',
-    band: task?.rubricAssessment?.lexicalBand,
-    notes: task?.rubricAssessment?.lexicalNotes,
-  },
-  {
-    criterion: 'Grammatical Range and Accuracy',
-    band: task?.rubricAssessment?.grammarBand,
-    notes: task?.rubricAssessment?.grammarNotes,
-  },
-  {
-    criterion: 'Overall Band',
-    band: task?.rubricAssessment?.overallBand,
-    notes: task?.overallFeedback || task?.studentVisibleNotes || task?.rubricAssessment?.internalNotes,
-  },
-];
 
 interface GradingSessionDetailProps {
   sessionId: string;
@@ -157,7 +30,6 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
   const [loading, setLoading] = useState(true);
   const [exportingSection, setExportingSection] = useState<GradingExportSection | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [writingPrintDocument, setWritingPrintDocument] = useState<SessionWritingPrintDocument | null>(null);
   const [filters, setFilters] = useState<SessionDetailFilters>({});
   const [searchQuery, setSearchQuery] = useState('');
   const writingPrintRequestIdRef = useRef(0);
@@ -270,60 +142,6 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
     return (version?.contentSnapshot as ExamState | undefined) ?? null;
   };
 
-  const prepareWritingPrint = async (fullSubmissions: StudentSubmission[]) => {
-    const printPages = await Promise.all(
-      fullSubmissions.map(async (submission) => ({
-        submission,
-        pages: buildWritingPrintPages(
-          submission,
-          await gradingRepository.getWritingSubmissionsBySubmissionId(submission.id),
-        ),
-      })),
-    );
-
-    const requestId = writingPrintRequestIdRef.current + 1;
-    writingPrintRequestIdRef.current = requestId;
-
-    setWritingPrintDocument({
-      pages: printPages.flatMap((entry) => entry.pages),
-      requestId,
-    });
-  };
-
-  useEffect(() => {
-    if (!writingPrintDocument) {
-      return;
-    }
-
-    if (lastPrintedRequestIdRef.current === writingPrintDocument.requestId) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const printWhenReady = async () => {
-      await waitForFontsReady();
-      await waitForPrintPaint();
-
-      if (cancelled) {
-        return;
-      }
-
-      if (lastPrintedRequestIdRef.current === writingPrintDocument.requestId) {
-        return;
-      }
-
-      lastPrintedRequestIdRef.current = writingPrintDocument.requestId;
-      window.print();
-    };
-
-    void printWhenReady();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [writingPrintDocument]);
-
   const handleExportSection = async (section: GradingExportSection) => {
     setExportError(null);
     setExportingSection(section);
@@ -338,39 +156,43 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
         throw new Error('Could not load grading session metadata.');
       }
 
-      if (section === 'writing') {
-        await prepareWritingPrint(fullSubmissions);
-        return;
-      }
-
-      const examState = await resolveExamState(fullSession.publishedVersionId);
+      const examState = section === 'writing' ? null : await resolveExamState(fullSession.publishedVersionId);
       const bundles = await Promise.all(
         fullSubmissions.map(async (submission) => ({
           submission,
           sections: await gradingRepository.getSectionSubmissionsBySubmissionId(submission.id),
+          writing: await gradingRepository.getWritingSubmissionsBySubmissionId(submission.id),
         })),
       );
       const sessionContext = {
         sessionId: fullSession.id,
         examTitle: fullSession.examTitle,
       };
-      const exportPayload = buildWideObjectiveExport({
-        session: sessionContext,
-        submissions: bundles.map(({ submission }) => submission),
-        sectionSubmissions: bundles.map(({ submission, sections }) => ({
-          submissionId: submission.id,
-          sectionSubmission: sections.find((item) => item.section === section),
-        })),
-        examState,
-        moduleType: section,
-      });
+      const exportPayload =
+        section === 'writing'
+          ? {
+              columns: WRITING_EXPORT_COLUMNS,
+              rows: bundles.flatMap(({ submission, writing }) =>
+                buildWritingExportRows(sessionContext, submission, writing),
+              ),
+            }
+          : buildWideObjectiveExport({
+              session: sessionContext,
+              submissions: bundles.map(({ submission }) => submission),
+              sectionSubmissions: bundles.map(({ submission, sections }) => ({
+                submissionId: submission.id,
+                sectionSubmission: sections.find((item) => item.section === section),
+              })),
+              examState,
+              moduleType: section,
+            });
 
       downloadCsvFile(
         buildCsvFilename(fullSession.examTitle, section, fullSession.cohortName),
         buildCsvContent(exportPayload.columns, exportPayload.rows),
       );
     } catch (error) {
-      setExportError(error instanceof Error ? error.message : 'Failed to export or print section.');
+      setExportError(error instanceof Error ? error.message : 'Failed to export section CSV.');
     } finally {
       setExportingSection(null);
     }

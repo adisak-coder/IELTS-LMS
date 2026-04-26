@@ -1,4 +1,4 @@
-import type { BandScoreTable, ExamState } from '../../types';
+import type { ExamState } from '../../types';
 import type {
   ObjectiveQuestionResult,
   SectionSubmission,
@@ -15,12 +15,8 @@ import {
   getCorrectAnswerDisplay,
   getQuestionPrompt,
   getStudentAnswerDisplay,
-  getStudentAnswerRawProjection,
   isStudentAnswerCorrect,
 } from './gradingAnswerUtils';
-import { htmlToPlainText } from '../../utils/htmlText';
-import { evaluateSubAnswerRootUnordered } from '../../utils/subAnswerTree';
-import type { SlotGroupRule } from '../../types';
 
 export type GradingExportSection = 'reading' | 'listening' | 'writing';
 
@@ -36,23 +32,14 @@ export interface ExportSessionContext {
 
 export interface ObjectiveTracebackItem {
   numberLabel: string;
-  rootNumberLabel: string;
   questionId: string;
-  rootId: string;
   prompt: string;
   studentAnswer: string;
-  studentAnswerSlots?: string[] | undefined;
   correctAnswer: string;
   correctness: boolean | null;
-  rootCorrectness: boolean | null;
   awardedScore: number | null;
   maxScore: number | null;
   answerKey: string;
-  rootScoreRule?: SlotGroupRule;
-  rootRequiredCorrect?: number;
-  rootSlotCount?: number;
-  rootScoreWeight?: number;
-  rootRuleLabel?: string;
 }
 
 export interface ObjectiveTracebackGroup {
@@ -73,9 +60,7 @@ export const READING_EXPORT_COLUMNS: CsvColumn[] = [
   { key: 'section', label: 'Section' },
   { key: 'groupLabel', label: 'Passage / Part' },
   { key: 'questionNumber', label: 'Question Number' },
-  { key: 'rootQuestionNumber', label: 'Root Question Number' },
   { key: 'questionId', label: 'Question ID' },
-  { key: 'rootQuestionId', label: 'Root Question ID' },
   { key: 'prompt', label: 'Prompt' },
   { key: 'studentAnswer', label: 'Student Answer' },
   { key: 'correctAnswer', label: 'Correct Answer' },
@@ -102,10 +87,6 @@ export const OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS: CsvColumn[] = [
   { key: 'maxScore', label: 'Max Score' },
   { key: 'percentage', label: 'Percentage' },
   { key: 'correctCount', label: 'Correct Count' },
-];
-
-const OBJECTIVE_WIDE_EXPORT_TRAILING_COLUMNS: CsvColumn[] = [
-  { key: 'ieltsBandScore', label: 'IELTS Band Score' },
 ];
 
 export const WRITING_EXPORT_COLUMNS: CsvColumn[] = [
@@ -136,46 +117,6 @@ export const WRITING_EXPORT_COLUMNS: CsvColumn[] = [
   { key: 'submittedAt', label: 'Submitted At' },
   { key: 'gradedBy', label: 'Graded By' },
   { key: 'gradedAt', label: 'Graded At' },
-];
-
-const WRITING_WIDE_EXPORT_BASE_COLUMNS: CsvColumn[] = [
-  { key: 'examTitle', label: 'Exam Title' },
-  { key: 'sessionId', label: 'Session ID' },
-  { key: 'scheduleId', label: 'Schedule ID' },
-  { key: 'submissionId', label: 'Submission ID' },
-  { key: 'studentName', label: 'Student Name' },
-  { key: 'studentId', label: 'Student ID' },
-  { key: 'studentEmail', label: 'Student Email' },
-  { key: 'cohortName', label: 'Cohort Name' },
-  { key: 'section', label: 'Section' },
-  { key: 'submittedAt', label: 'Submitted At' },
-];
-
-const WRITING_WIDE_TASK_FIELDS = [
-  { key: 'wordCount', label: 'Word Count' },
-  { key: 'response', label: 'Response' },
-  { key: 'taskResponseBand', label: 'Task Response Band' },
-  { key: 'coherenceBand', label: 'Coherence Band' },
-  { key: 'lexicalBand', label: 'Lexical Band' },
-  { key: 'grammarBand', label: 'Grammar Band' },
-  { key: 'overallBand', label: 'Overall Band' },
-  { key: 'overallFeedback', label: 'Overall Feedback' },
-  { key: 'studentVisibleNotes', label: 'Student Visible Notes' },
-  { key: 'annotationCount', label: 'Annotation Count' },
-  { key: 'studentVisibleAnnotationCount', label: 'Student Visible Annotation Count' },
-  { key: 'gradingStatus', label: 'Grading Status' },
-  { key: 'gradedBy', label: 'Graded By' },
-  { key: 'gradedAt', label: 'Graded At' },
-] as const;
-
-export const WRITING_WIDE_EXPORT_COLUMNS: CsvColumn[] = [
-  ...WRITING_WIDE_EXPORT_BASE_COLUMNS,
-  ...['task1', 'task2'].flatMap((taskKey, index) =>
-    WRITING_WIDE_TASK_FIELDS.map((field) => ({
-      key: `${taskKey}:${field.key}`,
-      label: `Task ${index + 1} ${field.label}`,
-    })),
-  ),
 ];
 
 function toPlainText(value: unknown): string {
@@ -231,187 +172,30 @@ function buildQuestionResultMap(results: ObjectiveQuestionResult[] | undefined):
   return new Map((results ?? []).map((result) => [result.questionId, result] as const));
 }
 
-function buildTreeRootCorrectnessLookup(
-  descriptors: StudentQuestionDescriptor[],
-  answerMap: Record<string, unknown>,
-): Map<string, { leafCorrectness: boolean; rootCorrect: boolean }> {
-  const lookup = new Map<string, { leafCorrectness: boolean; rootCorrect: boolean }>();
-  const treeLeaves = descriptors.filter((descriptor) => descriptor.isSubAnswerTreeLeaf);
-  const leavesByRoot = new Map<string, StudentQuestionDescriptor[]>();
-
-  treeLeaves.forEach((leaf) => {
-    const bucket = leavesByRoot.get(leaf.rootId);
-    if (bucket) {
-      bucket.push(leaf);
-    } else {
-      leavesByRoot.set(leaf.rootId, [leaf]);
-    }
-  });
-
-  leavesByRoot.forEach((leaves) => {
-    const evaluated = evaluateSubAnswerRootUnordered(
-      leaves.map((leaf) => ({
-        id: leaf.id,
-        rootId: leaf.rootId,
-        rootNodeId: leaf.rootId,
-        rootLabel: leaf.rootLabel ?? leaf.rootId,
-        rootNumber: leaf.rootNumber,
-        numberLabel: leaf.numberLabel,
-        nodeId: leaf.id,
-        prompt: leaf.treePrompt?.trim() ?? '',
-        acceptedAnswers: leaf.treeAcceptedAnswers ?? [],
-        required: leaf.treeRequired !== false,
-        depth: 1,
-      })),
-      answerMap,
-    );
-
-    leaves.forEach((leaf) => {
-      lookup.set(leaf.id, {
-        leafCorrectness: Boolean(evaluated.leafCorrectness[leaf.id]),
-        rootCorrect: evaluated.rootCorrect,
-      });
-    });
-  });
-
-  return lookup;
-}
-
 function buildTracebackItem(
   descriptor: StudentQuestionDescriptor,
   descriptors: StudentQuestionDescriptor[],
   answerMap: Record<string, unknown>,
   results: Map<string, ObjectiveQuestionResult>,
-  treeRootCorrectnessByLeafId: Map<string, { leafCorrectness: boolean; rootCorrect: boolean }>,
 ): ObjectiveTracebackItem {
   const questionResult = results.get(descriptor.id);
-  const treeOverride = treeRootCorrectnessByLeafId.get(descriptor.id);
-  const computedCorrectness = treeOverride
-    ? treeOverride.leafCorrectness
-    : isStudentAnswerCorrect(descriptor, answerMap);
-  const correctness = treeOverride
-    ? treeOverride.leafCorrectness
-    : questionResult?.isCorrect ?? computedCorrectness;
-  const awardedScore = treeOverride
-    ? treeOverride.leafCorrectness
-      ? 1
-      : 0
-    : questionResult?.awardedScore ?? (computedCorrectness === null ? null : computedCorrectness ? 1 : 0);
-  const maxScore = treeOverride
-    ? 1
-    : questionResult?.maxScore ?? (computedCorrectness === null ? null : 1);
-  const rawStudentAnswer = getStudentAnswerRawProjection(descriptor, answerMap);
-  const displayStudentAnswer = getStudentAnswerDisplay(descriptor, answerMap);
-  const shouldUseMappedMcqDisplay =
-    descriptor.block.type === 'SINGLE_MCQ'
-    || (descriptor.block.type === 'MULTI_MCQ' && displayStudentAnswer !== rawStudentAnswer.canonical);
-
-  const rootScoringProps: Partial<ObjectiveTracebackItem> = {};
-  if (descriptor.rootScoreRule) {
-    rootScoringProps.rootScoreRule = descriptor.rootScoreRule;
-  }
-  if (descriptor.rootRequiredCorrect !== undefined) {
-    rootScoringProps.rootRequiredCorrect = descriptor.rootRequiredCorrect;
-  }
-  if (descriptor.rootSlotCount !== undefined) {
-    rootScoringProps.rootSlotCount = descriptor.rootSlotCount;
-  }
-  if (descriptor.rootScoreWeight !== undefined) {
-    rootScoringProps.rootScoreWeight = descriptor.rootScoreWeight;
-  }
+  const computedCorrectness = isStudentAnswerCorrect(descriptor, answerMap);
+  const correctness = questionResult?.isCorrect ?? computedCorrectness;
+  const awardedScore =
+    questionResult?.awardedScore ?? (computedCorrectness === null ? null : computedCorrectness ? 1 : 0);
+  const maxScore = questionResult?.maxScore ?? (computedCorrectness === null ? null : 1);
 
   return {
     numberLabel: getQuestionNumberLabel(descriptors, descriptor.id),
-    rootNumberLabel: String(descriptor.rootNumber),
     questionId: descriptor.id,
-    rootId: descriptor.rootId,
     prompt: getQuestionPrompt(descriptor),
-    studentAnswer: shouldUseMappedMcqDisplay ? displayStudentAnswer : rawStudentAnswer.canonical,
-    studentAnswerSlots: shouldUseMappedMcqDisplay ? undefined : rawStudentAnswer.slots ?? undefined,
+    studentAnswer: getStudentAnswerDisplay(descriptor, answerMap),
     correctAnswer: getCorrectAnswerDisplay(descriptor),
     correctness,
-    rootCorrectness: treeOverride ? treeOverride.rootCorrect : correctness,
     awardedScore,
     maxScore,
     answerKey: descriptor.answerKey,
-    ...rootScoringProps,
   };
-}
-
-function resolveRootRuleLabel(item: ObjectiveTracebackItem): string | undefined {
-  if (!item.rootScoreRule || (item.rootSlotCount ?? 0) <= 1) {
-    return undefined;
-  }
-
-  if (item.rootScoreRule === 'at_least_n') {
-    const required = Math.max(1, item.rootRequiredCorrect ?? 1);
-    return `Scoring: ${required} answer${required === 1 ? '' : 's'} required for ${item.rootScoreWeight ?? 1} point`;
-  }
-
-  const slotCount = Math.max(1, item.rootSlotCount ?? 1);
-  return `Scoring: all ${slotCount} answers must be correct for ${item.rootScoreWeight ?? 1} point`;
-}
-
-function applyRootScoringRules(groups: ObjectiveTracebackGroup[]): void {
-  const byRoot = new Map<string, ObjectiveTracebackItem[]>();
-  groups.forEach((group) => {
-    group.items.forEach((item) => {
-      const bucket = byRoot.get(item.rootId);
-      if (bucket) {
-        bucket.push(item);
-      } else {
-        byRoot.set(item.rootId, [item]);
-      }
-    });
-  });
-
-  byRoot.forEach((items) => {
-    const reference = items[0];
-    if (!reference) return;
-
-    const isGrouped = Boolean(reference.rootScoreRule) && (reference.rootSlotCount ?? items.length) > 1;
-    if (!isGrouped) {
-      const rootRuleLabel = resolveRootRuleLabel(reference);
-      items.forEach((item) => {
-        if (rootRuleLabel) {
-          item.rootRuleLabel = rootRuleLabel;
-        } else {
-          delete item.rootRuleLabel;
-        }
-      });
-      return;
-    }
-
-    const required = Math.max(1, reference.rootRequiredCorrect ?? 1);
-    const weight = Math.max(0, reference.rootScoreWeight ?? 1);
-    const rule = reference.rootScoreRule ?? 'all_required';
-    const allUnanswered = items.every((item) => item.correctness === null);
-    const correctCount = items.filter((item) => item.correctness === true).length;
-
-    let rootCorrectness: boolean | null;
-    if (allUnanswered) {
-      rootCorrectness = null;
-    } else if (rule === 'at_least_n') {
-      rootCorrectness = correctCount >= required;
-    } else {
-      rootCorrectness = correctCount >= items.length;
-    }
-
-    const rootAwardedScore = rootCorrectness === null ? null : rootCorrectness ? weight : 0;
-    const rootMaxScore = rootCorrectness === null ? null : weight;
-    const rootRuleLabel = resolveRootRuleLabel(reference);
-
-    items.forEach((item) => {
-      item.rootCorrectness = rootCorrectness;
-      item.awardedScore = rootAwardedScore;
-      item.maxScore = rootMaxScore;
-      if (rootRuleLabel) {
-        item.rootRuleLabel = rootRuleLabel;
-      } else {
-        delete item.rootRuleLabel;
-      }
-    });
-  });
 }
 
 export function buildQuestionTracebackGroups(
@@ -426,10 +210,6 @@ export function buildQuestionTracebackGroups(
   const descriptors = getStudentQuestionsForModule(examState, moduleType);
   const answerMap = extractObjectiveAnswerMap(sectionSubmission.answers);
   const results = buildQuestionResultMap(sectionSubmission.autoGradingResults?.questionResults);
-  const treeRootCorrectnessByLeafId = buildTreeRootCorrectnessLookup(
-    descriptors,
-    answerMap,
-  );
   const groups = new Map<string, ObjectiveTracebackGroup>();
 
   for (const descriptor of descriptors) {
@@ -444,20 +224,10 @@ export function buildQuestionTracebackGroups(
     }
     const group = groups.get(groupId);
     if (!group) continue;
-    group.items.push(
-      buildTracebackItem(
-        descriptor,
-        descriptors,
-        answerMap,
-        results,
-        treeRootCorrectnessByLeafId,
-      ),
-    );
+    group.items.push(buildTracebackItem(descriptor, descriptors, answerMap, results));
   }
 
-  const groupedTraceback = Array.from(groups.values());
-  applyRootScoringRules(groupedTraceback);
-  return groupedTraceback;
+  return Array.from(groups.values());
 }
 
 export interface ObjectiveExportRowInput {
@@ -480,20 +250,6 @@ export interface WideObjectiveExportInput {
 }
 
 export interface WideObjectiveExport {
-  columns: CsvColumn[];
-  rows: Array<Record<string, unknown>>;
-}
-
-export interface WideWritingExportInput {
-  session: ExportSessionContext;
-  submissions: StudentSubmission[];
-  writingSubmissions: Array<{
-    submissionId: string;
-    writing: WritingTaskSubmission[];
-  }>;
-}
-
-export interface WideWritingExport {
   columns: CsvColumn[];
   rows: Array<Record<string, unknown>>;
 }
@@ -522,9 +278,7 @@ export function buildObjectiveExportRows({
         section: moduleType,
         groupLabel: group.groupLabel,
         questionNumber: item.numberLabel,
-        rootQuestionNumber: item.rootNumberLabel,
         questionId: item.questionId,
-        rootQuestionId: item.rootId,
         prompt: item.prompt,
         studentAnswer: item.studentAnswer,
         correctAnswer: item.correctAnswer,
@@ -550,71 +304,10 @@ function getQuestionColumnLabel(descriptor: StudentQuestionDescriptor, descripto
 }
 
 function countCorrectAnswers(groups: ObjectiveTracebackGroup[]): number {
-  const byRoot = new Map<string, boolean | null>();
-  groups.forEach((group) => {
-    group.items.forEach((item) => {
-      if (!byRoot.has(item.rootId)) {
-        byRoot.set(item.rootId, item.rootCorrectness);
-      }
-    });
-  });
-  return Array.from(byRoot.values()).filter((correct) => correct === true).length;
-}
-
-function sumAwardedScores(groups: ObjectiveTracebackGroup[]): number | '' {
-  const byRoot = new Map<string, number | null>();
-  groups.forEach((group) => {
-    group.items.forEach((item) => {
-      if (!byRoot.has(item.rootId)) {
-        byRoot.set(item.rootId, item.awardedScore ?? null);
-      }
-    });
-  });
-  const scores = Array.from(byRoot.values());
-  if (scores.every((score) => score === null)) return '';
-  return scores.reduce<number>((total, score) => total + (score ?? 0), 0);
-}
-
-function sumMaxScores(groups: ObjectiveTracebackGroup[]): number | '' {
-  const byRoot = new Map<string, number | null>();
-  groups.forEach((group) => {
-    group.items.forEach((item) => {
-      if (!byRoot.has(item.rootId)) {
-        byRoot.set(item.rootId, item.maxScore ?? null);
-      }
-    });
-  });
-  const scores = Array.from(byRoot.values());
-  if (scores.every((score) => score === null)) return '';
-  return scores.reduce<number>((total, score) => total + (score ?? 0), 0);
-}
-
-function calculatePercentage(totalScore: number | '', maxScore: number | ''): number | '' {
-  if (totalScore === '' || maxScore === '' || maxScore === 0) return '';
-  return (totalScore / maxScore) * 100;
-}
-
-function getObjectiveBandScoreTable(
-  examState: ExamState | null,
-  moduleType: 'reading' | 'listening',
-): BandScoreTable | null {
-  if (!examState) return null;
-  return examState.config.sections[moduleType].bandScoreTable;
-}
-
-function calculateBandScore(correctCount: number, table: BandScoreTable | null): number | '' {
-  const thresholds = Object.keys(table ?? {})
-    .map(Number)
-    .filter((value) => Number.isFinite(value))
-    .sort((a, b) => b - a);
-
-  for (const threshold of thresholds) {
-    if (correctCount >= threshold) {
-      return table?.[threshold] ?? '';
-    }
-  }
-
-  return thresholds.length > 0 ? 0 : '';
+  return groups.reduce(
+    (count, group) => count + group.items.filter((item) => item.correctness === true).length,
+    0,
+  );
 }
 
 export function buildWideObjectiveExport({
@@ -629,15 +322,10 @@ export function buildWideObjectiveExport({
     const label = getQuestionColumnLabel(descriptor, descriptors);
     return { key: `answer:${descriptor.id}`, label: `${label} Answer` };
   });
-  const correctAnswerColumns = descriptors.map((descriptor) => {
-    const label = getQuestionColumnLabel(descriptor, descriptors);
-    return { key: `correct:${descriptor.id}`, label: `${label} Right Answer` };
-  });
   const scoreColumns = descriptors.map((descriptor) => {
     const label = getQuestionColumnLabel(descriptor, descriptors);
     return { key: `score:${descriptor.id}`, label: `${label} Score` };
   });
-  const bandScoreTable = getObjectiveBandScoreTable(examState, moduleType);
   const sectionBySubmissionId = new Map(
     sectionSubmissions.map((entry) => [entry.submissionId, entry.sectionSubmission] as const),
   );
@@ -646,9 +334,8 @@ export function buildWideObjectiveExport({
     const sectionSubmission = sectionBySubmissionId.get(submission.id) ?? null;
     const groups = buildQuestionTracebackGroups(examState, sectionSubmission, moduleType);
     const items = new Map(groups.flatMap((group) => group.items.map((item) => [item.questionId, item] as const)));
-    const totalScore = sumAwardedScores(groups);
-    const maxScore = sumMaxScores(groups);
-    const correctCount = countCorrectAnswers(groups);
+    const autoGradingResults = sectionSubmission?.autoGradingResults;
+    const scoredResults = buildQuestionResultMap(autoGradingResults?.questionResults);
     const row: Record<string, unknown> = {
       examTitle: session.examTitle,
       sessionId: session.sessionId,
@@ -660,31 +347,26 @@ export function buildWideObjectiveExport({
       cohortName: submission.cohortName,
       section: moduleType,
       submittedAt: sectionSubmission?.submittedAt ?? submission.submittedAt,
-      totalScore,
-      maxScore,
-      percentage: calculatePercentage(totalScore, maxScore),
-      correctCount,
-      ieltsBandScore: calculateBandScore(correctCount, bandScoreTable),
+      totalScore: toOptionalNumber(autoGradingResults?.totalScore),
+      maxScore: toOptionalNumber(autoGradingResults?.maxScore),
+      percentage: toOptionalNumber(autoGradingResults?.percentage),
+      correctCount: autoGradingResults?.questionResults
+        ? autoGradingResults.questionResults.filter((result) => result.isCorrect).length
+        : countCorrectAnswers(groups),
     };
 
     for (const descriptor of descriptors) {
       const item = items.get(descriptor.id);
+      const scoredResult = scoredResults.get(descriptor.id);
       row[`answer:${descriptor.id}`] = item?.studentAnswer ?? '';
-      row[`correct:${descriptor.id}`] = item?.correctAnswer ?? getCorrectAnswerDisplay(descriptor);
-      row[`score:${descriptor.id}`] = toOptionalNumber(item?.awardedScore);
+      row[`score:${descriptor.id}`] = toOptionalNumber(scoredResult?.awardedScore);
     }
 
     return row;
   });
 
   return {
-    columns: [
-      ...OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS,
-      ...answerColumns,
-      ...correctAnswerColumns,
-      ...scoreColumns,
-      ...OBJECTIVE_WIDE_EXPORT_TRAILING_COLUMNS,
-    ],
+    columns: [...OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS, ...answerColumns, ...scoreColumns],
     rows,
   };
 }
@@ -728,95 +410,6 @@ export function buildWritingExportRows(
       gradedAt: task.gradedAt ?? '',
     };
   });
-}
-
-function getWritingTaskSlot(task: WritingTaskSubmission): 'task1' | 'task2' | null {
-  const normalizedId = task.taskId.trim().toLowerCase();
-  const normalizedLabel = task.taskLabel.trim().toLowerCase();
-
-  if (normalizedId === 'task1' || normalizedId === 'task-1' || normalizedLabel === 'task 1') {
-    return 'task1';
-  }
-
-  if (normalizedId === 'task2' || normalizedId === 'task-2' || normalizedLabel === 'task 2') {
-    return 'task2';
-  }
-
-  return null;
-}
-
-function assignWritingTaskColumns(row: Record<string, unknown>, slot: 'task1' | 'task2', task?: WritingTaskSubmission) {
-  if (!task) {
-    for (const field of WRITING_WIDE_TASK_FIELDS) {
-      row[`${slot}:${field.key}`] = '';
-    }
-    return;
-  }
-
-  const visibleAnnotations = task.annotations.filter((annotation) => annotation.visibility === 'student_visible');
-  const rubric = task.rubricAssessment;
-
-  row[`${slot}:wordCount`] = task.wordCount;
-  row[`${slot}:response`] = htmlToPlainText(task.studentText);
-  row[`${slot}:taskResponseBand`] = rubric?.taskResponseBand ?? '';
-  row[`${slot}:coherenceBand`] = rubric?.coherenceBand ?? '';
-  row[`${slot}:lexicalBand`] = rubric?.lexicalBand ?? '';
-  row[`${slot}:grammarBand`] = rubric?.grammarBand ?? '';
-  row[`${slot}:overallBand`] = rubric?.overallBand ?? '';
-  row[`${slot}:overallFeedback`] = task.overallFeedback ?? '';
-  row[`${slot}:studentVisibleNotes`] = task.studentVisibleNotes ?? '';
-  row[`${slot}:annotationCount`] = task.annotations.length;
-  row[`${slot}:studentVisibleAnnotationCount`] = visibleAnnotations.length;
-  row[`${slot}:gradingStatus`] = task.gradingStatus;
-  row[`${slot}:gradedBy`] = task.gradedBy ?? '';
-  row[`${slot}:gradedAt`] = task.gradedAt ?? '';
-}
-
-export function buildWideWritingExport({
-  session,
-  submissions,
-  writingSubmissions,
-}: WideWritingExportInput): WideWritingExport {
-  const writingBySubmissionId = new Map(
-    writingSubmissions.map((entry) => [entry.submissionId, entry.writing] as const),
-  );
-
-  const rows = submissions.map((submission) => {
-    const tasks = writingBySubmissionId.get(submission.id) ?? [];
-    const tasksBySlot = new Map<'task1' | 'task2', WritingTaskSubmission>();
-
-    for (const task of tasks) {
-      const slot = getWritingTaskSlot(task);
-      if (slot && !tasksBySlot.has(slot)) {
-        tasksBySlot.set(slot, task);
-      }
-    }
-
-    const submittedAt =
-      tasks.find((task) => task.submittedAt)?.submittedAt ?? submission.submittedAt;
-    const row: Record<string, unknown> = {
-      examTitle: session.examTitle,
-      sessionId: session.sessionId,
-      scheduleId: submission.scheduleId,
-      submissionId: submission.id,
-      studentName: submission.studentName,
-      studentId: submission.studentId,
-      studentEmail: submission.studentEmail ?? '',
-      cohortName: submission.cohortName,
-      section: 'writing',
-      submittedAt,
-    };
-
-    assignWritingTaskColumns(row, 'task1', tasksBySlot.get('task1'));
-    assignWritingTaskColumns(row, 'task2', tasksBySlot.get('task2'));
-
-    return row;
-  });
-
-  return {
-    columns: WRITING_WIDE_EXPORT_COLUMNS,
-    rows,
-  };
 }
 
 export function slugifyCsvFilePart(value: string): string {
