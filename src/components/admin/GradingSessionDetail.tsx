@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, ArrowLeft, Clock, AlertCircle, CheckCircle, User, ChevronRight } from 'lucide-react';
+import { Search, Filter, ArrowLeft, Clock, AlertCircle, CheckCircle, User, ChevronRight, Download } from 'lucide-react';
 import { StudentSubmission, SessionDetailFilters, OverallGradingStatus, SectionGradingStatus } from '../../types/grading';
 import { gradingService } from '../../services/gradingService';
 import { TableLoadingSkeleton } from '@components/ui';
+import { seedDevelopmentFixtures } from '../../services/developmentFixtures';
+import { downloadCsv } from '../../utils/csvExport';
 
 interface GradingSessionDetailProps {
   sessionId: string;
@@ -17,7 +19,19 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
-    loadSubmissions();
+    let cancelled = false;
+    void loadSubmissions();
+    void seedDevelopmentFixtures()
+      .then(() => {
+        if (!cancelled) {
+          void loadSubmissions();
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+    };
   }, [sessionId, filters]);
 
   const loadSubmissions = async () => {
@@ -98,6 +112,37 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
     return 'Just now';
   };
 
+  const handleExportCsv = () => {
+    const filename = `grading-session-${sessionId}-${new Date().toISOString().split('T')[0]}.csv`;
+    downloadCsv(filename, [
+      'Student',
+      'Email',
+      'Submitted At',
+      'Time Spent (Seconds)',
+      'Overall Status',
+      'Listening',
+      'Reading',
+      'Writing',
+      'Speaking',
+      'Flagged',
+      'Overdue',
+      'Assigned Teacher',
+    ], submissions.map((submission) => [
+      submission.studentName,
+      submission.studentEmail ?? '',
+      submission.submittedAt,
+      submission.timeSpentSeconds,
+      submission.gradingStatus,
+      submission.sectionStatuses.listening,
+      submission.sectionStatuses.reading,
+      submission.sectionStatuses.writing,
+      submission.sectionStatuses.speaking,
+      submission.isFlagged ? 'Yes' : 'No',
+      submission.isOverdue ? 'Yes' : 'No',
+      submission.assignedTeacherName ?? '',
+    ]));
+  };
+
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       {/* Header */}
@@ -127,6 +172,15 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
           <button className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors">
             <Filter size={16} />
             <span className="hidden sm:inline">Filter</span>
+          </button>
+          <button
+            onClick={handleExportCsv}
+            disabled={loading || submissions.length === 0}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Export students as CSV"
+          >
+            <Download size={16} />
+            <span className="hidden sm:inline">CSV</span>
           </button>
         </div>
       </div>
