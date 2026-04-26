@@ -214,7 +214,7 @@ describe('student question experience', () => {
     expect(onOpenAccessibility).toHaveBeenCalledTimes(1);
   });
 
-  it('renders a compact tablet controls panel in the header', () => {
+  it('renders separate tablet zoom and highlight controls in the header', () => {
     const onOpenAccessibility = vi.fn();
     const onZoomIn = vi.fn();
     const onZoomOut = vi.fn();
@@ -240,17 +240,22 @@ describe('student question experience', () => {
       />,
     );
 
+    expect(screen.queryByRole('button', { name: /open tablet controls/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId('zoom-controls')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /open zoom controls/i })).toHaveTextContent('Zoom');
+    expect(screen.getByRole('button', { name: /open highlight options/i })).toHaveTextContent('Highlight');
 
-    fireEvent.click(screen.getByRole('button', { name: /open tablet controls/i }));
+    fireEvent.click(screen.getByRole('button', { name: /open zoom controls/i }));
 
-    const panel = screen.getByRole('dialog', { name: /tablet controls/i });
-    expect(within(panel).getByTestId('zoom-controls')).toBeInTheDocument();
-    expect(within(panel).getByRole('button', { name: /accessibility settings/i })).toBeInTheDocument();
+    const zoomPanel = screen.getByRole('dialog', { name: /zoom controls/i });
+    expect(within(zoomPanel).getByTestId('zoom-controls')).toBeInTheDocument();
 
-    fireEvent.click(within(panel).getByRole('button', { name: /zoom in/i }));
-    fireEvent.click(within(panel).getByRole('button', { name: /select amber highlight color/i }));
-    fireEvent.click(within(panel).getByRole('button', { name: /accessibility settings/i }));
+    fireEvent.click(within(zoomPanel).getByRole('button', { name: /zoom in/i }));
+    fireEvent.click(screen.getByRole('button', { name: /open highlight options/i }));
+    const highlightPanel = screen.getByRole('dialog', { name: /highlight options/i });
+    expect(within(highlightPanel).queryByTestId('zoom-controls')).not.toBeInTheDocument();
+    fireEvent.click(within(highlightPanel).getByRole('button', { name: /select amber highlight color/i }));
+    fireEvent.click(screen.getByRole('button', { name: /open accessibility settings/i }));
 
     expect(onZoomIn).toHaveBeenCalledTimes(1);
     expect(onHighlightColorChange).toHaveBeenCalledWith('amber');

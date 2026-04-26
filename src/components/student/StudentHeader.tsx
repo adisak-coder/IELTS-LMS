@@ -63,21 +63,21 @@ export function StudentHeader({
 }: StudentHeaderProps) {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [showHighlightPalette, setShowHighlightPalette] = useState(false);
-  const [showTabletControls, setShowTabletControls] = useState(false);
+  const [showTabletZoomControls, setShowTabletZoomControls] = useState(false);
   const [highlightPaletteStyle, setHighlightPaletteStyle] = useState<React.CSSProperties>({
     top: 0,
     left: 0,
     width: 288,
   });
-  const [tabletControlsStyle, setTabletControlsStyle] = useState<React.CSSProperties>({
+  const [tabletZoomControlsStyle, setTabletZoomControlsStyle] = useState<React.CSSProperties>({
     top: 0,
     left: 0,
-    width: 320,
+    width: 280,
   });
   const highlightButtonRef = useRef<HTMLButtonElement | null>(null);
   const highlightPaletteRef = useRef<HTMLDivElement | null>(null);
-  const tabletControlsButtonRef = useRef<HTMLButtonElement | null>(null);
-  const tabletControlsPanelRef = useRef<HTMLDivElement | null>(null);
+  const tabletZoomButtonRef = useRef<HTMLButtonElement | null>(null);
+  const tabletZoomPanelRef = useRef<HTMLDivElement | null>(null);
   const showZoomControls = zoom !== undefined && onZoomIn && onZoomOut && onZoomReset;
   const zoomPercent = zoom !== undefined ? Math.round(zoom * 100) : null;
   const showHighlightControls = Boolean(onHighlightModeToggle && onHighlightColorChange);
@@ -174,19 +174,20 @@ export function StudentHeader({
 
   const handleHighlightButtonClick = useCallback(() => {
     setShowHighlightPalette((open) => !open);
+    setShowTabletZoomControls(false);
   }, []);
 
-  const updateTabletControlsPosition = useCallback(() => {
-    const button = tabletControlsButtonRef.current;
+  const updateTabletZoomControlsPosition = useCallback(() => {
+    const button = tabletZoomButtonRef.current;
     if (!button) {
       return;
     }
 
     const rect = button.getBoundingClientRect();
-    const width = Math.min(336, Math.max(280, window.innerWidth - 24));
+    const width = Math.min(300, Math.max(248, window.innerWidth - 24));
     const left = Math.min(Math.max(12, rect.right - width), Math.max(12, window.innerWidth - width - 12));
 
-    setTabletControlsStyle({
+    setTabletZoomControlsStyle({
       top: Math.round(rect.bottom + 10),
       left: Math.round(left),
       width,
@@ -194,19 +195,19 @@ export function StudentHeader({
   }, []);
 
   useEffect(() => {
-    if (!tabletMode || !showTabletControls) {
+    if (!tabletMode || !showTabletZoomControls) {
       return;
     }
 
-    updateTabletControlsPosition();
+    updateTabletZoomControlsPosition();
 
     const handleResize = () => {
-      updateTabletControlsPosition();
+      updateTabletZoomControlsPosition();
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
-        setShowTabletControls(false);
+        setShowTabletZoomControls(false);
       }
     };
 
@@ -214,12 +215,12 @@ export function StudentHeader({
       const target = event.target as Node | null;
       if (
         target &&
-        (tabletControlsButtonRef.current?.contains(target) || tabletControlsPanelRef.current?.contains(target))
+        (tabletZoomButtonRef.current?.contains(target) || tabletZoomPanelRef.current?.contains(target))
       ) {
         return;
       }
 
-      setShowTabletControls(false);
+      setShowTabletZoomControls(false);
     };
 
     document.addEventListener('keydown', handleKeyDown);
@@ -233,7 +234,7 @@ export function StudentHeader({
       document.removeEventListener('touchstart', handlePointerDown);
       window.removeEventListener('resize', handleResize);
     };
-  }, [showTabletControls, tabletMode, updateTabletControlsPosition]);
+  }, [showTabletZoomControls, tabletMode, updateTabletZoomControlsPosition]);
 
   const handleHighlightColorChange = (color: StudentHighlightColor) => {
     onHighlightColorChange?.(color);
@@ -302,39 +303,37 @@ export function StudentHeader({
           </div>
         )}
         {tabletMode ? (
-          <div className="relative">
-            <button
-              ref={tabletControlsButtonRef}
-              type="button"
-              onClick={() => setShowTabletControls((open) => !open)}
-              className={`flex items-center gap-1 rounded-sm border px-2.5 py-1.5 text-[length:var(--student-control-font-size)] font-bold transition-colors ${
-                highlightEnabled
-                  ? 'border-amber-500 bg-amber-50 text-amber-800'
-                  : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-gray-100'
-              }`}
-              aria-expanded={showTabletControls}
-              aria-label="Open tablet controls"
-              title="Open tablet controls"
-            >
-              <Highlighter size={14} strokeWidth={2.2} />
-              <span className="hidden sm:inline">Controls</span>
-              {zoomPercent !== null ? (
-                <span className="rounded-full bg-white px-1.5 py-0.5 text-[length:var(--student-meta-font-size)] font-black tabular-nums text-gray-700">
-                  {zoomPercent}%
-                </span>
-              ) : null}
-              <ChevronDown size={12} className="hidden sm:inline" />
-            </button>
-            {showTabletControls ? (
-              <div
-                ref={tabletControlsPanelRef}
-                role="dialog"
-                aria-label="Tablet controls"
-                className="fixed z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
-                style={tabletControlsStyle}
-              >
-                {showZoomControls ? (
-                  <div className="mb-3">
+          <>
+            {showZoomControls ? (
+              <div className="relative">
+                <button
+                  ref={tabletZoomButtonRef}
+                  type="button"
+                  onClick={() => {
+                    setShowTabletZoomControls((open) => !open);
+                    setShowHighlightPalette(false);
+                  }}
+                  className="flex min-w-[5.75rem] items-center justify-center gap-1 rounded-sm border border-gray-200 bg-gray-50 px-2.5 py-1.5 text-[length:var(--student-control-font-size)] font-bold text-gray-700 transition-colors hover:border-gray-300 hover:bg-gray-100"
+                  aria-expanded={showTabletZoomControls}
+                  aria-label="Open zoom controls"
+                  title="Open zoom controls"
+                >
+                  <Plus size={14} strokeWidth={2.2} />
+                  <span>Zoom</span>
+                  {zoomPercent !== null ? (
+                    <span className="rounded-full bg-white px-1.5 py-0.5 text-[length:var(--student-meta-font-size)] font-black tabular-nums text-gray-700">
+                      {zoomPercent}%
+                    </span>
+                  ) : null}
+                </button>
+                {showTabletZoomControls ? (
+                  <div
+                    ref={tabletZoomPanelRef}
+                    role="dialog"
+                    aria-label="Zoom controls"
+                    className="fixed z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
+                    style={tabletZoomControlsStyle}
+                  >
                     <div className="mb-2 text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
                       Zoom
                     </div>
@@ -345,7 +344,7 @@ export function StudentHeader({
                       <button
                         type="button"
                         onClick={onZoomOut}
-                        className="flex h-9 w-9 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                        className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
                         aria-label="Zoom out"
                         title="Zoom out"
                       >
@@ -353,7 +352,7 @@ export function StudentHeader({
                       </button>
                       <div
                         data-testid="zoom-percent"
-                        className="flex-1 px-1 text-center text-[length:var(--student-meta-font-size)] font-bold text-gray-700 tabular-nums"
+                        className="flex-1 px-1 text-center text-sm font-bold text-gray-700 tabular-nums"
                         aria-live="polite"
                         aria-label={zoomPercent !== null ? `Zoom level ${zoomPercent}%` : undefined}
                       >
@@ -362,7 +361,7 @@ export function StudentHeader({
                       <button
                         type="button"
                         onClick={onZoomIn}
-                        className="flex h-9 w-9 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                        className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
                         aria-label="Zoom in"
                         title="Zoom in"
                       >
@@ -371,7 +370,7 @@ export function StudentHeader({
                       <button
                         type="button"
                         onClick={onZoomReset}
-                        className="flex h-9 w-9 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+                        className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
                         aria-label="Reset zoom"
                         title="Reset zoom"
                       >
@@ -380,10 +379,38 @@ export function StudentHeader({
                     </div>
                   </div>
                 ) : null}
-
-                {showHighlightControls ? (
-                  <div className="mb-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
+              </div>
+            ) : null}
+            {showHighlightControls ? (
+              <div className="relative">
+                <button
+                  ref={highlightButtonRef}
+                  type="button"
+                  onClick={handleHighlightButtonClick}
+                  className={`flex min-w-[6.75rem] items-center justify-center gap-1 rounded-sm border px-2.5 py-1.5 text-[length:var(--student-control-font-size)] font-bold transition-colors ${
+                    highlightEnabled
+                      ? 'border-amber-500 bg-amber-50 text-amber-800'
+                      : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300 hover:bg-gray-100'
+                  }`}
+                  aria-expanded={showHighlightPalette}
+                  aria-controls="student-highlight-palette"
+                  aria-label="Open highlight options"
+                  title="Open highlight options"
+                >
+                  <Highlighter size={14} strokeWidth={2.2} />
+                  <span>Highlight</span>
+                  <span className={`h-2.5 w-2.5 rounded-full border border-white shadow-sm ${selectedHighlight.swatchClassName}`} />
+                </button>
+                {showHighlightPalette ? (
+                  <div
+                    ref={highlightPaletteRef}
+                    id="student-highlight-palette"
+                    role="dialog"
+                    aria-label="Highlight options"
+                    className="fixed z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
+                    style={highlightPaletteStyle}
+                  >
+                    <div className="mb-3 flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
                           Highlight
@@ -433,7 +460,6 @@ export function StudentHeader({
                         type="button"
                         onClick={() => {
                           onClearHighlights();
-                          setShowTabletControls(false);
                           setShowHighlightPalette(false);
                         }}
                         className="mt-3 w-full rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[length:var(--student-control-font-size)] font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100"
@@ -443,19 +469,9 @@ export function StudentHeader({
                     ) : null}
                   </div>
                 ) : null}
-
-                {onOpenAccessibility ? (
-                  <button
-                    type="button"
-                    onClick={onOpenAccessibility}
-                    className="w-full rounded-md border border-gray-200 bg-gray-50 px-3 py-2 text-[length:var(--student-control-font-size)] font-bold text-gray-700 hover:border-gray-300 hover:bg-gray-100"
-                  >
-                    Accessibility settings
-                  </button>
-                ) : null}
               </div>
             ) : null}
-          </div>
+          </>
         ) : (
           <>
             {showZoomControls ? (
