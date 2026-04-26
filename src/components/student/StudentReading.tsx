@@ -35,14 +35,6 @@ interface StudentReadingProps {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   tabletMode?: boolean | undefined;
-  contentZoom?: number | undefined;
-  onIncreasePassageReadability?: (() => void) | undefined;
-  onDecreasePassageReadability?: (() => void) | undefined;
-  onResetPassageReadability?: (() => void) | undefined;
-  passageReadabilityLabel?: string | undefined;
-  canIncreasePassageReadability?: boolean | undefined;
-  canDecreasePassageReadability?: boolean | undefined;
-  registerLiveAnswer?: ((questionId: string, value: QuestionAnswer) => void) | undefined;
 }
 
 export function StudentReading({
@@ -57,29 +49,9 @@ export function StudentReading({
   highlightColor,
   highlightClassName,
   tabletMode = false,
-  contentZoom = 1,
-  registerLiveAnswer,
 }: StudentReadingProps) {
   const isTabletMode = Boolean(tabletMode);
-  const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
-  const supportsCssZoom = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('zoom', '1.01');
-  const tabletContentZoomStyle = useMemo<React.CSSProperties | undefined>(() => {
-    if (!isTabletMode || clampedContentZoom === 1) {
-      return undefined;
-    }
-
-    if (supportsCssZoom) {
-      return { zoom: clampedContentZoom };
-    }
-
-    const inverseZoom = 1 / clampedContentZoom;
-    return {
-      transform: `scale(${clampedContentZoom})`,
-      transformOrigin: 'top left',
-      width: `${inverseZoom * 100}%`,
-      minHeight: `${inverseZoom * 100}%`,
-    };
-  }, [clampedContentZoom, isTabletMode, supportsCssZoom]);
+  const [leftWidth, setLeftWidth] = useState(50);
   const questionContainerRef = useRef<HTMLDivElement>(null);
   const { answerCompact, handleDrag, leftWidth, materialCompact, splitPaneStyle, workspaceRef } = useSplitPaneResize({
     isTabletMode,
@@ -272,34 +244,18 @@ export function StudentReading({
     <div className="flex flex-col h-full w-full bg-white">
       <div
         className={`relative flex flex-1 overflow-hidden border-t border-gray-300 ${
-          isTabletMode ? 'flex-row' : 'flex-col md:flex-row'
+          isTabletMode ? 'flex-col' : 'flex-col md:flex-row'
         }`}
-        ref={workspaceRef}
-        style={splitPaneStyle}
-        data-testid="reading-split-workspace"
+        style={isTabletMode ? undefined : splitPaneStyle}
       >
         <div
-          className={`h-full overflow-y-auto font-sans text-gray-900 ${
-            materialCompact ? 'p-2 pr-2 md:p-3 md:pr-3' : 'p-4 pr-4 md:p-6 md:pr-6'
-          } ${
-            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[48px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[48px] lg:p-8 lg:pr-12'
+          className={`h-full w-full overflow-y-auto p-4 pr-4 font-sans text-sm leading-relaxed text-gray-900 md:p-6 md:pr-6 md:text-base ${
+            isTabletMode ? 'max-h-[42dvh] border-b border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
-          style={{
-            ...(tabletContentZoomStyle ?? {}),
-            fontSize: 'var(--student-passage-font-size)',
-            lineHeight: 'var(--student-passage-line-height)',
-          }}
           data-student-zoom-scroll
         >
-          <div className={materialCompact ? 'mb-2' : 'mb-4 md:mb-6'}>
-            <h2
-              className="font-bold leading-tight text-gray-950 break-words [overflow-wrap:anywhere]"
-              style={{ fontSize: 'var(--student-passage-title-font-size)' }}
-            >
-              {activePassage.title}
-            </h2>
-          </div>
-          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} student-reading-passage-content student-stimulus-content break-words [overflow-wrap:anywhere] text-gray-900 [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
+          <h2 className="text-lg md:text-xl font-bold mb-4 md:mb-6">{activePassage.title}</h2>
+          <div className="leading-relaxed text-gray-900 space-y-4 [&_h1]:text-2xl [&_h1]:font-black [&_h2]:text-xl [&_h2]:font-bold [&_h3]:text-lg [&_h3]:font-bold [&_img]:max-w-full [&_img]:rounded-2xl [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:list-decimal [&_ol]:pl-6">
             <RichTextHighlighter
               content={renderedPassageContent}
               contentType="html"
@@ -309,15 +265,33 @@ export function StudentReading({
               highlightClassName={highlightClassName}
             />
             {(activePassage.images ?? []).map((image) => (
-              <div key={image.id} className={isTabletMode ? '' : 'lg:sticky lg:top-0 lg:z-10 lg:bg-white lg:py-2'}>
-                <StudentZoomableMedia
-                  sources={getImageUrlCandidates(image.src)}
-                  alt={image.alt}
-                  label={image.alt || 'Passage image'}
-                  hint="Tap to zoom the passage image"
-                  className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50"
-                  renderOverlay={(zoom) => renderPassageImageAnnotations(image.annotations, zoom)}
-                />
+              <div key={image.id} className="relative rounded-2xl overflow-hidden border border-gray-200 bg-gray-50">
+                <img src={image.src} alt={image.alt} className="w-full object-contain" loading="lazy" />
+                {image.annotations.map((annotation) => (
+                  <span
+                    key={annotation.id}
+                    className="absolute"
+                    style={{
+                      left: `${annotation.x}%`,
+                      top: `${annotation.y}%`,
+                      width: annotation.width ? `${annotation.width}%` : undefined,
+                      height: annotation.height ? `${annotation.height}%` : undefined,
+                      transform: 'translate(-50%, -50%)',
+                    }}
+                  >
+                    {annotation.type === 'hotspot' && (
+                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white">•</span>
+                    )}
+                    {annotation.type === 'text' && (
+                      <span className="rounded-lg bg-white/90 px-2 py-1 text-[length:var(--student-meta-font-size)] font-semibold text-gray-800 border border-gray-200">
+                        {annotation.text}
+                      </span>
+                    )}
+                    {annotation.type === 'box' && (
+                      <span className="block h-full w-full rounded-lg border-2 border-blue-600 bg-blue-100/10" />
+                    )}
+                  </span>
+                ))}
               </div>
             ))}
           </div>
@@ -338,17 +312,13 @@ export function StudentReading({
           </div>
         </div>
 
-        <div className={`relative flex h-full min-w-0 flex-col min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)] min-w-[48px]' : 'w-full md:min-w-[320px] lg:w-[var(--question-pane-width)] lg:min-w-[48px]'}`}>
+        <div className="relative flex h-full w-full min-w-0 flex-col md:min-w-[320px] lg:w-[var(--question-pane-width)] min-h-0">
           <div
-            className={`flex-1 overflow-y-auto break-words [overflow-wrap:anywhere] student-reading-question-typography ${
-              answerCompact ? 'p-2.5 md:p-3 space-y-4 md:space-y-5' : 'p-4 md:p-5 lg:p-8 space-y-6 md:space-y-8'
-            } pb-20 md:pb-24 ${
+            className={`flex-1 overflow-y-auto p-4 md:p-6 lg:p-8 pb-20 md:pb-24 space-y-8 md:space-y-10 ${
               isTabletMode ? 'pb-28 md:pb-28' : ''
             }`}
             ref={questionContainerRef}
             data-student-zoom-scroll
-            data-testid="reading-question-scroll"
-            style={tabletContentZoomStyle}
           >
             {activePassage.blocks.map((block) => {
               const blockQuestions = allQuestions.filter((question) => question.blockId === block.id);
@@ -458,7 +428,6 @@ export function StudentReading({
                               flags={flags}
                               onToggleFlag={onToggleFlag}
                               tabletMode={isTabletMode}
-                              compactPane={answerCompact}
                               highlightEnabled={highlightEnabled}
                               highlightColor={highlightColor}
                               hideMapReference={isInstructionReferencePlacement(block)}
@@ -472,14 +441,6 @@ export function StudentReading({
                         key={block.id}
                         className="relative"
                       >
-                        {blockQuestions.map((entry) => (
-                          <div
-                            key={entry.id}
-                            id={`question-${entry.id}`}
-                            className="h-0 overflow-hidden"
-                            aria-hidden="true"
-                          />
-                        ))}
                         {isTabletMode && onToggleFlag && singleBlockQuestion ? (
                           <div className="mb-2 flex justify-end">
                             <button
@@ -527,7 +488,6 @@ export function StudentReading({
                           flags={flags}
                           onToggleFlag={onToggleFlag}
                           tabletMode={isTabletMode}
-                          compactPane={answerCompact}
                           highlightEnabled={highlightEnabled}
                           highlightColor={highlightColor}
                           hideMapReference={isInstructionReferencePlacement(block)}

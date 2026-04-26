@@ -36,11 +36,20 @@ describe('StudentExamPreview', () => {
       </MemoryRouter>,
     );
 
-    expect(screen.queryByTestId('zoom-controls')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /zoom out/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /zoom in/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /reset zoom/i })).not.toBeInTheDocument();
+    const zoomControls = screen.getByTestId('zoom-controls');
+    const zoomPercent = screen.getByTestId('zoom-percent');
+
+    expect(zoomControls).toHaveClass('w-[11.5rem]');
+    expect(zoomPercent).toHaveTextContent('100%');
+    expect(screen.getByRole('button', { name: /zoom out/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /zoom in/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reset zoom/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /open accessibility settings/i })).toBeInTheDocument();
+  });
+
+    fireEvent.click(screen.getByRole('button', { name: /zoom in/i }));
+    expect(zoomPercent).toHaveTextContent('110%');
+    expect(zoomControls).toHaveClass('w-[11.5rem]');
   });
 
   it('updates the preview shell font size when the accessibility setting changes', () => {

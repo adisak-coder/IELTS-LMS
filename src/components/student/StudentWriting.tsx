@@ -394,12 +394,7 @@ export function StudentWriting({
               </div>
             </div>
             {currentChart && (
-              <div
-                className="mb-5 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm"
-                onContextMenu={blockMediaSaveInteraction}
-                onDragStart={blockMediaSaveInteraction}
-                onDrop={blockMediaSaveInteraction}
-              >
+              <div className="mb-5 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
                 <p className="text-[length:var(--student-meta-font-size)] font-black text-gray-400 uppercase tracking-[0.22em] mb-3">
                   Stimulus Chart
                 </p>
@@ -412,7 +407,16 @@ export function StudentWriting({
                     className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50"
                   />
                 ) : (
-                  <WritingChartPreview chart={currentChart} variant="student" />
+                  <div className="flex items-end gap-3 h-44">
+                    {currentChart.values.map((value, index) => (
+                      <div key={`${currentChart.labels[index]}-${value}`} className="flex-1 text-center">
+                        <div className="mx-auto rounded-t-2xl bg-blue-500" style={{ height: `${Math.max(16, value * 12)}px` }} />
+                        <p className="text-[length:var(--student-meta-font-size)] font-semibold text-gray-500 mt-2">
+                          {currentChart.labels[index]}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 )}
               </div>
             )}
@@ -504,6 +508,24 @@ export function StudentWriting({
                 placeholder="Write your answer here..."
               />
               </div>
+            
+	            <div className="border-t border-gray-200 p-3 md:p-5 bg-gray-50 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs md:text-sm flex-shrink-0">
+	              <div className="flex gap-4 md:gap-8 w-full sm:w-auto">
+	                <div className="flex flex-col">
+	                  <span className="text-[length:var(--student-meta-font-size)] font-bold text-gray-400 uppercase tracking-widest">
+	                    Word Count
+	                  </span>
+	                  <span className={`text-lg md:text-xl font-black ${
+	                    isOptimal ? 'text-emerald-600' :
+	                    isOverLength ? 'text-red-600' :
+	                    isWordCountMet ? 'text-blue-600' :
+	                    isWordCountWarning ? 'text-amber-500' : 'text-gray-900'
+	                  }`}>
+	                    {wordCount}
+	                  </span>
+	                </div>
+	              </div>
+	            </div>
 	          </div>
 
         </div>

@@ -1,11 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { defaultStudentHighlightColor, type StudentHighlightColor } from '../highlightPalette';
-import {
-  clampStudentPassageReadabilityLevel,
-  DEFAULT_STUDENT_PASSAGE_READABILITY_LEVEL,
-  type StudentFontSize,
-  type StudentPassageReadabilityLevel,
-} from '../accessibilityScale';
+import type { StudentFontSize } from '../accessibilityScale';
 
 interface UIState {
   showNavigator: boolean;

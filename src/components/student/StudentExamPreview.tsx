@@ -16,13 +16,7 @@ import { StudentReading } from './StudentReading';
 import { StudentSpeaking } from './StudentSpeaking';
 import { StudentWriting } from './StudentWriting';
 import { StudentUIProvider, useStudentUI } from './providers/StudentUIProvider';
-import {
-  canDecreaseStudentPassageReadability,
-  canIncreaseStudentPassageReadability,
-  getStudentPassageReadabilityLabel,
-  getStudentReadingTypographyScale,
-  getStudentTypographyScale,
-} from './accessibilityScale';
+import { getStudentTypographyScale } from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
@@ -104,26 +98,9 @@ function StudentExamPreviewInner({
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
   const studentTypography = getStudentTypographyScale(uiState.accessibilitySettings.fontSize);
-  const readingTypography = getStudentReadingTypographyScale(
-    studentTypography,
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
-  const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
-  const canDecreasePassageReadability = canDecreaseStudentPassageReadability(
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
-  const passageReadabilityLabel = getStudentPassageReadabilityLabel(
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
   useZoomScrollAnchoring(uiState.accessibilitySettings.zoom * studentTypography.fontScale);
   const highlightColor = uiState.accessibilitySettings.highlightColor;
   const highlightClassName = getStudentHighlightClassName(highlightColor);
-  const highlightNamespace = `preview:${examId}`;
-  const clearHighlights = () => {
-    clearStudentHighlights(highlightNamespace);
-  };
   const studentShellStyle = {
     zoom: uiState.accessibilitySettings.zoom,
     fontSize: studentTypography.rootFontSize,
@@ -132,10 +109,6 @@ function StudentExamPreviewInner({
     ['--student-chip-font-size' as string]: studentTypography.chipFontSize,
     ['--student-control-font-size' as string]: studentTypography.controlFontSize,
     ['--student-preview-font-size' as string]: studentTypography.previewFontSize,
-    ['--student-passage-font-size' as string]: readingTypography.passageFontSize,
-    ['--student-passage-title-font-size' as string]: readingTypography.passageTitleFontSize,
-    ['--student-passage-line-height' as string]: readingTypography.passageLineHeight,
-    ['--student-reading-paragraph-spacing' as string]: readingTypography.passageParagraphSpacing,
   } as React.CSSProperties;
 
   const enabledModules = useMemo(() => getEnabledModules(state.config), [state.config]);
@@ -223,8 +196,7 @@ function StudentExamPreviewInner({
   };
 
   return (
-    <StudentHighlightPersistenceProvider namespace={highlightNamespace}>
-      <div
+    <div
       className={`student-exam-shell flex flex-col h-screen w-full bg-gray-50 font-sans text-gray-900 transition-all ${
         uiState.accessibilitySettings.highContrast ? 'high-contrast' : ''
       }`}
@@ -273,7 +245,10 @@ function StudentExamPreviewInner({
         onExit={handleExit}
         timeRemaining={timeRemaining}
         tabletMode={tabletMode}
-        onClearHighlights={clearHighlights}
+        zoom={uiState.accessibilitySettings.zoom}
+        onZoomIn={uiActions.zoomIn}
+        onZoomOut={uiActions.zoomOut}
+        onZoomReset={uiActions.resetZoom}
         highlightEnabled={uiState.accessibilitySettings.highlightMode}
         highlightColor={highlightColor}
         onHighlightModeToggle={
@@ -298,19 +273,13 @@ function StudentExamPreviewInner({
             answers={answers}
             onAnswerChange={handleAnswerChange}
             currentQuestionId={currentQuestionId}
-            onNavigate={setCurrentQuestionId}
-            flags={flags}
-            onToggleFlag={handleFlagToggle}
-            tabletMode={tabletMode}
-            highlightEnabled={uiState.accessibilitySettings.highlightMode}
-            highlightColor={highlightColor}
-            highlightClassName={highlightClassName}
-            onIncreasePassageReadability={uiActions.increasePassageReadability}
-            onDecreasePassageReadability={uiActions.decreasePassageReadability}
-            onResetPassageReadability={uiActions.resetPassageReadability}
-            passageReadabilityLabel={passageReadabilityLabel}
-            canIncreasePassageReadability={canIncreasePassageReadability}
-            canDecreasePassageReadability={canDecreasePassageReadability}
+          onNavigate={setCurrentQuestionId}
+          flags={flags}
+          onToggleFlag={handleFlagToggle}
+          tabletMode={tabletMode}
+          highlightEnabled={uiState.accessibilitySettings.highlightMode}
+          highlightColor={highlightColor}
+          highlightClassName={highlightClassName}
           />
         ) : null}
 
@@ -320,19 +289,13 @@ function StudentExamPreviewInner({
             answers={answers}
             onAnswerChange={handleAnswerChange}
             currentQuestionId={currentQuestionId}
-            onNavigate={setCurrentQuestionId}
-            flags={flags}
-            onToggleFlag={handleFlagToggle}
-            tabletMode={tabletMode}
-            highlightEnabled={uiState.accessibilitySettings.highlightMode}
-            highlightColor={highlightColor}
-            highlightClassName={highlightClassName}
-            onIncreasePassageReadability={uiActions.increasePassageReadability}
-            onDecreasePassageReadability={uiActions.decreasePassageReadability}
-            onResetPassageReadability={uiActions.resetPassageReadability}
-            passageReadabilityLabel={passageReadabilityLabel}
-            canIncreasePassageReadability={canIncreasePassageReadability}
-            canDecreasePassageReadability={canDecreasePassageReadability}
+          onNavigate={setCurrentQuestionId}
+          flags={flags}
+          onToggleFlag={handleFlagToggle}
+          tabletMode={tabletMode}
+          highlightEnabled={uiState.accessibilitySettings.highlightMode}
+          highlightColor={highlightColor}
+          highlightClassName={highlightClassName}
           />
         ) : null}
 

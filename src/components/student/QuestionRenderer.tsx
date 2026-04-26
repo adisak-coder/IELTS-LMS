@@ -53,7 +53,6 @@ interface QuestionRendererProps {
   flags?: Record<string, boolean> | undefined;
   onToggleFlag?: ((id: string) => void) | undefined;
   tabletMode?: boolean | undefined;
-  compactPane?: boolean | undefined;
   highlightEnabled?: boolean | undefined;
   highlightColor?: StudentHighlightColor | undefined;
   security?: {
@@ -77,7 +76,6 @@ export function QuestionRenderer({
   flags = {},
   onToggleFlag,
   tabletMode = false,
-  compactPane = false,
   highlightEnabled = false,
   highlightColor,
   security = { preventAutofill: false, preventAutocorrect: false },
@@ -86,9 +84,8 @@ export function QuestionRenderer({
   hideDiagramReference = false,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
-  const isCompactPane = tabletMode && compactPane;
   const fieldIndentClass = tabletMode ? 'ml-0' : 'ml-9';
-  const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
+  const inputWidthClass = tabletMode ? 'max-w-full' : 'max-w-md';
 
   const getSlotId = (index: number, fallback: string) => slotIds[index] ?? fallback;
   const getSlotClassName = (slotId: string) => {
@@ -137,16 +134,7 @@ export function QuestionRenderer({
     extraCopyPosition: 'top' | 'bottom' = 'bottom',
   ) => (
     <div id={`question-${slotId}`} className={getSlotClassName(slotId)}>
-      {extraCopy && extraCopyPosition === 'top' ? (
-        <FormattedText
-          as="p"
-          className={`mb-2 text-sm text-gray-600 ${tabletMode ? 'pl-0' : 'pl-11'}`}
-          text={extraCopy}
-          highlightEnabled={highlightEnabled}
-          highlightColor={highlightColor}
-        />
-      ) : null}
-      <div className={isCompactPane ? 'flex flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
+      <div className="flex items-center gap-3">
         <span className="min-w-[2rem] font-bold text-gray-900">{slotNumber}.</span>
         <ProtectedInput
           type="text"
@@ -256,7 +244,7 @@ export function QuestionRenderer({
         <select
           value={typeof answer === 'string' ? answer : ''}
           onChange={(event) => onChange(event.target.value)}
-          className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-xs'}`}
+          className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${tabletMode ? 'max-w-full' : 'max-w-xs'}`}
           aria-label={`Heading selection for question ${number}`}
         >
           <option value="">Choose heading…</option>
@@ -379,58 +367,40 @@ export function QuestionRenderer({
     </div>
   );
 
-  const renderSingleMCQ = (
-    mcqBlock: SingleMCQBlock,
-    blockNum: number,
-    questionLevel: SingleMCQQuestion | null,
-  ) => {
-    const stem = questionLevel?.stem || mcqBlock.stem || 'Select the correct option:';
-    const options = Array.isArray(questionLevel?.options) && questionLevel.options.length > 0
-      ? questionLevel.options
-      : mcqBlock.options ?? [];
-    const inputGroupName = questionLevel ? `q-${questionLevel.id}` : `q-${mcqBlock.id}`;
-
-    return (
-      <fieldset className="flex flex-col gap-4">
-        <legend className="flex gap-3">
-          <span className="min-w-[1.75rem] font-bold text-gray-900">{blockNum}.</span>
-          <FormattedText
-            as="span"
-            className="text-gray-800"
-            text={stem}
-            highlightEnabled={highlightEnabled}
-            highlightColor={highlightColor}
-          />
-        </legend>
-        <div className={`${fieldIndentClass} space-y-3`}>
-          {options.map((option, index) => {
-            const letter = String.fromCharCode(65 + index);
-            return (
-              <label key={option.id} className="flex cursor-pointer items-start gap-3">
-                <input
-                  type="radio"
-                  name={inputGroupName}
-                  checked={answer === option.id}
-                  onChange={() => onChange(option.id)}
-                  className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                <div className="flex gap-2">
-                  <span className="font-bold text-gray-700">{letter}.</span>
-                  <FormattedText
-                    as="span"
-                    className="text-gray-800"
-                    text={option.text}
-                    highlightEnabled={highlightEnabled}
-                    highlightColor={highlightColor}
-                  />
-                </div>
-              </label>
-            );
-          })}
-        </div>
-      </fieldset>
-    );
-  };
+  const renderSingleMCQ = (mcqBlock: SingleMCQBlock, blockNum: number) => (
+    <fieldset className="flex flex-col gap-4">
+      <legend className="flex gap-3">
+        <span className="min-w-[1.75rem] font-bold text-gray-900">{blockNum}.</span>
+        <FormattedText
+          as="span"
+          className="text-gray-800"
+          text={mcqBlock.stem || 'Select the correct option:'}
+          highlightEnabled={highlightEnabled}
+          highlightColor={highlightColor}
+        />
+      </legend>
+      <div className={`${fieldIndentClass} space-y-3`}>
+        {mcqBlock.options?.map((option, index) => {
+          const letter = String.fromCharCode(65 + index);
+          return (
+            <label key={option.id} className="flex cursor-pointer items-start gap-3">
+              <input
+                type="radio"
+                name={`q-${mcqBlock.id}`}
+                checked={answer === option.id}
+                onChange={() => onChange(option.id)}
+                className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              <div className="flex gap-2">
+                <span className="font-bold text-gray-700">{letter}.</span>
+                  <FormattedText as="span" className="text-gray-800" text={option.text} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
+              </div>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
 
   const renderShortAnswer = (shortBlock: ShortAnswerBlock, q: ShortAnswerQuestion, num: number) => {
     void shortBlock;
@@ -484,7 +454,7 @@ export function QuestionRenderer({
                     name={getSlotId(index, `${q.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
+                    className={`w-28 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${tabletMode ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -526,7 +496,7 @@ export function QuestionRenderer({
                     name={getSlotId(index, `${noteQuestion.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
+                    className={`w-28 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${tabletMode ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -701,7 +671,7 @@ export function QuestionRenderer({
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, classificationBlock.items.length)}
-                    className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
+                    className="min-w-[11rem] rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                     aria-label={`Category selection for question ${number + index}`}
                   >
                     <option value="">Choose category…</option>
@@ -737,7 +707,7 @@ export function QuestionRenderer({
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, matchingFeaturesBlock.features.length)}
-                    className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
+                    className="min-w-[11rem] rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                     aria-label={`Matching selection for question ${number + index}`}
                   >
                     <option value="">Choose match…</option>

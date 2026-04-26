@@ -16,15 +16,8 @@ import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
 import { getFullscreenElement, requestStudentFullscreen } from './fullscreen';
-import {
-  canDecreaseStudentPassageReadability,
-  canIncreaseStudentPassageReadability,
-  getStudentPassageReadabilityLabel,
-  getStudentReadingTypographyScale,
-  getStudentTypographyScale,
-} from './accessibilityScale';
+import { getStudentTypographyScale } from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
-import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
 import { useStudentTabletMode } from './tabletMode';
 import { shouldOfferTimeExtension } from './timeExtensionPolicy';
 import { useStudentAttempt } from './providers/StudentAttemptProvider';
@@ -126,45 +119,21 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
   const studentTypography = getStudentTypographyScale(uiState.accessibilitySettings.fontSize);
-  const readingTypography = getStudentReadingTypographyScale(
-    studentTypography,
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
-  const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
-  const canDecreasePassageReadability = canDecreaseStudentPassageReadability(
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
-  const passageReadabilityLabel = getStudentPassageReadabilityLabel(
-    uiState.accessibilitySettings.passageReadabilityLevel,
-  );
   useZoomScrollAnchoring(uiState.accessibilitySettings.zoom * studentTypography.fontScale);
   const [finalSubmitStatus, setFinalSubmitStatus] = useState<'idle' | 'submitting' | 'retrying' | 'failed'>('idle');
   const blockingCopy = getBlockingCopy(runtimeState.blocking.reason);
   const { setShowTimeExtensionRequest } = uiActions;
   const highlightColor = uiState.accessibilitySettings.highlightColor;
   const highlightClassName = getStudentHighlightClassName(highlightColor);
-  const highlightNamespace = useMemo(
-    () => `attempt:${attemptState.attempt?.id ?? 'unknown'}`,
-    [attemptState.attempt?.id],
-  );
-  const clearHighlights = useCallback(() => {
-    clearStudentHighlights(highlightNamespace);
-  }, [highlightNamespace]);
   const studentShellStyle = {
     height: 'var(--student-viewport-height, 100dvh)',
-    zoom: tabletMode ? 1 : uiState.accessibilitySettings.zoom,
+    zoom: uiState.accessibilitySettings.zoom,
     fontSize: studentTypography.rootFontSize,
     lineHeight: studentTypography.lineHeight,
     ['--student-meta-font-size' as string]: studentTypography.metaFontSize,
     ['--student-chip-font-size' as string]: studentTypography.chipFontSize,
     ['--student-control-font-size' as string]: studentTypography.controlFontSize,
     ['--student-preview-font-size' as string]: studentTypography.previewFontSize,
-    ['--student-passage-font-size' as string]: readingTypography.passageFontSize,
-    ['--student-passage-title-font-size' as string]: readingTypography.passageTitleFontSize,
-    ['--student-passage-line-height' as string]: readingTypography.passageLineHeight,
-    ['--student-reading-paragraph-spacing' as string]: readingTypography.passageParagraphSpacing,
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
@@ -1148,7 +1117,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         testTakerId={attemptState.attempt?.candidateId ?? undefined}
         timeRemaining={runtimeState.displayTimeRemaining}
         tabletMode={tabletMode}
-        onClearHighlights={clearHighlights}
+        zoom={uiState.accessibilitySettings.zoom}
+        onZoomIn={uiActions.zoomIn}
+        onZoomOut={uiActions.zoomOut}
+        onZoomReset={uiActions.resetZoom}
         highlightEnabled={uiState.accessibilitySettings.highlightMode}
         highlightColor={highlightColor}
         onHighlightModeToggle={
@@ -1214,7 +1186,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             flags={runtimeState.flags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
-            contentZoom={uiState.accessibilitySettings.zoom}
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
@@ -1237,7 +1208,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             flags={runtimeState.flags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
-            contentZoom={uiState.accessibilitySettings.zoom}
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
