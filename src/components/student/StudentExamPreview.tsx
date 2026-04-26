@@ -101,6 +101,10 @@ function StudentExamPreviewInner({
   useZoomScrollAnchoring(uiState.accessibilitySettings.zoom * studentTypography.fontScale);
   const highlightColor = uiState.accessibilitySettings.highlightColor;
   const highlightClassName = getStudentHighlightClassName(highlightColor);
+  const highlightNamespace = `preview:${examId}`;
+  const clearHighlights = () => {
+    clearStudentHighlights(highlightNamespace);
+  };
   const studentShellStyle = {
     zoom: uiState.accessibilitySettings.zoom,
     fontSize: studentTypography.rootFontSize,
@@ -196,7 +200,8 @@ function StudentExamPreviewInner({
   };
 
   return (
-    <div
+    <StudentHighlightPersistenceProvider namespace={highlightNamespace}>
+      <div
       className={`student-exam-shell flex flex-col h-screen w-full bg-gray-50 font-sans text-gray-900 transition-all ${
         uiState.accessibilitySettings.highContrast ? 'high-contrast' : ''
       }`}
@@ -245,6 +250,7 @@ function StudentExamPreviewInner({
         onExit={handleExit}
         timeRemaining={timeRemaining}
         tabletMode={tabletMode}
+        onClearHighlights={clearHighlights}
         zoom={uiState.accessibilitySettings.zoom}
         onZoomIn={uiActions.zoomIn}
         onZoomOut={uiActions.zoomOut}

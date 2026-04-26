@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { parseBoldMarkdown } from '../../utils/boldMarkdown';
 import {
   applyHighlightFromSnapshot,
@@ -9,9 +9,6 @@ import {
 } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
 import { usePersistedStudentHighlightHtml } from './highlightPersistence';
-import { useDeferredSelectionHighlight } from './useDeferredSelectionHighlight';
-
-const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
 
 type FormattedTextProps = {
   text: string;
@@ -49,7 +46,7 @@ export function FormattedText({
     highlightPersistenceKey,
   );
 
-  const handleSelection = useCallback(() => {
+  const handleSelection = () => {
     if (!highlightEnabled) {
       return false;
     }
@@ -79,102 +76,16 @@ export function FormattedText({
       return true;
     }
 
-    return false;
-  }, [highlightClassName, highlightColor, highlightEnabled, setHtml]);
-  const applySelectionFromSnapshot = useCallback(
-    (snapshot: HighlightSelectionSnapshot) => {
-      if (!highlightEnabled) {
-        return false;
-      }
-
-      const container = containerRef.current;
-      if (!container) {
-        return false;
-      }
-
-      const nextHtml = applyHighlightFromSnapshot(
-        container,
-        snapshot,
-        highlightClassName ??
-          (highlightColor ? getStudentHighlightClassName(highlightColor) : 'rounded-sm bg-yellow-200/80 text-gray-900'),
-      );
-
-      if (!nextHtml) {
-        return false;
-      }
-
-      setHtml(nextHtml);
-      window.getSelection()?.removeAllRanges();
-      return true;
-    },
-    [highlightClassName, highlightColor, highlightEnabled, setHtml],
-  );
-  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession } =
-    useDeferredSelectionHighlight({
-    enabled: highlightEnabled,
-    containerRef,
-    applySelection: handleSelection,
-    applySelectionFromSnapshot,
-    });
-
-  const removeTappedHighlight = useCallback(
-    (event: React.MouseEvent<HTMLElement>) => {
-      if (!highlightEnabled) {
-        return;
-      }
-      if (isWithinRecentTouchAutoApplyGuard()) {
-        return;
-      }
-      const lastMouseSelectionIntentAt = lastMouseSelectionIntentAtRef.current;
-      if (
-        lastMouseSelectionIntentAt &&
-        Date.now() - lastMouseSelectionIntentAt < MOUSE_SELECTION_REMOVE_GUARD_MS
-      ) {
-        return;
-      }
-      const activeSelection = window.getSelection();
-      if (
-        activeSelection &&
-        activeSelection.rangeCount > 0 &&
-        !activeSelection.isCollapsed &&
-        activeSelection.toString().trim().length > 0
-      ) {
-        return;
-      }
-
-      const container = containerRef.current;
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      const highlightedNode = target?.closest('mark[data-highlighted="true"]');
-      if (!container || !highlightedNode || !container.contains(highlightedNode)) {
-        return;
-      }
-
-      const highlightIndex = Array.from(container.querySelectorAll('mark[data-highlighted="true"]')).indexOf(highlightedNode);
-      const nextHtml = removeHighlightAtIndex(container, highlightIndex);
-      if (nextHtml) {
-        event.preventDefault();
-        event.stopPropagation();
-        setHtml(nextHtml);
-      }
-    },
-    [highlightEnabled, isWithinRecentTouchAutoApplyGuard, setHtml],
-  );
-
   if (highlightEnabled || hasPersistedHtml) {
     return (
-      <>
-        <Tag
-          ref={containerRef as any}
-          className={classes}
-          data-student-highlightable="true"
-          style={{ WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' }}
-          onClick={removeTappedHighlight}
-          onMouseUp={highlightEnabled ? handleSelection : undefined}
-          onTouchStart={highlightEnabled ? startTouchSelectionSession : undefined}
-          onKeyUp={highlightEnabled ? handleSelection : undefined}
-          dangerouslySetInnerHTML={{ __html: html }}
-        />
-      </>
+      <Tag
+        ref={containerRef as any}
+        className={classes}
+        onMouseUp={highlightEnabled ? handleSelection : undefined}
+        onKeyUp={highlightEnabled ? handleSelection : undefined}
+        onTouchEnd={highlightEnabled ? handleSelection : undefined}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     );
   }
 

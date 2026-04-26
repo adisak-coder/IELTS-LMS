@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import {
   applyHighlightFromSnapshot,
@@ -9,9 +9,6 @@ import {
 } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
 import { usePersistedStudentHighlightHtml } from './highlightPersistence';
-import { useDeferredSelectionHighlight } from './useDeferredSelectionHighlight';
-
-const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
 
 interface RichTextHighlighterProps {
   content: string;
@@ -22,8 +19,6 @@ interface RichTextHighlighterProps {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   highlightPersistenceKey?: string | undefined;
-  showHighlightButton?: boolean | undefined;
-  highlightButtonLabel?: string | undefined;
 }
 
 export function RichTextHighlighter({
@@ -35,8 +30,6 @@ export function RichTextHighlighter({
   highlightColor,
   highlightClassName,
   highlightPersistenceKey,
-  showHighlightButton = false,
-  highlightButtonLabel = 'Highlight selected text',
 }: RichTextHighlighterProps) {
   const Tag = as as any;
   const containerRef = useRef<HTMLElement | null>(null);
@@ -50,7 +43,7 @@ export function RichTextHighlighter({
     highlightPersistenceKey,
   );
 
-  const handleSelection = useCallback(() => {
+  const handleSelection = () => {
     if (!enabled) {
       return false;
     }
@@ -162,27 +155,13 @@ export function RichTextHighlighter({
   );
 
   return (
-    <>
-      <Tag
-        ref={containerRef as any}
-        className={className}
-        data-student-highlightable="true"
-        style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
-        onClick={removeTappedHighlight}
-        onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
-        onTouchStart={enabled && !showHighlightButton ? startTouchSelectionSession : undefined}
-        onKeyUp={enabled ? handleSelection : undefined}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-      {enabled && showHighlightButton ? (
-        <button
-          type="button"
-          onClick={handleSelection}
-          className="mt-2 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm"
-        >
-          {highlightButtonLabel}
-        </button>
-      ) : null}
-    </>
+    <Tag
+      ref={containerRef as any}
+      className={className}
+      onMouseUp={enabled ? handleSelection : undefined}
+      onKeyUp={enabled ? handleSelection : undefined}
+      onTouchEnd={enabled ? handleSelection : undefined}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
