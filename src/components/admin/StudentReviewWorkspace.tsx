@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   ArrowLeft, Save, CheckCircle, Clock, FileText,
-  MessageSquare, ChevronLeft, ChevronRight, Eye, Calendar,
+  MessageSquare, BookOpen, ChevronLeft, ChevronRight, Eye, Calendar,
   CheckSquare, AlertTriangle, Printer
 } from 'lucide-react';
 import { 
@@ -692,6 +692,26 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   const currentWritingTaskId = activeSection === 'writing' ? activeTask : null;
   const currentWritingPrompt = currentWritingTaskId ? htmlToPlainText(getWritingPrompt(currentWritingTaskId)) : '';
   const currentWritingText = currentWritingTaskId ? htmlToPlainText(getWritingResponseText(currentWritingTaskId)) : '';
+  const printableWritingTasks = writingTasks.map((task, index) => {
+    const rubric = (reviewDraft?.sectionDrafts as any)?.writing?.[task.taskId] as RubricAssessment | undefined;
+    const text = htmlToPlainText(getWritingResponseText(task.taskId));
+    const prompt = htmlToPlainText(getWritingPrompt(task.taskId));
+    const taskSubmission = getWritingTaskSubmission(task.taskId);
+
+    return {
+      taskId: task.taskId,
+      label:
+        task.taskId === 'task1'
+          ? 'Task 1'
+          : task.taskId === 'task2'
+            ? 'Task 2'
+            : `Task ${index + 1}`,
+      prompt,
+      text,
+      wordCount: taskSubmission?.wordCount ?? (text ? text.trim().split(/\s+/).filter(Boolean).length : 0),
+      rubric,
+    };
+  });
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -701,11 +721,6 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
         }
 
         @media print {
-          @page {
-            size: A4;
-            margin: 11mm 10mm;
-          }
-
           body * {
             visibility: hidden !important;
           }
@@ -720,222 +735,53 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             position: absolute;
             inset: 0 auto auto 0;
             width: 100%;
+            padding: 24px;
             color: #111827;
             background: #ffffff;
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 9.8pt;
-            line-height: 1.42;
-          }
-
-          .writing-print-task-page {
-            break-before: page;
-            page-break-before: always;
-          }
-
-          .writing-print-task-page.writing-print-task-page-first {
-            break-before: auto;
-            page-break-before: auto;
-          }
-
-          .writing-print-page-header {
-            border: 1px solid #cbd5e1;
-            background: #f8fafc;
-            padding: 3mm;
-            margin-bottom: 4mm;
-          }
-
-          .writing-print-page-header h1 {
-            margin: 0 0 2mm;
-            font-size: 13pt;
-            line-height: 1.2;
-          }
-
-          .writing-print-meta {
-            display: grid;
-            grid-template-columns: 24mm 1fr 24mm 1fr;
-            gap: 1.5mm 5mm;
-            font-size: 9.2pt;
+            font-family: Arial, sans-serif;
           }
 
           .writing-print-task {
-            margin-top: 0;
-          }
-
-          .writing-print-task h2 {
-            margin: 0 0 2mm;
-            font-size: 12pt;
-            line-height: 1.2;
-          }
-
-          .writing-print-task-summary {
-            margin-bottom: 3mm;
-            color: #374151;
-            font-size: 9pt;
-          }
-
-          .writing-print-block {
-            margin-top: 3mm;
-          }
-
-          .writing-print-block h3,
-          .writing-print-block h4 {
-            margin: 0 0 1.5mm;
-            font-size: 9pt;
-            letter-spacing: 0;
-            text-transform: uppercase;
-          }
-
-          .writing-print-rich {
-            border: 1px solid #cbd5e1;
-            padding: 2.5mm 3mm;
-            white-space: normal;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-          }
-
-          .writing-print-response {
-            border: 1px solid #cbd5e1;
-            padding: 2.5mm 3mm;
-            color: #111827;
-            font-family: Arial, Helvetica, sans-serif;
-            font-size: 9.8pt;
-            line-height: 1.42;
-            white-space: pre-wrap;
-            overflow-wrap: anywhere;
-            word-break: break-word;
-          }
-
-          .writing-print-rich p {
-            margin: 0 0 2mm;
-          }
-
-          .writing-print-rich div {
-            margin: 0 0 2mm;
-          }
-
-          .writing-print-assessment-table {
-            width: 100%;
-            table-layout: fixed;
-            border-collapse: collapse;
-            margin-top: 2mm;
-          }
-
-          .writing-print-assessment-table th,
-          .writing-print-assessment-table td {
-            border: 1px solid #9ca3af;
-            padding: 2mm 2.5mm;
-            vertical-align: top;
-          }
-
-          .writing-print-assessment-table th {
-            background: #f3f4f6;
-            text-align: left;
-            font-size: 8.8pt;
-          }
-
-          .writing-print-criterion {
-            width: 29%;
-            font-weight: 700;
-          }
-
-          .writing-print-band {
-            width: 12%;
-            text-align: center;
-            font-weight: 700;
-          }
-
-          .writing-print-comment {
-            width: 59%;
-          }
-
-          .writing-print-band-box {
-            min-height: 10mm;
-          }
-
-          .writing-print-comment-box {
-            min-height: 10mm;
+            break-inside: avoid;
+            page-break-inside: avoid;
+            margin-top: 24px;
+            border-top: 1px solid #d1d5db;
+            padding-top: 18px;
           }
         }
       `}</style>
-      {(sectionsError || writingError || draftError) && (
-        <div className="px-6 pt-4">
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-1">
-            {sectionsError && <p>Section payload error: {sectionsError}</p>}
-            {writingError && <p>Writing payload error: {writingError}</p>}
-            {draftError && <p>Draft payload error: {draftError}</p>}
-          </div>
-        </div>
-      )}
       <div className="writing-print-root">
-        {printableWritingTasks.map((task, index) => (
-          <section
-            key={task.taskId}
-            className={`writing-print-task-page${index === 0 ? ' writing-print-task-page-first' : ''}`}
-          >
-            <header className="writing-print-page-header">
-              <h1>{submission.studentName}</h1>
-              <div className="writing-print-meta">
-                <div><strong>Student ID</strong></div>
-                <div>{submission.studentId || submission.submissionId}</div>
-                <div><strong>Task</strong></div>
-                <div>{task.label}</div>
-                <div><strong>Submitted</strong></div>
-                <div>{task.submittedAt ? new Date(task.submittedAt).toLocaleString() : 'Not submitted'}</div>
+        <h1 className="text-2xl font-bold">Writing Results</h1>
+        <div className="mt-2 text-sm">
+          <div><strong>Student:</strong> {submission.studentName}</div>
+          <div><strong>Student ID:</strong> {submission.studentId}</div>
+          <div><strong>Email:</strong> {submission.studentEmail ?? ''}</div>
+          <div><strong>Cohort:</strong> {submission.cohortName}</div>
+          <div><strong>Submitted:</strong> {new Date(submission.submittedAt).toLocaleString()}</div>
+        </div>
+
+        {printableWritingTasks.map((task) => (
+          <section key={task.taskId} className="writing-print-task">
+            <h2 className="text-xl font-bold">{task.label}</h2>
+            <div className="mt-2 text-sm"><strong>Word Count:</strong> {task.wordCount}</div>
+            <div className="mt-3">
+              <h3 className="text-base font-bold">Prompt</h3>
+              <p className="mt-1 whitespace-pre-wrap">{task.prompt || 'Prompt unavailable.'}</p>
+            </div>
+            <div className="mt-4">
+              <h3 className="text-base font-bold">Student Response</h3>
+              <p className="mt-1 whitespace-pre-wrap">{task.text || 'No writing response recorded.'}</p>
+            </div>
+            <div className="mt-4">
+              <h3 className="text-base font-bold">Assessment</h3>
+              <div className="mt-1 grid grid-cols-2 gap-2 text-sm">
+                <div><strong>Task Response:</strong> {task.rubric?.taskResponseBand ?? '-'}</div>
+                <div><strong>Coherence:</strong> {task.rubric?.coherenceBand ?? '-'}</div>
+                <div><strong>Lexical:</strong> {task.rubric?.lexicalBand ?? '-'}</div>
+                <div><strong>Grammar:</strong> {task.rubric?.grammarBand ?? '-'}</div>
+                <div><strong>Overall:</strong> {task.rubric?.overallBand ?? '-'}</div>
               </div>
-            </header>
-            <article className="writing-print-task">
-              <h2>{task.label}</h2>
-              <div className="writing-print-task-summary"><strong>Word Count:</strong> {task.wordCount}</div>
-              <div className="writing-print-block">
-                <h3>Prompt</h3>
-                {task.promptHtml ? (
-                  <div
-                    className="writing-print-rich"
-                    dangerouslySetInnerHTML={{ __html: task.promptHtml }}
-                  />
-                ) : (
-                  <p>Prompt unavailable.</p>
-                )}
-              </div>
-              <div className="writing-print-block">
-                <h3>Student Response</h3>
-                {task.text ? (
-                  <div className="writing-print-response">{task.text}</div>
-                ) : (
-                  <p>No writing response recorded.</p>
-                )}
-              </div>
-              <div className="writing-print-block">
-                <h3>Assessment</h3>
-                <table className="writing-print-assessment-table">
-                  <thead>
-                    <tr>
-                      <th className="writing-print-criterion">Criterion</th>
-                      <th className="writing-print-band">Band</th>
-                      <th className="writing-print-comment">Teacher Comment</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {['Task Response', 'Coherence & Cohesion', 'Lexical Resource', 'Grammar'].map((criterion) => (
-                      <tr key={`${task.taskId}-${criterion}`}>
-                        <td className="writing-print-criterion">{criterion}</td>
-                        <td className="writing-print-band writing-print-band-box" />
-                        <td className="writing-print-comment writing-print-comment-box" />
-                      </tr>
-                    ))}
-                    <tr>
-                      <td className="writing-print-criterion"><strong>Overall Band</strong></td>
-                      <td className="writing-print-band writing-print-band-box" />
-                      <td className="writing-print-comment writing-print-comment-box" />
-                    </tr>
-                  </tbody>
-                </table>
-                <div className="writing-print-block">
-                  <h4>Overall Teacher Comment</h4>
-                  <div className="writing-print-comment-box border border-gray-400" />
-                </div>
-              </div>
-            </article>
+            </div>
           </section>
         ))}
       </div>
