@@ -19,8 +19,16 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Push main to mirror
+        env:
+          MIRROR_TOKEN: ${{ secrets.MIRROR_TOKEN }}
         run: |
-          git remote add mirror "https://x-access-token:${{ secrets.MIRROR_TOKEN }}@github.com/adisak-coder/IELTS-LMS.git"
+          if [[ -z "$MIRROR_TOKEN" ]]; then
+            echo "MIRROR_TOKEN is not set"
+            exit 1
+          fi
+
+          git remote add mirror "https://x-access-token:${MIRROR_TOKEN}@github.com/adisak-coder/IELTS-LMS.git"
           git push mirror main:main
