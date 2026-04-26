@@ -22,5 +22,5 @@ jobs:
 
       - name: Push main to mirror
         run: |
-          git remote add mirror "https://x-access-token:${{ secrets.MIRROR_TOKEN }}@github.com/adisak-coder/IELTS_LMS.git"
+          git remote add mirror "https://x-access-token:${{ secrets.MIRROR_TOKEN }}@github.com/adisak-coder/IELTS-LMS.git"
           git push mirror main:main
