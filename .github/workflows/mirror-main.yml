@@ -1,0 +1,26 @@
+name: Mirror main
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Push main to mirror repository
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Push main to mirror
+        run: |
+          git remote add mirror "https://x-access-token:${{ secrets.MIRROR_TOKEN }}@github.com/adisak-coder/IELTS_LMS.git"
+          git push mirror main:main
