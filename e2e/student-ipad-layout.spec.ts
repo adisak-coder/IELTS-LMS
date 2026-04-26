@@ -20,7 +20,7 @@ async function expectFooterInsideViewport(page: Page, label: RegExp) {
 test.describe('student exam iPad layout', () => {
   test.use({ storageState: BUILDER_STORAGE_STATE_PATH });
 
-  test('Reading stacks panes in iPad portrait and keeps controls visible', async ({ page }) => {
+  test('Reading keeps split panes in iPad portrait and keeps controls visible', async ({ page }) => {
     await page.setViewportSize({ width: 768, height: 1024 });
     await openPreview(page, 'reading');
 
@@ -31,14 +31,14 @@ test.describe('student exam iPad layout', () => {
     await expect(splitPane).toBeVisible();
     await expect(passagePane).toBeVisible();
     await expect(questionPane).toBeVisible();
-    await expect(splitPane).toHaveCSS('flex-direction', 'column');
+    await expect(splitPane).toHaveCSS('flex-direction', 'row');
     await expectFooterInsideViewport(page, /question navigation and progress/i);
 
     const passageBox = await passagePane.boundingBox();
     const questionBox = await questionPane.boundingBox();
     expect(passageBox).not.toBeNull();
     expect(questionBox).not.toBeNull();
-    expect(passageBox!.bottom).toBeLessThanOrEqual(questionBox!.y + 1);
+    expect(passageBox!.right).toBeLessThanOrEqual(questionBox!.x + 20);
   });
 
   test('Reading uses split panes in iPad landscape without hiding the footer', async ({ page }) => {
@@ -69,7 +69,7 @@ test.describe('student exam iPad layout', () => {
     const editorPane = page.getByTestId('writing-editor-pane');
     const editor = page.getByRole('textbox', { name: /writing response/i });
 
-    await expect(splitPane).toHaveCSS('flex-direction', 'column');
+    await expect(splitPane).toHaveCSS('flex-direction', 'row');
     await expect(promptPane).toBeVisible();
     await expect(editorPane).toBeVisible();
     await expect(editor).toBeVisible();
