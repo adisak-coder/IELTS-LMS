@@ -3,7 +3,7 @@ CARGO ?= cargo
 NODE ?= node
 SHELL := /bin/bash
 
-.PHONY: db-up db-bootstrap db-down migrate api worker fmt clippy test load-test load-test-restart backup-rehearsal ops-check
+.PHONY: db-up db-bootstrap db-down migrate api worker fmt clippy test load-test load-test-restart backup-rehearsal migrate-tidb ops-check
 
 db-up:
 	$(COMPOSE) -f docker-compose.yml up -d tidb minio
@@ -40,6 +40,9 @@ load-test-restart:
 
 backup-rehearsal:
 	bash ./scripts/backup-rehearsal.sh
+
+migrate-tidb:
+	bash ./scripts/migrate-tidb-to-tidb.sh
 
 ops-check:
 	$(CARGO) fmt --all --check
