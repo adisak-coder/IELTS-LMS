@@ -62,19 +62,14 @@ export function FormattedText({
     }
   };
 
-  const handleTouchSelection = () => {
-    window.setTimeout(handleSelection, 180);
-  };
-
   if (highlightEnabled || hasPersistedHtml) {
     return (
       <Tag
         ref={containerRef as any}
         className={classes}
-        style={{ WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'manipulation' }}
+        style={{ WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' }}
         onMouseUp={highlightEnabled ? handleSelection : undefined}
         onKeyUp={highlightEnabled ? handleSelection : undefined}
-        onTouchEnd={highlightEnabled ? handleTouchSelection : undefined}
         dangerouslySetInnerHTML={{ __html: html }}
       />
     );

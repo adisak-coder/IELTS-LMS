@@ -1,13 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { ExamState, QuestionAnswer } from '../../types';
+import { DiagramLabelingBlock, ExamState, QuestionAnswer } from '../../types';
 import { QuestionRenderer } from './QuestionRenderer';
-import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag, Minus, Plus, RotateCcw } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
 import { RichTextHighlighter } from './RichTextHighlighter';
 import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
+import { getImageUrlCandidates } from '../../utils/imageUrl';
 
 interface StudentListeningProps {
   state: ExamState;
@@ -41,6 +42,7 @@ export function StudentListening({
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(70);
   const [leftWidth, setLeftWidth] = useState(50);
+  const [diagramZoom, setDiagramZoom] = useState(1);
   const questionContainerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const allQuestions = useMemo(() => getStudentQuestionsForModule(state, 'listening'), [state]);
@@ -65,6 +67,18 @@ export function StudentListening({
   const hasAudioSource = Boolean(activePart?.audioUrl);
   const canPlayAudio = audioPlaybackEnabled && hasAudioSource;
   const shouldShowAudioPanel = audioPlaybackEnabled;
+  const activeDiagramBlocks = useMemo(
+    () => (activePart?.blocks ?? []).filter((block): block is DiagramLabelingBlock => block.type === 'DIAGRAM_LABELING'),
+    [activePart?.blocks],
+  );
+
+  const setSplitPreset = (nextWidth: number) => {
+    setLeftWidth(Math.min(66, Math.max(34, nextWidth)));
+  };
+
+  const adjustDiagramZoom = (delta: number) => {
+    setDiagramZoom((current) => Math.min(1.8, Math.max(0.8, Math.round((current + delta) * 100) / 100)));
+  };
 
   useEffect(() => {
     if (currentQuestionId && questionContainerRef.current) {
@@ -192,6 +206,17 @@ export function StudentListening({
           }`}
           data-student-zoom-scroll
         >
+          <div className="mb-3 flex flex-wrap gap-2 text-xs font-bold" data-testid="listening-split-presets">
+            <button type="button" onClick={() => setSplitPreset(60)} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-700 shadow-sm">
+              Material wider
+            </button>
+            <button type="button" onClick={() => setSplitPreset(50)} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-700 shadow-sm">
+              Equal
+            </button>
+            <button type="button" onClick={() => setSplitPreset(40)} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-700 shadow-sm">
+              Answers wider
+            </button>
+          </div>
           <h2 className="text-lg md:text-xl font-bold mb-4 md:mb-6">{activePart.title}</h2>
 
           {canPlayAudio ? (
@@ -298,6 +323,49 @@ export function StudentListening({
               </div>
             </div>
           )}
+          {activeDiagramBlocks.length > 0 ? (
+            <div className="mt-4 space-y-4" data-testid="listening-material-pane">
+              {activeDiagramBlocks.map((diagramBlock) => {
+                const sources = getImageUrlCandidates(diagramBlock.imageUrl ?? '');
+                const source = sources[0];
+
+                return (
+                  <div key={diagramBlock.id} className="rounded-xl border border-gray-200 bg-white p-3">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-gray-700">Diagram reference</h3>
+                      <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-1">
+                        <button type="button" onClick={() => adjustDiagramZoom(-0.15)} className="flex h-8 w-8 items-center justify-center rounded bg-white text-gray-700" aria-label="Zoom diagram out">
+                          <Minus size={14} />
+                        </button>
+                        <span className="min-w-12 text-center text-xs font-bold text-gray-700">{Math.round(diagramZoom * 100)}%</span>
+                        <button type="button" onClick={() => adjustDiagramZoom(0.15)} className="flex h-8 w-8 items-center justify-center rounded bg-white text-gray-700" aria-label="Zoom diagram in">
+                          <Plus size={14} />
+                        </button>
+                        <button type="button" onClick={() => setDiagramZoom(1)} className="flex h-8 w-8 items-center justify-center rounded bg-white text-gray-700" aria-label="Reset diagram zoom">
+                          <RotateCcw size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    {source ? (
+                      <div className="overflow-auto rounded-lg border border-gray-200 bg-gray-50" data-testid="listening-diagram-reference">
+                        <img
+                          src={source}
+                          alt="Diagram reference"
+                          className="h-auto max-h-[72dvh] max-w-none object-contain"
+                          style={{ width: `${Math.round(diagramZoom * 100)}%` }}
+                          draggable={false}
+                        />
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
+                        Add a diagram to support this question.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
           {activeTranscript ? (
             <div className="mt-4 rounded-xl border border-gray-200 bg-white p-3">
               <h3 className="mb-2 text-sm font-semibold text-gray-700">Transcript / Reference</h3>
@@ -308,6 +376,7 @@ export function StudentListening({
                 className="whitespace-pre-wrap text-sm leading-relaxed text-gray-800 md:text-base"
                 highlightColor={highlightColor}
                 highlightClassName={highlightClassName}
+                showHighlightButton={isTabletMode}
               />
               {highlightEnabled && isTabletMode ? (
                 <p className="mt-2 rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">
@@ -422,6 +491,7 @@ export function StudentListening({
                               tabletMode={isTabletMode}
                               highlightEnabled={highlightEnabled}
                               highlightColor={highlightColor}
+                              hideDiagramReference={activeDiagramBlocks.length > 0}
                             />
                           </div>
                         );
@@ -476,6 +546,7 @@ export function StudentListening({
                           tabletMode={isTabletMode}
                           highlightEnabled={highlightEnabled}
                           highlightColor={highlightColor}
+                          hideDiagramReference={activeDiagramBlocks.length > 0}
                         />
                       </div>
                     )}

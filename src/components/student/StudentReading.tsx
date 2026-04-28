@@ -226,6 +226,17 @@ export function StudentReading({
           }}
           data-student-zoom-scroll
         >
+          <div className="mb-3 flex flex-wrap gap-2 text-xs font-bold" data-testid="reading-split-presets">
+            <button type="button" onClick={() => setLeftWidth(60)} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-700 shadow-sm">
+              Material wider
+            </button>
+            <button type="button" onClick={() => setLeftWidth(50)} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-700 shadow-sm">
+              Equal
+            </button>
+            <button type="button" onClick={() => setLeftWidth(40)} className="rounded-md border border-gray-200 bg-white px-2 py-1 text-gray-700 shadow-sm">
+              Answers wider
+            </button>
+          </div>
           <h2 className="mb-4 font-bold leading-tight text-gray-950 md:mb-6" style={{ fontSize: 'var(--student-passage-title-font-size)' }}>
             {activePassage.title}
           </h2>
@@ -237,6 +248,7 @@ export function StudentReading({
               className="whitespace-pre-wrap"
               highlightColor={highlightColor}
               highlightClassName={highlightClassName}
+              showHighlightButton={isTabletMode}
             />
             {highlightEnabled && isTabletMode ? (
               <p className="rounded-md bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-700">

@@ -59,6 +59,7 @@ interface QuestionRendererProps {
   } | undefined;
   sessionId?: string | undefined;
   studentId?: string | undefined;
+  hideDiagramReference?: boolean | undefined;
 }
 
 export function QuestionRenderer({
@@ -78,6 +79,7 @@ export function QuestionRenderer({
   security = { preventAutofill: false, preventAutocorrect: false },
   sessionId,
   studentId,
+  hideDiagramReference = false,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
   const fieldIndentClass = tabletMode ? 'ml-0' : 'ml-9';
@@ -526,6 +528,10 @@ export function QuestionRenderer({
   const renderDiagramLabeling = (diagramBlock: DiagramLabelingBlock) => {
     const sources = getImageUrlCandidates(diagramBlock.imageUrl ?? '');
     const hasImage = Boolean(sources[0]);
+
+    if (hideDiagramReference) {
+      return renderDiagramFallbackFields(diagramBlock);
+    }
 
     return (
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)] lg:items-start">

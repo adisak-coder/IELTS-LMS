@@ -223,6 +223,34 @@ describe('student question experience', () => {
     expect(screen.queryByText(/label 2/i)).not.toBeInTheDocument();
   });
 
+  it('can render diagram-labeling answers without duplicating the diagram reference', () => {
+    const block: DiagramLabelingBlock = {
+      id: 'diagram-1',
+      type: 'DIAGRAM_LABELING',
+      instruction: 'Label the diagram.',
+      imageUrl: '/diagram.jpg',
+      labels: [
+        { id: 'label-a', x: 25, y: 35, correctAnswer: 'engine' },
+        { id: 'label-b', x: 70, y: 62, correctAnswer: 'wheel' },
+      ],
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={12}
+        answer={['', '']}
+        onChange={() => {}}
+        hideDiagramReference
+      />,
+    );
+
+    expect(screen.queryByAltText('Diagram reference')).not.toBeInTheDocument();
+    expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 12' })).toBeInTheDocument();
+  });
+
   it('renders uploaded reading pictures in a sticky wrapper on desktop', () => {
     const state = {
       title: 'Reading Test',
@@ -424,6 +452,7 @@ describe('student question experience', () => {
     });
     expect(screen.getByTestId('reading-pane-resizer')).toBeInTheDocument();
     expect(screen.getByText(/select passage text to highlight it/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /highlight selected text/i })).toBeInTheDocument();
   });
 
   it('shows a single reading question number without a repeated range', () => {
@@ -1155,5 +1184,73 @@ describe('student question experience', () => {
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
     expect(screen.queryByText(longInstruction.trim())).not.toBeInTheDocument();
     expect(screen.getByText(/select reference text to highlight it/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /highlight selected text/i })).toBeInTheDocument();
+  });
+
+  it('places listening diagram material on the left and answers on the right', () => {
+    const state: ExamState = {
+      title: 'Listening Test',
+      type: 'Academic',
+      activeModule: 'listening',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: true, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'], audioPlaybackEnabled: false },
+          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: { passages: [] },
+      listening: {
+        parts: [
+          {
+            id: 'part-1',
+            title: 'Part 1',
+            audioUrl: '',
+            pins: [],
+            blocks: [
+              {
+                id: 'diagram-1',
+                type: 'DIAGRAM_LABELING',
+                instruction: 'Label the diagram.',
+                imageUrl: '/diagram.jpg',
+                labels: [
+                  { id: 'label-a', x: 25, y: 35, correctAnswer: 'engine' },
+                  { id: 'label-b', x: 70, y: 62, correctAnswer: 'wheel' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    };
+
+    render(
+      <StudentListening
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="diagram-1:label-a"
+        onNavigate={() => {}}
+        tabletMode
+      />,
+    );
+
+    const materialPane = screen.getByTestId('listening-material-pane');
+    expect(within(materialPane).getByAltText('Diagram reference')).toBeInTheDocument();
+    expect(within(materialPane).getByRole('button', { name: /zoom diagram in/i })).toBeInTheDocument();
+    expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 1' })).toBeInTheDocument();
+    expect(screen.getAllByAltText('Diagram reference')).toHaveLength(1);
   });
 });

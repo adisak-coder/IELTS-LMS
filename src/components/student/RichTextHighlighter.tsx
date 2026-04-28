@@ -13,6 +13,8 @@ interface RichTextHighlighterProps {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   highlightPersistenceKey?: string | undefined;
+  showHighlightButton?: boolean | undefined;
+  highlightButtonLabel?: string | undefined;
 }
 
 export function RichTextHighlighter({
@@ -24,6 +26,8 @@ export function RichTextHighlighter({
   highlightColor,
   highlightClassName,
   highlightPersistenceKey,
+  showHighlightButton = false,
+  highlightButtonLabel = 'Highlight selected text',
 }: RichTextHighlighterProps) {
   const Tag = as as any;
   const containerRef = useRef<HTMLElement | null>(null);
@@ -59,19 +63,25 @@ export function RichTextHighlighter({
     }
   };
 
-  const handleTouchSelection = () => {
-    window.setTimeout(handleSelection, 180);
-  };
-
   return (
-    <Tag
-      ref={containerRef as any}
-      className={className}
-      style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'manipulation' } : undefined}
-      onMouseUp={enabled ? handleSelection : undefined}
-      onKeyUp={enabled ? handleSelection : undefined}
-      onTouchEnd={enabled ? handleTouchSelection : undefined}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <Tag
+        ref={containerRef as any}
+        className={className}
+        style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
+        onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
+        onKeyUp={enabled ? handleSelection : undefined}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {enabled && showHighlightButton ? (
+        <button
+          type="button"
+          onClick={handleSelection}
+          className="mt-2 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm"
+        >
+          {highlightButtonLabel}
+        </button>
+      ) : null}
+    </>
   );
 }
