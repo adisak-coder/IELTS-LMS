@@ -1253,4 +1253,81 @@ describe('student question experience', () => {
     expect(screen.getByRole('textbox', { name: 'Answer for question 1' })).toBeInTheDocument();
     expect(screen.getAllByAltText('Diagram reference')).toHaveLength(1);
   });
+
+  it('shows the active listening diagram when the diagram is not in the first part', () => {
+    const state: ExamState = {
+      title: 'Listening Test',
+      type: 'Academic',
+      activeModule: 'listening',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: true, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER', 'DIAGRAM_LABELING'], audioPlaybackEnabled: false },
+          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: { passages: [] },
+      listening: {
+        parts: [
+          {
+            id: 'part-1',
+            title: 'Part 1',
+            audioUrl: '',
+            pins: [],
+            blocks: [
+              {
+                id: 'short-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question.',
+                questions: [{ id: 'short-q1', prompt: 'What is the name?', correctAnswer: 'Alex' }],
+                wordLimit: 1,
+              },
+            ],
+          },
+          {
+            id: 'part-2',
+            title: 'Part 2',
+            audioUrl: '',
+            pins: [],
+            blocks: [
+              {
+                id: 'diagram-2',
+                type: 'DIAGRAM_LABELING',
+                instruction: 'Label the diagram.',
+                imageUrl: '/diagram-part-two.jpg',
+                labels: [{ id: 'label-a', x: 25, y: 35, correctAnswer: 'entrance' }],
+              },
+            ],
+          },
+        ],
+      },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    };
+
+    render(
+      <StudentListening
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="diagram-2:label-a"
+        onNavigate={() => {}}
+        tabletMode
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: 'Part 2' })).toBeInTheDocument();
+    expect(screen.getByTestId('listening-material-pane')).toBeInTheDocument();
+    expect(screen.getByAltText('Diagram reference')).toHaveAttribute('src', '/diagram-part-two.jpg');
+    expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
+  });
 });

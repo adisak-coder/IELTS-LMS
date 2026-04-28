@@ -24,6 +24,65 @@ interface StudentListeningProps {
   tabletMode?: boolean | undefined;
 }
 
+function getDiagramSlotIds(block: DiagramLabelingBlock): string[] {
+  return block.labels.map((label) => `${block.id}:${label.id}`);
+}
+
+function isCurrentDiagramBlock(block: DiagramLabelingBlock, currentQuestionId: string | null, currentBlockId?: string): boolean {
+  if (currentBlockId === block.id || currentQuestionId === block.id) {
+    return true;
+  }
+
+  return Boolean(currentQuestionId && getDiagramSlotIds(block).includes(currentQuestionId));
+}
+
+function ListeningDiagramReference({
+  block,
+  zoom,
+}: {
+  block: DiagramLabelingBlock;
+  zoom: number;
+}) {
+  const sources = useMemo(() => getImageUrlCandidates(block.imageUrl ?? ''), [block.imageUrl]);
+  const [sourceIndex, setSourceIndex] = useState(0);
+  const source = sources[sourceIndex] ?? '';
+
+  useEffect(() => {
+    setSourceIndex(0);
+  }, [block.imageUrl]);
+
+  if (!source) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
+        Add a diagram to support this question.
+      </div>
+    );
+  }
+
+  return (
+    <div className="overflow-auto rounded-lg border border-gray-200 bg-gray-50" data-testid="listening-diagram-reference">
+      <img
+        src={source}
+        alt="Diagram reference"
+        className="h-auto max-h-[72dvh] max-w-none object-contain select-none"
+        style={{
+          width: `${Math.round(zoom * 100)}%`,
+          WebkitTouchCallout: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+        }}
+        draggable={false}
+        referrerPolicy="no-referrer"
+        onContextMenu={(event) => event.preventDefault()}
+        onDragStart={(event) => event.preventDefault()}
+        onError={() => {
+          setSourceIndex((currentIndex) => Math.min(currentIndex + 1, sources.length - 1));
+        }}
+      />
+    </div>
+  );
+}
+
 export function StudentListening({
   state,
   answers,
@@ -47,8 +106,27 @@ export function StudentListening({
   const audioRef = useRef<HTMLAudioElement>(null);
   const allQuestions = useMemo(() => getStudentQuestionsForModule(state, 'listening'), [state]);
   const currentQ = allQuestions.find((question) => question.id === currentQuestionId) || allQuestions[0];
-  const activePartId = currentQ?.groupId || state.listening.parts[0]?.id;
-  const activePart = state.listening.parts.find((part) => part.id === activePartId) || state.listening.parts[0];
+  const activePart = useMemo(() => {
+    const partByQuestionGroup = currentQ
+      ? state.listening.parts.find((part) => part.id === currentQ.groupId)
+      : undefined;
+
+    if (partByQuestionGroup) {
+      return partByQuestionGroup;
+    }
+
+    const partByCurrentQuestion = state.listening.parts.find((part) =>
+      part.blocks.some((block) => {
+        if (block.id === currentQuestionId || block.id === currentQ?.blockId) {
+          return true;
+        }
+
+        return block.type === 'DIAGRAM_LABELING' && isCurrentDiagramBlock(block, currentQuestionId, currentQ?.blockId);
+      }),
+    );
+
+    return partByCurrentQuestion || state.listening.parts.find((part) => part.id === state.activeListeningPartId) || state.listening.parts[0];
+  }, [currentQ, currentQuestionId, state.activeListeningPartId, state.listening.parts]);
   const currentIndex = allQuestions.findIndex((question) => question.id === currentQuestionId);
   const hasPrev = currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < allQuestions.length - 1;
@@ -67,9 +145,15 @@ export function StudentListening({
   const hasAudioSource = Boolean(activePart?.audioUrl);
   const canPlayAudio = audioPlaybackEnabled && hasAudioSource;
   const shouldShowAudioPanel = audioPlaybackEnabled;
-  const activeDiagramBlocks = useMemo(
-    () => (activePart?.blocks ?? []).filter((block): block is DiagramLabelingBlock => block.type === 'DIAGRAM_LABELING'),
-    [activePart?.blocks],
+  const activeDiagramBlocks = useMemo(() => {
+    const diagramBlocks = (activePart?.blocks ?? []).filter((block): block is DiagramLabelingBlock => block.type === 'DIAGRAM_LABELING');
+    const currentDiagramBlocks = diagramBlocks.filter((block) => isCurrentDiagramBlock(block, currentQuestionId, currentQ?.blockId));
+
+    return currentDiagramBlocks.length > 0 ? currentDiagramBlocks : diagramBlocks;
+  }, [activePart?.blocks, currentQ?.blockId, currentQuestionId]);
+  const hiddenDiagramReferenceBlockIds = useMemo(
+    () => new Set(activeDiagramBlocks.map((block) => block.id)),
+    [activeDiagramBlocks],
   );
 
   const setSplitPreset = (nextWidth: number) => {
@@ -325,11 +409,7 @@ export function StudentListening({
           )}
           {activeDiagramBlocks.length > 0 ? (
             <div className="mt-4 space-y-4" data-testid="listening-material-pane">
-              {activeDiagramBlocks.map((diagramBlock) => {
-                const sources = getImageUrlCandidates(diagramBlock.imageUrl ?? '');
-                const source = sources[0];
-
-                return (
+              {activeDiagramBlocks.map((diagramBlock) => (
                   <div key={diagramBlock.id} className="rounded-xl border border-gray-200 bg-white p-3">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-sm font-semibold text-gray-700">Diagram reference</h3>
@@ -346,24 +426,9 @@ export function StudentListening({
                         </button>
                       </div>
                     </div>
-                    {source ? (
-                      <div className="overflow-auto rounded-lg border border-gray-200 bg-gray-50" data-testid="listening-diagram-reference">
-                        <img
-                          src={source}
-                          alt="Diagram reference"
-                          className="h-auto max-h-[72dvh] max-w-none object-contain"
-                          style={{ width: `${Math.round(diagramZoom * 100)}%` }}
-                          draggable={false}
-                        />
-                      </div>
-                    ) : (
-                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
-                        Add a diagram to support this question.
-                      </div>
-                    )}
+                    <ListeningDiagramReference block={diagramBlock} zoom={diagramZoom} />
                   </div>
-                );
-              })}
+                ))}
             </div>
           ) : null}
           {activeTranscript ? (
@@ -491,7 +556,7 @@ export function StudentListening({
                               tabletMode={isTabletMode}
                               highlightEnabled={highlightEnabled}
                               highlightColor={highlightColor}
-                              hideDiagramReference={activeDiagramBlocks.length > 0}
+                              hideDiagramReference={hiddenDiagramReferenceBlockIds.has(block.id)}
                             />
                           </div>
                         );
@@ -546,7 +611,7 @@ export function StudentListening({
                           tabletMode={isTabletMode}
                           highlightEnabled={highlightEnabled}
                           highlightColor={highlightColor}
-                          hideDiagramReference={activeDiagramBlocks.length > 0}
+                          hideDiagramReference={hiddenDiagramReferenceBlockIds.has(block.id)}
                         />
                       </div>
                     )}
