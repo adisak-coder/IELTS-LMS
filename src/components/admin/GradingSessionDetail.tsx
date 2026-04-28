@@ -16,6 +16,7 @@ import {
 } from './gradingReviewUtils';
 import type { ExamState } from '../../types';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
+import { htmlToPlainText } from '../../utils/htmlText';
 
 interface SessionWritingPrintStudent {
   submission: StudentSubmission;
@@ -323,6 +324,13 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
               margin-top: 5mm;
               padding-top: 4mm;
               border-top: 1px solid #9ca3af;
+              break-after: page;
+              page-break-after: always;
+            }
+
+            .session-writing-print-student:last-child {
+              break-after: auto;
+              page-break-after: auto;
             }
 
             .session-writing-print-student-header {
@@ -389,6 +397,16 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
               border: 1px solid #cbd5e1;
               padding: 2.5mm 3mm;
               white-space: normal;
+            }
+
+            .session-writing-print-response {
+              border: 1px solid #cbd5e1;
+              padding: 2.5mm 3mm;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              font-size: 9.8pt;
+              line-height: 1.42;
+              white-space: pre-wrap;
             }
 
             .session-writing-print-rich p {
@@ -507,12 +525,9 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
 
                     <div className="session-writing-print-block">
                       <h4>Student Response</h4>
-                      <div
-                        className="session-writing-print-rich"
-                        dangerouslySetInnerHTML={{
-                          __html: sanitizeHtml(task.studentText || '<p>No writing response recorded.</p>'),
-                        }}
-                      />
+                      <div className="session-writing-print-response">
+                        {htmlToPlainText(task.studentText) || 'No writing response recorded.'}
+                      </div>
                     </div>
 
                     <div className="session-writing-print-block">

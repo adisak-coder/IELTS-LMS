@@ -493,7 +493,6 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             ? 'Task 2'
             : `Task ${index + 1}`,
       promptHtml: sanitizeHtml(getWritingPrompt(task.taskId)),
-      responseHtml: sanitizeHtml(rawText),
       text,
       wordCount: taskSubmission?.wordCount ?? (text ? text.trim().split(/\s+/).filter(Boolean).length : 0),
     };
@@ -683,6 +682,16 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             white-space: normal;
           }
 
+          .writing-print-response {
+            border: 1px solid #cbd5e1;
+            padding: 2.5mm 3mm;
+            color: #111827;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9.8pt;
+            line-height: 1.42;
+            white-space: pre-wrap;
+          }
+
           .writing-print-rich p {
             margin: 0 0 2mm;
           }
@@ -769,11 +778,8 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             </div>
             <div className="writing-print-block">
               <h3>Student Response</h3>
-              {task.responseHtml ? (
-                <div
-                  className="writing-print-rich"
-                  dangerouslySetInnerHTML={{ __html: task.responseHtml }}
-                />
+              {task.text ? (
+                <div className="writing-print-response">{task.text}</div>
               ) : (
                 <p>No writing response recorded.</p>
               )}

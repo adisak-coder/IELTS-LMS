@@ -94,7 +94,7 @@ const makeWritingTask = (submissionId: string, taskId: string, response: string)
   taskId,
   taskLabel: taskId === 'task1' ? 'Task 1' : 'Task 2',
   prompt: '<p>Describe the chart.</p>',
-  studentText: `<p>${response}</p>`,
+  studentText: `<p><strong>${response}</strong></p>`,
   wordCount: response.split(/\s+/).length,
   annotations: [],
   gradingStatus: 'needs_review',
@@ -145,13 +145,18 @@ describe('GradingSessionDetail print writing', () => {
     expect(document.querySelector('.session-writing-print-root')).toHaveTextContent('Ada Student');
     expect(document.querySelector('.session-writing-print-root')).toHaveTextContent('Ben Student');
     expect(document.querySelector('.session-writing-print-root')).toHaveTextContent('Assessment Form');
+    expect(document.querySelector('.session-writing-print-response')).toHaveTextContent('Ada response text');
+    expect(document.querySelector('.session-writing-print-response strong')).toBeNull();
     const printStyle = Array.from(document.querySelectorAll('style'))
       .map((style) => style.textContent ?? '')
       .find((text) => text.includes('.session-writing-print-root'));
 
     expect(printStyle).toContain('.session-writing-print-summary');
+    expect(printStyle).toContain('.session-writing-print-response');
+    expect(printStyle).toContain('page-break-after: always');
+    expect(printStyle).toContain('.session-writing-print-student:last-child');
+    expect(printStyle).toContain('page-break-after: auto');
     expect(printStyle).not.toContain('page-break-before: always');
-    expect(printStyle).not.toContain('page-break-after: always');
     expect(printStyle).not.toContain('break-inside: avoid');
   });
 });
