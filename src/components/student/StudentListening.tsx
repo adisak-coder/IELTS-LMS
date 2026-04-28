@@ -1,11 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ExamState, QuestionAnswer } from '../../types';
 import { QuestionRenderer } from './QuestionRenderer';
-import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, ChevronDown, ChevronUp, Flag } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
-import { FormattedText } from './FormattedText';
 import { RichTextHighlighter } from './RichTextHighlighter';
 import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
@@ -42,8 +41,6 @@ export function StudentListening({
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(70);
   const [leftWidth, setLeftWidth] = useState(50);
-  const [showStaffInstructions, setShowStaffInstructions] = useState(false);
-  const [collapsedInstructions, setCollapsedInstructions] = useState<Record<string, boolean>>({});
   const questionContainerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const allQuestions = useMemo(() => getStudentQuestionsForModule(state, 'listening'), [state]);
@@ -58,52 +55,16 @@ export function StudentListening({
   const splitPaneStyle = useMemo(
     () =>
       ({
-        ['--listening-pane-width' as string]: isTabletMode ? '48%' : `${leftWidth}%`,
-        ['--question-pane-width' as string]: isTabletMode ? '52%' : `calc(${100 - leftWidth}% - 16px)`,
+        ['--listening-pane-width' as string]: `${leftWidth}%`,
+        ['--question-pane-width' as string]: `calc(${100 - leftWidth}% - 16px)`,
       }) as React.CSSProperties,
-    [isTabletMode, leftWidth],
+    [leftWidth],
   );
   const audioPlaybackEnabled = state.config.sections.listening.audioPlaybackEnabled ?? true;
-  const staffInstructions = (state.config.sections.listening.staffInstructions ?? '').trim();
   const activeTranscript = ((activePart as { transcript?: string | undefined }).transcript ?? '').trim();
   const hasAudioSource = Boolean(activePart?.audioUrl);
   const canPlayAudio = audioPlaybackEnabled && hasAudioSource;
   const shouldShowAudioPanel = audioPlaybackEnabled;
-
-  const renderBlockInstruction = (blockId: string, instruction: string) => {
-    const isLong = instruction.trim().length > 140;
-    const isCollapsed = isLong && collapsedInstructions[blockId] !== false;
-
-    return (
-      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
-        <div className="flex items-start justify-between gap-3">
-          <FormattedText
-            as="p"
-            className={`text-sm leading-relaxed text-gray-800 md:text-base ${isCollapsed ? 'line-clamp-2' : ''}`}
-            text={instruction}
-            highlightEnabled={highlightEnabled}
-            highlightColor={highlightColor}
-          />
-          {isLong ? (
-            <button
-              type="button"
-              onClick={() =>
-                setCollapsedInstructions((prev) => ({
-                  ...prev,
-                  [blockId]: !isCollapsed,
-                }))
-              }
-              className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-600 shadow-sm"
-              aria-expanded={!isCollapsed}
-            >
-              {isCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
-              {isCollapsed ? 'Show' : 'Hide'}
-            </button>
-          ) : null}
-        </div>
-      </div>
-    );
-  };
 
   useEffect(() => {
     if (currentQuestionId && questionContainerRef.current) {
@@ -184,7 +145,7 @@ export function StudentListening({
       }
       const clientX = firstTouch ? firstTouch.clientX : (e as MouseEvent).clientX;
       const newWidth = (clientX / window.innerWidth) * 100;
-      if (newWidth > 30 && newWidth < 70) {
+      if (newWidth >= 34 && newWidth <= 66) {
         setLeftWidth(newWidth);
       }
     };
@@ -227,38 +188,11 @@ export function StudentListening({
       >
         <div
           className={`h-full w-full overflow-y-auto p-4 pr-4 font-sans text-sm leading-relaxed text-gray-900 md:p-6 md:pr-6 md:text-base ${
-            isTabletMode ? 'w-[var(--listening-pane-width)] min-w-[260px] border-r border-gray-200' : 'lg:w-[var(--listening-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
+            isTabletMode ? 'w-[var(--listening-pane-width)] min-w-[220px] border-r border-gray-200' : 'lg:w-[var(--listening-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           data-student-zoom-scroll
         >
           <h2 className="text-lg md:text-xl font-bold mb-4 md:mb-6">{activePart.title}</h2>
-
-          {staffInstructions ? (
-            <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-xs font-bold uppercase tracking-wider text-amber-800">Staff Instructions</p>
-                <button
-                  type="button"
-                  onClick={() => setShowStaffInstructions((open) => !open)}
-                  className="inline-flex items-center gap-1 rounded-md border border-amber-200 bg-white px-2 py-1 text-xs font-semibold text-amber-800 shadow-sm"
-                  aria-expanded={showStaffInstructions}
-                >
-                  {showStaffInstructions ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                  {showStaffInstructions ? 'Hide' : 'Show'}
-                </button>
-              </div>
-              {showStaffInstructions ? (
-                <RichTextHighlighter
-                  content={staffInstructions}
-                  contentType="text"
-                  enabled={highlightEnabled}
-                  className="mt-2 whitespace-pre-wrap text-sm text-amber-900 md:text-base"
-                  highlightColor={highlightColor}
-                  highlightClassName={highlightClassName}
-                />
-              ) : null}
-            </div>
-          ) : null}
 
           {canPlayAudio ? (
             <audio
@@ -387,9 +321,13 @@ export function StudentListening({
         <div 
           onMouseDown={handleDrag}
           onTouchStart={handleDrag}
-          className={`${isTabletMode ? 'hidden' : 'hidden lg:flex'} w-4 bg-gray-400 relative flex items-center justify-center cursor-col-resize flex-shrink-0 hover:bg-gray-600 transition-colors`}
+          className={`${isTabletMode ? 'flex w-5' : 'hidden w-4 lg:flex'} bg-gray-400 relative items-center justify-center cursor-col-resize flex-shrink-0 touch-none hover:bg-gray-600 transition-colors`}
+          role="separator"
+          aria-label="Resize listening material and answer panels"
+          aria-orientation="vertical"
+          data-testid="listening-pane-resizer"
         >
-          <div className="w-8 h-8 bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none">
+          <div className="w-8 h-10 bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none">
             <ArrowLeftRight size={14} className="text-gray-600" />
           </div>
         </div>
@@ -421,7 +359,6 @@ export function StudentListening({
                     <h3 className="font-bold text-gray-900 mb-1 md:mb-2 text-base md:text-lg">
                       Questions {formatQuestionRange(blockStartQ, blockEndQ)}
                     </h3>
-                    {renderBlockInstruction(block.id, block.instruction)}
                   </div>
                   
                   <div className="space-y-8">

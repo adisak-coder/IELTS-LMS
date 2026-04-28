@@ -60,10 +60,10 @@ export function StudentReading({
   const splitPaneStyle = useMemo(
     () =>
       ({
-        ['--reading-pane-width' as string]: isTabletMode ? '48%' : `${leftWidth}%`,
-        ['--question-pane-width' as string]: isTabletMode ? '52%' : `calc(${100 - leftWidth}% - 16px)`,
+        ['--reading-pane-width' as string]: `${leftWidth}%`,
+        ['--question-pane-width' as string]: `calc(${100 - leftWidth}% - 16px)`,
       }) as React.CSSProperties,
-    [isTabletMode, leftWidth],
+    [leftWidth],
   );
 
   const renderBlockInstruction = (blockId: string, instruction: string) => {
@@ -187,7 +187,7 @@ export function StudentReading({
       }
       const clientX = firstTouch ? firstTouch.clientX : (e as MouseEvent).clientX;
       const newWidth = (clientX / window.innerWidth) * 100;
-      if (newWidth > 30 && newWidth < 70) {
+      if (newWidth >= 34 && newWidth <= 66) {
         setLeftWidth(newWidth);
       }
     };
@@ -218,7 +218,7 @@ export function StudentReading({
       >
         <div
           className={`h-full w-full overflow-y-auto p-4 pr-4 font-sans text-gray-900 md:p-6 md:pr-6 ${
-            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[260px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
+            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[220px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           style={{
             fontSize: 'var(--student-passage-font-size)',
@@ -261,9 +261,13 @@ export function StudentReading({
         <div 
           onMouseDown={handleDrag}
           onTouchStart={handleDrag}
-          className={`${isTabletMode ? 'hidden' : 'hidden lg:flex'} w-4 bg-gray-400 relative flex items-center justify-center cursor-col-resize flex-shrink-0 hover:bg-gray-600 transition-colors`}
+          className={`${isTabletMode ? 'flex w-5' : 'hidden w-4 lg:flex'} bg-gray-400 relative items-center justify-center cursor-col-resize flex-shrink-0 touch-none hover:bg-gray-600 transition-colors`}
+          role="separator"
+          aria-label="Resize reading passage and answer panels"
+          aria-orientation="vertical"
+          data-testid="reading-pane-resizer"
         >
-          <div className="w-8 h-8 bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none">
+          <div className="w-8 h-10 bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none">
             <ArrowLeftRight size={14} className="text-gray-600" />
           </div>
         </div>

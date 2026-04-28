@@ -419,9 +419,10 @@ describe('student question experience', () => {
     const workspace = screen.getByTestId('reading-split-workspace');
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
-      '--reading-pane-width': '48%',
-      '--question-pane-width': '52%',
+      '--reading-pane-width': '50%',
+      '--question-pane-width': 'calc(50% - 16px)',
     });
+    expect(screen.getByTestId('reading-pane-resizer')).toBeInTheDocument();
     expect(screen.getByText(/select passage text to highlight it/i)).toBeInTheDocument();
   });
 
@@ -1072,14 +1073,12 @@ describe('student question experience', () => {
     );
 
     expect(document.querySelector('audio')).toBeNull();
-    expect(screen.getByText(/staff instructions/i)).toBeInTheDocument();
+    expect(screen.queryByText(/staff instructions/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /show/i }));
-    expect(screen.getByText(/use the invigilator audio system/i)).toBeInTheDocument();
     expect(screen.queryByText(/listening audio track/i)).toBeNull();
   });
 
-  it('keeps listening split-screen side by side in tablet mode and collapses staff instructions', () => {
+  it('keeps listening split-screen side by side in tablet mode and hides instruction clutter', () => {
     const longInstruction = 'Answer the question using the words you hear. '.repeat(6);
     const state: ExamState = {
       title: 'Listening Test',
@@ -1148,11 +1147,13 @@ describe('student question experience', () => {
     const workspace = screen.getByTestId('listening-split-workspace');
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
-      '--listening-pane-width': '48%',
-      '--question-pane-width': '52%',
+      '--listening-pane-width': '50%',
+      '--question-pane-width': 'calc(50% - 16px)',
     });
+    expect(screen.getByTestId('listening-pane-resizer')).toBeInTheDocument();
+    expect(screen.queryByText(/staff instructions/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(longInstruction.trim())).not.toBeInTheDocument();
     expect(screen.getByText(/select reference text to highlight it/i)).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /show/i }).length).toBeGreaterThanOrEqual(2);
   });
 });
