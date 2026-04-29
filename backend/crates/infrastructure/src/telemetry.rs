@@ -52,6 +52,7 @@ pub struct Telemetry {
     storage_budget_level: Gauge<i64, AtomicI64>,
     process_resident_memory_bytes: Gauge<i64, AtomicI64>,
     rate_limiter_buckets: Gauge<i64, AtomicI64>,
+    request_route_fallback_total: Counter,
     storage_budget_threshold_hits: Family<ThresholdLabels, Counter>,
 }
 
@@ -93,6 +94,7 @@ impl Telemetry {
         let storage_budget_level = Gauge::<i64, AtomicI64>::default();
         let process_resident_memory_bytes = Gauge::<i64, AtomicI64>::default();
         let rate_limiter_buckets = Gauge::<i64, AtomicI64>::default();
+        let request_route_fallback_total = Counter::default();
         let storage_budget_threshold_hits = Family::<ThresholdLabels, Counter>::default();
 
         let mut registry = Registry::default();
@@ -157,6 +159,11 @@ impl Telemetry {
             rate_limiter_buckets.clone(),
         );
         registry.register(
+            "backend_request_route_fallback_total",
+            "Count of requests where metrics route labeling fell back to path bucketing.",
+            request_route_fallback_total.clone(),
+        );
+        registry.register(
             "backend_storage_budget_threshold_hits_total",
             "Number of times storage budget checks have hit a given severity.",
             storage_budget_threshold_hits.clone(),
@@ -176,6 +183,7 @@ impl Telemetry {
             storage_budget_level,
             process_resident_memory_bytes,
             rate_limiter_buckets,
+            request_route_fallback_total,
             storage_budget_threshold_hits,
         }
     }
@@ -242,6 +250,10 @@ impl Telemetry {
     pub fn set_rate_limiter_bucket_count(&self, buckets: usize) {
         self.rate_limiter_buckets
             .set(i64::try_from(buckets).unwrap_or(i64::MAX));
+    }
+
+    pub fn observe_request_route_fallback(&self) {
+        self.request_route_fallback_total.inc();
     }
 
     pub fn observe_storage_budget(&self, total_bytes: u64, level_label: &str, severity_code: i64) {
