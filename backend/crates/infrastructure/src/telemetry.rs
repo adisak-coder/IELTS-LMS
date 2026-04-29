@@ -37,6 +37,15 @@ struct ThresholdLabels {
     level: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessMemoryProfile {
+    pub resident_bytes: u64,
+    pub resident_high_water_mark_bytes: u64,
+    pub virtual_memory_bytes: u64,
+    pub heap_bytes: u64,
+    pub swap_bytes: u64,
+}
+
 #[derive(Clone)]
 pub struct Telemetry {
     registry: Arc<Mutex<Registry>>,
@@ -51,6 +60,11 @@ pub struct Telemetry {
     storage_budget_bytes: Gauge<i64, AtomicI64>,
     storage_budget_level: Gauge<i64, AtomicI64>,
     process_resident_memory_bytes: Gauge<i64, AtomicI64>,
+    process_resident_memory_high_water_mark_bytes: Gauge<i64, AtomicI64>,
+    process_virtual_memory_bytes: Gauge<i64, AtomicI64>,
+    process_heap_memory_bytes: Gauge<i64, AtomicI64>,
+    process_swap_memory_bytes: Gauge<i64, AtomicI64>,
+    process_memory_profile_collection_failures: Counter,
     rate_limiter_buckets: Gauge<i64, AtomicI64>,
     request_route_fallback_total: Counter,
     storage_budget_threshold_hits: Family<ThresholdLabels, Counter>,
@@ -93,6 +107,11 @@ impl Telemetry {
         let storage_budget_bytes = Gauge::<i64, AtomicI64>::default();
         let storage_budget_level = Gauge::<i64, AtomicI64>::default();
         let process_resident_memory_bytes = Gauge::<i64, AtomicI64>::default();
+        let process_resident_memory_high_water_mark_bytes = Gauge::<i64, AtomicI64>::default();
+        let process_virtual_memory_bytes = Gauge::<i64, AtomicI64>::default();
+        let process_heap_memory_bytes = Gauge::<i64, AtomicI64>::default();
+        let process_swap_memory_bytes = Gauge::<i64, AtomicI64>::default();
+        let process_memory_profile_collection_failures = Counter::default();
         let rate_limiter_buckets = Gauge::<i64, AtomicI64>::default();
         let request_route_fallback_total = Counter::default();
         let storage_budget_threshold_hits = Family::<ThresholdLabels, Counter>::default();
@@ -154,6 +173,31 @@ impl Telemetry {
             process_resident_memory_bytes.clone(),
         );
         registry.register(
+            "backend_process_resident_memory_high_water_mark_bytes",
+            "Peak resident memory (VmHWM) in bytes for this process.",
+            process_resident_memory_high_water_mark_bytes.clone(),
+        );
+        registry.register(
+            "backend_process_virtual_memory_bytes",
+            "Virtual memory size (VmSize) in bytes for this process.",
+            process_virtual_memory_bytes.clone(),
+        );
+        registry.register(
+            "backend_process_heap_memory_bytes",
+            "Data segment memory (VmData) in bytes for this process.",
+            process_heap_memory_bytes.clone(),
+        );
+        registry.register(
+            "backend_process_swap_memory_bytes",
+            "Swap memory usage (VmSwap) in bytes for this process.",
+            process_swap_memory_bytes.clone(),
+        );
+        registry.register(
+            "backend_process_memory_profile_collection_failures_total",
+            "Count of process memory profile collection failures.",
+            process_memory_profile_collection_failures.clone(),
+        );
+        registry.register(
             "backend_rate_limiter_buckets",
             "Number of active in-memory rate limiter buckets.",
             rate_limiter_buckets.clone(),
@@ -182,6 +226,11 @@ impl Telemetry {
             storage_budget_bytes,
             storage_budget_level,
             process_resident_memory_bytes,
+            process_resident_memory_high_water_mark_bytes,
+            process_virtual_memory_bytes,
+            process_heap_memory_bytes,
+            process_swap_memory_bytes,
+            process_memory_profile_collection_failures,
             rate_limiter_buckets,
             request_route_fallback_total,
             storage_budget_threshold_hits,
@@ -247,6 +296,23 @@ impl Telemetry {
             .set(i64::try_from(resident_bytes).unwrap_or(i64::MAX));
     }
 
+    pub fn set_process_memory_profile(&self, profile: &ProcessMemoryProfile) {
+        self.set_process_resident_memory_bytes(profile.resident_bytes);
+        self.process_resident_memory_high_water_mark_bytes.set(
+            i64::try_from(profile.resident_high_water_mark_bytes).unwrap_or(i64::MAX),
+        );
+        self.process_virtual_memory_bytes
+            .set(i64::try_from(profile.virtual_memory_bytes).unwrap_or(i64::MAX));
+        self.process_heap_memory_bytes
+            .set(i64::try_from(profile.heap_bytes).unwrap_or(i64::MAX));
+        self.process_swap_memory_bytes
+            .set(i64::try_from(profile.swap_bytes).unwrap_or(i64::MAX));
+    }
+
+    pub fn observe_process_memory_profile_collection_failure(&self) {
+        self.process_memory_profile_collection_failures.inc();
+    }
+
     pub fn set_rate_limiter_bucket_count(&self, buckets: usize) {
         self.rate_limiter_buckets
             .set(i64::try_from(buckets).unwrap_or(i64::MAX));
@@ -272,5 +338,53 @@ impl Telemetry {
         let mut output = String::new();
         encode(&mut output, &registry)?;
         Ok(output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ProcessMemoryProfile, Telemetry};
+
+    #[test]
+    fn render_includes_process_memory_profile_metrics() {
+        let telemetry = Telemetry::new();
+        telemetry.set_process_memory_profile(&ProcessMemoryProfile {
+            resident_bytes: 1024,
+            resident_high_water_mark_bytes: 2048,
+            virtual_memory_bytes: 4096,
+            heap_bytes: 512,
+            swap_bytes: 256,
+        });
+
+        let rendered = telemetry.render().expect("render metrics");
+        assert!(rendered.contains("backend_process_resident_memory_bytes 1024"));
+        assert!(rendered.contains("backend_process_resident_memory_high_water_mark_bytes 2048"));
+        assert!(rendered.contains("backend_process_virtual_memory_bytes 4096"));
+        assert!(rendered.contains("backend_process_heap_memory_bytes 512"));
+        assert!(rendered.contains("backend_process_swap_memory_bytes 256"));
+    }
+
+    #[test]
+    fn render_includes_memory_profile_failure_counter() {
+        let telemetry = Telemetry::new();
+        telemetry.observe_process_memory_profile_collection_failure();
+        telemetry.observe_process_memory_profile_collection_failure();
+
+        let rendered = telemetry.render().expect("render metrics");
+        assert!(rendered.contains("backend_process_memory_profile_collection_failures_total"));
+        let metric_value =
+            metric_value(&rendered, "backend_process_memory_profile_collection_failures_total")
+                .expect("failure counter value");
+        assert_eq!(metric_value, 2.0);
+    }
+
+    fn metric_value(rendered: &str, metric_name: &str) -> Option<f64> {
+        rendered.lines().find_map(|line| {
+            if line.starts_with('#') || !line.starts_with(metric_name) {
+                return None;
+            }
+            let (_, value) = line.split_once(' ')?;
+            value.trim().parse::<f64>().ok()
+        })
     }
 }
