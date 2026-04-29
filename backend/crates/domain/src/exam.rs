@@ -190,9 +190,8 @@ pub struct ExamEvent {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum ExamEventAction {
     Created,
     DraftSaved,
@@ -223,13 +222,81 @@ pub struct ExamMembership {
     pub revoked_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, sqlx::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum MembershipRole {
     Owner,
     Reviewer,
     Grader,
+}
+
+#[cfg(feature = "sqlx")]
+mod sqlx_text_enums {
+    use super::{ExamEventAction, MembershipRole};
+
+    use sqlx::{
+        decode::Decode, encode::Encode, error::BoxDynError, mysql::MySqlTypeInfo, MySql, Type,
+    };
+
+    fn invalid_enum_value(name: &str, value: &str) -> BoxDynError {
+        format!("invalid {name} value: {value}").into()
+    }
+
+    macro_rules! impl_text_enum {
+        ($ty:ty, { $($variant:ident => $value:expr),+ $(,)? }) => {
+            impl Type<MySql> for $ty {
+                fn type_info() -> MySqlTypeInfo {
+                    <&str as Type<MySql>>::type_info()
+                }
+
+                fn compatible(ty: &MySqlTypeInfo) -> bool {
+                    <&str as Type<MySql>>::compatible(ty)
+                }
+            }
+
+            impl<'q> Encode<'q, MySql> for $ty {
+                fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+                    let value = match self {
+                        $(Self::$variant => $value,)+
+                    };
+                    <&str as Encode<MySql>>::encode_by_ref(&value, buf)
+                }
+            }
+
+            impl<'r> Decode<'r, MySql> for $ty {
+                fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+                    let text = <&str as Decode<MySql>>::decode(value)?;
+                    match text {
+                        $($value => Ok(Self::$variant),)+
+                        other => Err(invalid_enum_value(stringify!($ty), other)),
+                    }
+                }
+            }
+        };
+    }
+
+    impl_text_enum!(ExamEventAction, {
+        Created => "created",
+        DraftSaved => "draft_saved",
+        SubmittedForReview => "submitted_for_review",
+        Approved => "approved",
+        Rejected => "rejected",
+        Published => "published",
+        Unpublished => "unpublished",
+        Scheduled => "scheduled",
+        Archived => "archived",
+        Restored => "restored",
+        Cloned => "cloned",
+        VersionCreated => "version_created",
+        VersionRestored => "version_restored",
+        PermissionsUpdated => "permissions_updated",
+    });
+
+    impl_text_enum!(MembershipRole, {
+        Owner => "owner",
+        Reviewer => "reviewer",
+        Grader => "grader",
+    });
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
