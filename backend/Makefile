@@ -3,7 +3,7 @@ CARGO ?= cargo
 NODE ?= node
 SHELL := /bin/bash
 
-.PHONY: db-up db-bootstrap db-down migrate api worker fmt clippy test load-test load-test-restart backup-rehearsal migrate-tidb ops-check
+.PHONY: db-up db-bootstrap db-down migrate api worker fmt clippy test load-test load-test-restart backup-rehearsal migrate-tidb ops-check idle-ram-capture idle-ram-summary idle-ram-compare
 
 db-up:
 	$(COMPOSE) -f docker-compose.yml up -d tidb minio
@@ -37,6 +37,15 @@ load-test:
 
 load-test-restart:
 	LOAD_TEST_SCENARIO=restart-during-live-traffic $(NODE) ./scripts/load-test.js
+
+idle-ram-capture:
+	$(NODE) ./scripts/idle-ram-window.js capture
+
+idle-ram-summary:
+	$(NODE) ./scripts/idle-ram-window.js summary $(FILE)
+
+idle-ram-compare:
+	$(NODE) ./scripts/idle-ram-window.js compare $(BASELINE) $(TUNED)
 
 backup-rehearsal:
 	bash ./scripts/backup-rehearsal.sh
