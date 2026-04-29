@@ -184,16 +184,45 @@ describe('gradingService backend mode', () => {
 
   it('loads grading sessions and submission bundles from the backend', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_GRADING', 'true');
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(jsonResponse([buildSession()]))
-      .mockResolvedValueOnce(
-        jsonResponse({
+    const bundle = buildBundle();
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === '/api/v1/grading/sessions') {
+        return jsonResponse([buildSession()]);
+      }
+      if (url === '/api/v1/grading/sessions/sched-1?page=1&pageSize=100') {
+        return jsonResponse({
           session: buildSession(),
           submissions: [buildSubmission()],
-        }),
-      )
-      .mockResolvedValueOnce(jsonResponse(buildBundle()));
+          pagination: { page: 1, pageSize: 100, total: 1, hasMore: false },
+        });
+      }
+      if (url === '/api/v1/grading/submissions/sub-1') {
+        return jsonResponse({
+          submission: bundle.submission,
+          reviewDraft: {
+            id: 'draft-1',
+            submissionId: 'sub-1',
+            teacherId: 'grader-1',
+            releaseStatus: 'draft',
+            hasUnsavedChanges: false,
+            lastAutoSaveAt: '2026-01-01T12:05:00.000Z',
+            updatedAt: '2026-01-01T12:05:00.000Z',
+            revision: 0,
+          },
+        });
+      }
+      if (url === '/api/v1/grading/submissions/sub-1/sections') {
+        return jsonResponse(bundle.sections);
+      }
+      if (url === '/api/v1/grading/submissions/sub-1/writing-tasks') {
+        return jsonResponse(bundle.writingTasks);
+      }
+      if (url === '/api/v1/grading/submissions/sub-1/review-draft') {
+        return jsonResponse(buildDraft(0));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
     global.fetch = fetchMock as typeof fetch;
 
     const queueResult = await gradingService.getSessionQueue();
@@ -248,14 +277,24 @@ describe('gradingService backend mode', () => {
       '/api/v1/grading/sessions',
       expect.objectContaining({ method: 'GET' }),
     );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      2,
-      '/api/v1/grading/sessions/sched-1',
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/grading/sessions/sched-1?page=1&pageSize=100',
       expect.objectContaining({ method: 'GET' }),
     );
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      3,
+    expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/grading/submissions/sub-1',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/grading/submissions/sub-1/sections',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/grading/submissions/sub-1/writing-tasks',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/grading/submissions/sub-1/review-draft',
       expect.objectContaining({ method: 'GET' }),
     );
   });

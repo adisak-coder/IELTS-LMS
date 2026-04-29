@@ -4,6 +4,7 @@ use std::{
     time::Duration,
 };
 
+use crate::database_monitor::GradingProjectionSnapshot;
 use prometheus_client::{
     encoding::{text::encode, EncodeLabelSet},
     metrics::{
@@ -37,6 +38,19 @@ struct ThresholdLabels {
     level: String,
 }
 
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct ProjectionEntityLabels {
+    entity: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ProjectionTotals {
+    schedule: u64,
+    submission: u64,
+    section: u64,
+    writing_task: u64,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessMemoryProfile {
     pub resident_bytes: u64,
@@ -68,6 +82,12 @@ pub struct Telemetry {
     rate_limiter_buckets: Gauge<i64, AtomicI64>,
     request_route_fallback_total: Counter,
     storage_budget_threshold_hits: Family<ThresholdLabels, Counter>,
+    grading_projection_lag_seconds: Gauge<i64, AtomicI64>,
+    grading_projection_cycle_duration_seconds: Histogram,
+    grading_projection_rows_processed_total: Family<ProjectionEntityLabels, Counter>,
+    grading_projection_failures_total: Counter,
+    projection_last_totals: Arc<Mutex<ProjectionTotals>>,
+    projection_last_failures_total: Arc<Mutex<u64>>,
 }
 
 impl fmt::Debug for Telemetry {
@@ -115,6 +135,12 @@ impl Telemetry {
         let rate_limiter_buckets = Gauge::<i64, AtomicI64>::default();
         let request_route_fallback_total = Counter::default();
         let storage_budget_threshold_hits = Family::<ThresholdLabels, Counter>::default();
+        let grading_projection_lag_seconds = Gauge::<i64, AtomicI64>::default();
+        let grading_projection_cycle_duration_seconds =
+            Histogram::new(exponential_buckets(0.001, 2.0, 14));
+        let grading_projection_rows_processed_total =
+            Family::<ProjectionEntityLabels, Counter>::default();
+        let grading_projection_failures_total = Counter::default();
 
         let mut registry = Registry::default();
         registry.register(
@@ -212,6 +238,26 @@ impl Telemetry {
             "Number of times storage budget checks have hit a given severity.",
             storage_budget_threshold_hits.clone(),
         );
+        registry.register(
+            "backend_grading_projection_lag_seconds",
+            "Observed lag between source attempt updates and grading projection watermark.",
+            grading_projection_lag_seconds.clone(),
+        );
+        registry.register(
+            "backend_grading_projection_cycle_duration_seconds",
+            "Observed grading projection cycle duration.",
+            grading_projection_cycle_duration_seconds.clone(),
+        );
+        registry.register(
+            "backend_grading_projection_rows_processed_total",
+            "Total projected rows processed, grouped by entity.",
+            grading_projection_rows_processed_total.clone(),
+        );
+        registry.register(
+            "backend_grading_projection_failures_total",
+            "Total grading projection cycle failures.",
+            grading_projection_failures_total.clone(),
+        );
 
         Self {
             registry: Arc::new(Mutex::new(registry)),
@@ -234,6 +280,12 @@ impl Telemetry {
             rate_limiter_buckets,
             request_route_fallback_total,
             storage_budget_threshold_hits,
+            grading_projection_lag_seconds,
+            grading_projection_cycle_duration_seconds,
+            grading_projection_rows_processed_total,
+            grading_projection_failures_total,
+            projection_last_totals: Arc::new(Mutex::new(ProjectionTotals::default())),
+            projection_last_failures_total: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -298,9 +350,8 @@ impl Telemetry {
 
     pub fn set_process_memory_profile(&self, profile: &ProcessMemoryProfile) {
         self.set_process_resident_memory_bytes(profile.resident_bytes);
-        self.process_resident_memory_high_water_mark_bytes.set(
-            i64::try_from(profile.resident_high_water_mark_bytes).unwrap_or(i64::MAX),
-        );
+        self.process_resident_memory_high_water_mark_bytes
+            .set(i64::try_from(profile.resident_high_water_mark_bytes).unwrap_or(i64::MAX));
         self.process_virtual_memory_bytes
             .set(i64::try_from(profile.virtual_memory_bytes).unwrap_or(i64::MAX));
         self.process_heap_memory_bytes
@@ -333,12 +384,82 @@ impl Telemetry {
             .inc();
     }
 
+    pub fn sync_grading_projection_metrics(&self, snapshot: &GradingProjectionSnapshot) {
+        self.grading_projection_lag_seconds
+            .set(snapshot.lag_seconds.max(0));
+        self.grading_projection_cycle_duration_seconds
+            .observe(snapshot.cycle_duration_seconds.max(0.0));
+
+        let mut last_totals = self
+            .projection_last_totals
+            .lock()
+            .expect("projection totals lock");
+        increment_counter_by(
+            &self.grading_projection_rows_processed_total,
+            "schedule",
+            snapshot.schedule_rows_processed_total,
+            &mut last_totals.schedule,
+        );
+        increment_counter_by(
+            &self.grading_projection_rows_processed_total,
+            "submission",
+            snapshot.submission_rows_processed_total,
+            &mut last_totals.submission,
+        );
+        increment_counter_by(
+            &self.grading_projection_rows_processed_total,
+            "section",
+            snapshot.section_rows_processed_total,
+            &mut last_totals.section,
+        );
+        increment_counter_by(
+            &self.grading_projection_rows_processed_total,
+            "writing_task",
+            snapshot.writing_task_rows_processed_total,
+            &mut last_totals.writing_task,
+        );
+        drop(last_totals);
+
+        let mut last_failures = self
+            .projection_last_failures_total
+            .lock()
+            .expect("projection failures lock");
+        if snapshot.failures_total >= *last_failures {
+            for _ in 0..(snapshot.failures_total - *last_failures) {
+                self.grading_projection_failures_total.inc();
+            }
+            *last_failures = snapshot.failures_total;
+        } else {
+            *last_failures = snapshot.failures_total;
+        }
+    }
+
     pub fn render(&self) -> Result<String, fmt::Error> {
         let registry = self.registry.lock().expect("telemetry registry lock");
         let mut output = String::new();
         encode(&mut output, &registry)?;
         Ok(output)
     }
+}
+
+fn increment_counter_by(
+    family: &Family<ProjectionEntityLabels, Counter>,
+    entity: &str,
+    next_total: u64,
+    last_total: &mut u64,
+) {
+    if next_total >= *last_total {
+        let delta = next_total - *last_total;
+        if delta > 0 {
+            let counter = family.get_or_create(&ProjectionEntityLabels {
+                entity: entity.to_owned(),
+            });
+            for _ in 0..delta {
+                counter.inc();
+            }
+        }
+    }
+    *last_total = next_total;
 }
 
 #[cfg(test)]
@@ -372,9 +493,11 @@ mod tests {
 
         let rendered = telemetry.render().expect("render metrics");
         assert!(rendered.contains("backend_process_memory_profile_collection_failures_total"));
-        let metric_value =
-            metric_value(&rendered, "backend_process_memory_profile_collection_failures_total")
-                .expect("failure counter value");
+        let metric_value = metric_value(
+            &rendered,
+            "backend_process_memory_profile_collection_failures_total",
+        )
+        .expect("failure counter value");
         assert_eq!(metric_value, 2.0);
     }
 

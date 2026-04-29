@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, State},
+    extract::{Extension, Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -8,10 +8,10 @@ use ielts_backend_application::grading::{GradingError, GradingService};
 use ielts_backend_domain::auth::UserRole;
 use ielts_backend_domain::grading::{
     ActorActionRequest, GradingSession, GradingSessionDetail, ReleaseEvent, ReleaseNowRequest,
-    ReviewDraft, SaveReviewDraftRequest, ScheduleReleaseRequest, StartReviewRequest, StudentResult,
-    SubmissionReviewBundle,
+    ReviewDraft, SaveReviewDraftRequest, ScheduleReleaseRequest, SectionSubmission,
+    StartReviewRequest, StudentResult, SubmissionReviewSummary, WritingTaskSubmission,
 };
-use ielts_backend_infrastructure::actor_context::ActorContext;
+use serde::Deserialize;
 use sqlx::query_scalar;
 use std::time::Instant;
 use uuid::Uuid;
@@ -25,6 +25,20 @@ use crate::{
     state::AppState,
 };
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDetailQuery {
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+}
+
+fn grading_service(state: &AppState) -> GradingService {
+    GradingService::with_sync_on_read_fallback(
+        state.db_pool(),
+        state.config.grading_sync_on_read_fallback,
+    )
+}
+
 pub async fn list_sessions(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -32,7 +46,7 @@ pub async fn list_sessions(
 ) -> Result<ApiResponse<Vec<GradingSession>>, ApiError> {
     principal.require_one_of(&[UserRole::Admin, UserRole::Grader])?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal);
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let sessions = service.list_sessions(&ctx).await?;
     let sessions = if principal.user.role == UserRole::Admin {
@@ -54,14 +68,19 @@ pub async fn get_session(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     principal: AuthenticatedUser,
+    Query(query): Query<SessionDetailQuery>,
     Path(session_id): Path<Uuid>,
 ) -> Result<ApiResponse<GradingSessionDetail>, ApiError> {
     authorize_schedule(&state, &principal, session_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(session_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let page = query.page.unwrap_or(1);
+    let page_size = query.page_size.unwrap_or(25);
+    let service = grading_service(&state);
     let started = Instant::now();
-    let detail = service.get_session_detail(&ctx, session_id).await?;
+    let detail = service
+        .get_session_detail_page(&ctx, session_id, page, page_size)
+        .await?;
     state
         .telemetry
         .observe_db_operation("grading.get_session_detail", started.elapsed());
@@ -73,7 +92,7 @@ pub async fn get_submission(
     Extension(request_id): Extension<RequestId>,
     principal: AuthenticatedUser,
     Path(submission_id): Path<Uuid>,
-) -> Result<ApiResponse<SubmissionReviewBundle>, ApiError> {
+) -> Result<ApiResponse<SubmissionReviewSummary>, ApiError> {
     let schedule_id: String =
         query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
             .bind(submission_id.to_string())
@@ -99,13 +118,98 @@ pub async fn get_submission(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
-    let bundle = service.get_submission_bundle(&ctx, submission_id).await?;
+    let bundle = service.get_submission_summary(&ctx, submission_id).await?;
     state
         .telemetry
-        .observe_db_operation("grading.get_submission_bundle", started.elapsed());
+        .observe_db_operation("grading.get_submission_summary", started.elapsed());
     Ok(ApiResponse::success_with_request_id(bundle, request_id.0))
+}
+
+pub async fn get_submission_sections(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    principal: AuthenticatedUser,
+    Path(submission_id): Path<Uuid>,
+) -> Result<ApiResponse<Vec<SectionSubmission>>, ApiError> {
+    let schedule_id: String =
+        query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
+            .bind(submission_id.to_string())
+            .fetch_optional(&state.db_pool())
+            .await
+            .map_err(|err| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DATABASE_ERROR",
+                    &err.to_string(),
+                )
+            })?
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found")
+            })?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
+    authorize_schedule(&state, &principal, schedule_id).await?;
+    let ctx = crate::http::auth::actor_context_from_principal(&principal)
+        .with_schedule_scope_id(schedule_id.to_string());
+    let service = grading_service(&state);
+    let started = Instant::now();
+    let sections = service.get_submission_sections(&ctx, submission_id).await?;
+    state
+        .telemetry
+        .observe_db_operation("grading.get_submission_sections", started.elapsed());
+    Ok(ApiResponse::success_with_request_id(sections, request_id.0))
+}
+
+pub async fn get_submission_writing_tasks(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    principal: AuthenticatedUser,
+    Path(submission_id): Path<Uuid>,
+) -> Result<ApiResponse<Vec<WritingTaskSubmission>>, ApiError> {
+    let schedule_id: String =
+        query_scalar("SELECT schedule_id FROM student_submissions WHERE id = ?")
+            .bind(submission_id.to_string())
+            .fetch_optional(&state.db_pool())
+            .await
+            .map_err(|err| {
+                ApiError::new(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DATABASE_ERROR",
+                    &err.to_string(),
+                )
+            })?
+            .ok_or_else(|| {
+                ApiError::new(StatusCode::NOT_FOUND, "NOT_FOUND", "Resource not found")
+            })?;
+    let schedule_id = Uuid::parse_str(&schedule_id).map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATA_INTEGRITY_ERROR",
+            &format!("Invalid schedule_id in student_submissions: {err}"),
+        )
+    })?;
+    authorize_schedule(&state, &principal, schedule_id).await?;
+    let ctx = crate::http::auth::actor_context_from_principal(&principal)
+        .with_schedule_scope_id(schedule_id.to_string());
+    let service = grading_service(&state);
+    let started = Instant::now();
+    let writing_tasks = service
+        .get_submission_writing_tasks(&ctx, submission_id)
+        .await?;
+    state
+        .telemetry
+        .observe_db_operation("grading.get_submission_writing_tasks", started.elapsed());
+    Ok(ApiResponse::success_with_request_id(
+        writing_tasks,
+        request_id.0,
+    ))
 }
 
 pub async fn start_review(
@@ -141,7 +245,7 @@ pub async fn start_review(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let draft = service.start_review(&ctx, submission_id, req).await?;
     state
@@ -179,7 +283,7 @@ pub async fn get_review_draft(
         )
     })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let draft = service.get_review_draft(submission_id).await?;
     state
@@ -221,7 +325,7 @@ pub async fn save_review_draft(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let draft = service.save_review_draft(&ctx, submission_id, req).await?;
     state
@@ -263,7 +367,7 @@ pub async fn mark_grading_complete(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let draft = service
         .mark_grading_complete(&ctx, submission_id, req)
@@ -307,7 +411,7 @@ pub async fn mark_ready_to_release(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let draft = service
         .mark_ready_to_release(&ctx, submission_id, req)
@@ -351,7 +455,7 @@ pub async fn release_now(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = std::time::Instant::now();
     let result = service.release_now(&ctx, submission_id, req).await?;
     state
@@ -393,7 +497,7 @@ pub async fn schedule_release(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = std::time::Instant::now();
     let draft = service.schedule_release(&ctx, submission_id, req).await?;
     state
@@ -435,7 +539,7 @@ pub async fn reopen_review(
     authorize_schedule(&state, &principal, schedule_id).await?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal)
         .with_schedule_scope_id(schedule_id.to_string());
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = std::time::Instant::now();
     let draft = service.reopen_review(&ctx, submission_id, req).await?;
     state
@@ -478,7 +582,7 @@ pub async fn get_result_events(
         )
     })?;
     authorize_schedule(&state, &principal, schedule_id).await?;
-    let service = GradingService::new(state.db_pool());
+    let service = grading_service(&state);
     let started = Instant::now();
     let events = service.get_result_events(result_id).await?;
     state

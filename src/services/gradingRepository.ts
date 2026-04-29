@@ -151,12 +151,20 @@ export interface IGradingRepository {
 }
 
 class BackendGradingRepository implements IGradingRepository {
-  private readonly submissionBundleCache = createTtlLruCache<string, Promise<any>>(
+  private readonly submissionSummaryCache = createTtlLruCache<string, Promise<any>>(
+    gradingMemoryCachePolicy,
+  );
+  private readonly submissionSectionsCache = createTtlLruCache<string, Promise<any[]>>(
+    gradingMemoryCachePolicy,
+  );
+  private readonly submissionWritingTasksCache = createTtlLruCache<string, Promise<any[]>>(
     gradingMemoryCachePolicy,
   );
 
   private invalidateSubmissionBundleCache(submissionId: string): void {
-    this.submissionBundleCache.delete(submissionId);
+    this.submissionSummaryCache.delete(submissionId);
+    this.submissionSectionsCache.delete(submissionId);
+    this.submissionWritingTasksCache.delete(submissionId);
   }
 
   private invalidateReviewDraftCache(draftId: string): void {
@@ -339,19 +347,53 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private async getSubmissionBundle(submissionId: string): Promise<any> {
-    const cached = this.submissionBundleCache.get(submissionId);
+  private async getSubmissionSummary(submissionId: string): Promise<any> {
+    const cached = this.submissionSummaryCache.get(submissionId);
     if (cached) {
       return await cached;
     }
 
     const request = backendGet<any>(`/v1/grading/submissions/${submissionId}`);
-    this.submissionBundleCache.set(submissionId, request);
+    this.submissionSummaryCache.set(submissionId, request);
 
     try {
       return await request;
     } catch (error) {
-      this.submissionBundleCache.delete(submissionId);
+      this.submissionSummaryCache.delete(submissionId);
+      throw error;
+    }
+  }
+
+  private async getSubmissionSectionsPayload(submissionId: string): Promise<any[]> {
+    const cached = this.submissionSectionsCache.get(submissionId);
+    if (cached) {
+      return await cached;
+    }
+
+    const request = backendGet<any[]>(`/v1/grading/submissions/${submissionId}/sections`);
+    this.submissionSectionsCache.set(submissionId, request);
+
+    try {
+      return await request;
+    } catch (error) {
+      this.submissionSectionsCache.delete(submissionId);
+      throw error;
+    }
+  }
+
+  private async getSubmissionWritingTasksPayload(submissionId: string): Promise<any[]> {
+    const cached = this.submissionWritingTasksCache.get(submissionId);
+    if (cached) {
+      return await cached;
+    }
+
+    const request = backendGet<any[]>(`/v1/grading/submissions/${submissionId}/writing-tasks`);
+    this.submissionWritingTasksCache.set(submissionId, request);
+
+    try {
+      return await request;
+    } catch (error) {
+      this.submissionWritingTasksCache.delete(submissionId);
       throw error;
     }
   }
@@ -393,8 +435,8 @@ class BackendGradingRepository implements IGradingRepository {
 
   async getSubmissionById(id: string): Promise<StudentSubmission | null> {
     try {
-      const bundle = await this.getSubmissionBundle(id);
-      return this.mapSubmission(bundle.submission);
+      const summary = await this.getSubmissionSummary(id);
+      return this.mapSubmission(summary.submission);
     } catch (error) {
       if (isBackendNotFound(error)) {
         return null;
@@ -404,8 +446,24 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async getSubmissionsBySession(sessionId: string): Promise<StudentSubmission[]> {
-    const detail = await backendGet<any>(`/v1/grading/sessions/${sessionId}`);
-    return (detail.submissions ?? []).map((submission: any) => this.mapSubmission(submission));
+    const pageSize = 100;
+    const submissions: StudentSubmission[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      const detail = await backendGet<any>(
+        `/v1/grading/sessions/${sessionId}?page=${page}&pageSize=${pageSize}`,
+      );
+      const pageSubmissions = (detail.submissions ?? []).map((submission: any) =>
+        this.mapSubmission(submission),
+      );
+      submissions.push(...pageSubmissions);
+      hasMore = Boolean(detail.pagination?.hasMore);
+      page += 1;
+    }
+
+    return submissions;
   }
 
   async getSubmissionsByStudent(studentId: string): Promise<StudentSubmission[]> {
@@ -442,8 +500,8 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async getSectionSubmissionsBySubmissionId(submissionId: string): Promise<SectionSubmission[]> {
-    const bundle = await this.getSubmissionBundle(submissionId);
-    return (bundle.sections ?? []).map((section: any) => this.mapSection(section));
+    const sections = await this.getSubmissionSectionsPayload(submissionId);
+    return (sections ?? []).map((section: any) => this.mapSection(section));
   }
 
   async saveSectionSubmission(section: SectionSubmission): Promise<void> {
@@ -478,8 +536,8 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async getWritingSubmissionsBySubmissionId(submissionId: string): Promise<WritingTaskSubmission[]> {
-    const bundle = await this.getSubmissionBundle(submissionId);
-    return (bundle.writingTasks ?? []).map((writing: any) => this.mapWritingTask(writing));
+    const writingTasks = await this.getSubmissionWritingTasksPayload(submissionId);
+    return (writingTasks ?? []).map((writing: any) => this.mapWritingTask(writing));
   }
 
   async saveWritingSubmission(writing: WritingTaskSubmission): Promise<void> {
@@ -507,18 +565,6 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async getReviewDraftBySubmission(submissionId: string): Promise<ReviewDraft | null> {
-    try {
-      const bundle = await this.getSubmissionBundle(submissionId);
-      if ('reviewDraft' in bundle) {
-        return bundle.reviewDraft ? this.mapReviewDraft(bundle.reviewDraft) : null;
-      }
-    } catch (error) {
-      if (!isBackendNotFound(error)) {
-        throw error;
-      }
-      // ignore and fall through
-    }
-
     try {
       const draft = await backendGet<any>(`/v1/grading/submissions/${submissionId}/review-draft`);
       return this.mapReviewDraft(draft);

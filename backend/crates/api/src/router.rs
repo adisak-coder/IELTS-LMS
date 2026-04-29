@@ -190,6 +190,14 @@ pub fn build_router(state: AppState) -> Router {
                 .route("/sessions/:session_id", get(grading::get_session))
                 .route("/submissions/:submission_id", get(grading::get_submission))
                 .route(
+                    "/submissions/:submission_id/sections",
+                    get(grading::get_submission_sections),
+                )
+                .route(
+                    "/submissions/:submission_id/writing-tasks",
+                    get(grading::get_submission_writing_tasks),
+                )
+                .route(
                     "/submissions/:submission_id/start-review",
                     post(grading::start_review),
                 )

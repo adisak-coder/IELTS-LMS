@@ -6,7 +6,11 @@ rust-version = "1.75"
 publish = false
 
 [dependencies]
+ielts-backend-application = { path = "../application" }
 ielts-backend-infrastructure = { path = "../infrastructure" }
+chrono = { version = "0.4.38", default-features = false, features = ["clock", "serde"] }
+serde = { version = "1.0.216", features = ["derive"] }
+serde_json = "1.0.133"
 sqlx = { version = "0.7.4", features = ["mysql", "runtime-tokio-rustls"] }
 tokio = { version = "1.42.0", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1.41"

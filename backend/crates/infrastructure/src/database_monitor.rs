@@ -1,5 +1,7 @@
 use std::time::{Duration, Instant};
 
+use serde::Deserialize;
+use serde_json::Value;
 use sqlx::MySqlPool;
 
 #[derive(Clone, Debug)]
@@ -64,6 +66,17 @@ pub struct StorageBudgetSnapshot {
     pub total_bytes: u64,
     pub level: StorageBudgetLevel,
     pub largest_relations: Vec<RelationSize>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GradingProjectionSnapshot {
+    pub lag_seconds: i64,
+    pub cycle_duration_seconds: f64,
+    pub schedule_rows_processed_total: u64,
+    pub submission_rows_processed_total: u64,
+    pub section_rows_processed_total: u64,
+    pub writing_task_rows_processed_total: u64,
+    pub failures_total: u64,
 }
 
 pub async fn ping_database(pool: &MySqlPool) -> Result<Duration, sqlx::Error> {
@@ -151,6 +164,45 @@ pub async fn inspect_storage_budget(
     })
 }
 
+pub async fn inspect_grading_projection_snapshot(
+    pool: &MySqlPool,
+) -> Result<GradingProjectionSnapshot, sqlx::Error> {
+    let payload = sqlx::query_scalar::<_, Value>(
+        r#"
+        SELECT payload
+        FROM shared_cache_entries
+        WHERE cache_key = 'grading_projection_state_v1'
+          AND invalidated_at IS NULL
+          AND (expires_at IS NULL OR expires_at > NOW())
+        "#,
+    )
+    .fetch_optional(pool)
+    .await?;
+
+    let Some(payload) = payload else {
+        return Ok(GradingProjectionSnapshot::default());
+    };
+
+    let state: GradingProjectionStateRow = serde_json::from_value(payload).unwrap_or_default();
+    Ok(GradingProjectionSnapshot {
+        lag_seconds: state
+            .last_cycle
+            .as_ref()
+            .map(|cycle| cycle.lag_seconds)
+            .unwrap_or(0),
+        cycle_duration_seconds: state
+            .last_cycle
+            .as_ref()
+            .map(|cycle| cycle.duration_seconds)
+            .unwrap_or(0.0),
+        schedule_rows_processed_total: state.totals.schedule_rows_synced,
+        submission_rows_processed_total: state.totals.submission_rows_synced,
+        section_rows_processed_total: state.totals.section_rows_synced,
+        writing_task_rows_processed_total: state.totals.writing_task_rows_synced,
+        failures_total: state.failures_total,
+    })
+}
+
 #[derive(sqlx::FromRow)]
 struct OutboxBacklogRow {
     pending_count: i64,
@@ -161,4 +213,28 @@ struct OutboxBacklogRow {
 struct RelationSizeRow {
     relation_name: String,
     total_bytes: i64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GradingProjectionStateRow {
+    totals: GradingProjectionTotalsRow,
+    failures_total: u64,
+    last_cycle: Option<GradingProjectionCycleRow>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GradingProjectionTotalsRow {
+    schedule_rows_synced: u64,
+    submission_rows_synced: u64,
+    section_rows_synced: u64,
+    writing_task_rows_synced: u64,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct GradingProjectionCycleRow {
+    duration_seconds: f64,
+    lag_seconds: i64,
 }

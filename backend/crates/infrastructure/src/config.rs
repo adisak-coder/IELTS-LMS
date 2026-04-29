@@ -13,6 +13,10 @@ pub struct AppConfig {
     pub db_pool_acquire_timeout_ms: u64,
     pub worker_poll_interval_ms: u64,
     pub worker_fallback_interval_secs: u64,
+    pub grading_projection_enabled: bool,
+    pub grading_projection_interval_ms: u64,
+    pub grading_projection_bootstrap_window_hours: i64,
+    pub grading_sync_on_read_fallback: bool,
     pub prometheus_enabled: bool,
     pub otel_exporter_otlp_endpoint: Option<String>,
     pub worker_outbox_notify_channel: String,
@@ -115,6 +119,24 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.worker_fallback_interval_secs),
+            grading_projection_enabled: env::var("GRADING_PROJECTION_ENABLED")
+                .ok()
+                .and_then(|value| parse_bool(&value))
+                .unwrap_or(default.grading_projection_enabled),
+            grading_projection_interval_ms: env::var("GRADING_PROJECTION_INTERVAL_MS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.grading_projection_interval_ms),
+            grading_projection_bootstrap_window_hours: env::var(
+                "GRADING_PROJECTION_BOOTSTRAP_WINDOW_HOURS",
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.grading_projection_bootstrap_window_hours),
+            grading_sync_on_read_fallback: env::var("GRADING_SYNC_ON_READ_FALLBACK")
+                .ok()
+                .and_then(|value| parse_bool(&value))
+                .unwrap_or(default.grading_sync_on_read_fallback),
             prometheus_enabled: env::var("PROMETHEUS_ENABLED")
                 .ok()
                 .and_then(|value| parse_bool(&value))
@@ -454,6 +476,10 @@ impl Default for AppConfig {
             db_pool_acquire_timeout_ms: 3000,
             worker_poll_interval_ms: 1000,
             worker_fallback_interval_secs: 10,
+            grading_projection_enabled: true,
+            grading_projection_interval_ms: 5000,
+            grading_projection_bootstrap_window_hours: 24,
+            grading_sync_on_read_fallback: false,
             prometheus_enabled: true,
             otel_exporter_otlp_endpoint: None,
             worker_outbox_notify_channel: "backend_outbox_wakeup".to_owned(),

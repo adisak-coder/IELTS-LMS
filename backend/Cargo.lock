@@ -1174,8 +1174,11 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "ielts-backend-application",
  "ielts-backend-domain",
  "ielts-backend-infrastructure",
+ "serde",
+ "serde_json",
  "sqlx",
  "tokio",
  "tracing",

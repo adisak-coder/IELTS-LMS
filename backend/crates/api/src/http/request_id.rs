@@ -125,7 +125,10 @@ mod tests {
 
     #[test]
     fn fallback_normalizer_bounds_unknown_api_paths() {
-        assert_eq!(normalize_metrics_route("/api/v1/unknown/submission-abc123"), "/api/*");
+        assert_eq!(
+            normalize_metrics_route("/api/v1/unknown/submission-abc123"),
+            "/api/*"
+        );
     }
 
     #[test]

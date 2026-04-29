@@ -1,11 +1,12 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use ielts_backend_domain::{
     grading::{
-        ActorActionRequest, GradingSession, GradingSessionDetail, GradingSessionStatus,
-        OverallGradingStatus, ReleaseEvent, ReleaseNowRequest, ReleaseStatus, ResultsAnalytics,
-        ReviewAction, ReviewDraft, SaveReviewDraftRequest, ScheduleReleaseRequest,
-        SectionGradingStatus, SectionSubmission, StartReviewRequest, StudentResult,
-        StudentSubmission, SubmissionReviewBundle, WritingTaskSubmission,
+        ActorActionRequest, GradingSession, GradingSessionDetail, GradingSessionPagination,
+        GradingSessionStatus, OverallGradingStatus, ReleaseEvent, ReleaseNowRequest, ReleaseStatus,
+        ResultsAnalytics, ReviewAction, ReviewDraft, ReviewDraftSummary, SaveReviewDraftRequest,
+        ScheduleReleaseRequest, SectionGradingStatus, SectionSubmission, StartReviewRequest,
+        StudentResult, StudentSubmission, SubmissionReviewBundle, SubmissionReviewSummary,
+        WritingTaskSubmission,
     },
     schedule::{ExamSchedule, ScheduleStatus},
 };
@@ -30,13 +31,47 @@ pub enum GradingError {
     Validation(String),
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct GradingProjectionRequest {
+    pub watermark: Option<DateTime<Utc>>,
+    pub bootstrap_after: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct GradingProjectionReport {
+    pub schedule_rows_synced: u64,
+    pub submission_rows_synced: u64,
+    pub section_rows_synced: u64,
+    pub writing_task_rows_synced: u64,
+    pub affected_schedule_ids: HashSet<String>,
+    pub next_watermark: Option<DateTime<Utc>>,
+}
+
 pub struct GradingService {
     pool: MySqlPool,
+    sync_on_read_fallback: bool,
 }
 
 impl GradingService {
     pub fn new(pool: MySqlPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            sync_on_read_fallback: false,
+        }
+    }
+
+    pub fn with_sync_on_read_fallback(pool: MySqlPool, sync_on_read_fallback: bool) -> Self {
+        Self {
+            pool,
+            sync_on_read_fallback,
+        }
+    }
+
+    async fn maybe_sync_on_read(&self) -> Result<(), GradingError> {
+        if self.sync_on_read_fallback {
+            self.ensure_materialized_state().await?;
+        }
+        Ok(())
     }
 
     fn ensure_can_grade_schedule(
@@ -70,7 +105,7 @@ impl GradingService {
         &self,
         ctx: &ActorContext,
     ) -> Result<Vec<GradingSession>, GradingError> {
-        self.ensure_materialized_state().await?;
+        self.maybe_sync_on_read().await?;
 
         // Admins and AdminObservers can see all grading sessions
         // Other roles can only see grading sessions for their schedules
@@ -106,7 +141,21 @@ impl GradingService {
         ctx: &ActorContext,
         session_id: Uuid,
     ) -> Result<GradingSessionDetail, GradingError> {
-        self.ensure_materialized_state().await?;
+        self.get_session_detail_page(ctx, session_id, 1, 25).await
+    }
+
+    pub async fn get_session_detail_page(
+        &self,
+        ctx: &ActorContext,
+        session_id: Uuid,
+        page: u64,
+        page_size: u64,
+    ) -> Result<GradingSessionDetail, GradingError> {
+        self.maybe_sync_on_read().await?;
+        let page = page.max(1);
+        let page_size = page_size.clamp(1, 100);
+        let offset = ((page - 1) * page_size) as i64;
+        let page_size_i64 = page_size as i64;
 
         let session =
             sqlx::query_as::<_, GradingSession>("SELECT * FROM grading_sessions WHERE id = ?")
@@ -127,25 +176,40 @@ impl GradingService {
             schedule.organization_id.as_deref(),
         )?;
 
+        let total_submissions: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM student_submissions WHERE schedule_id = ?")
+                .bind(&session.schedule_id)
+                .fetch_one(&self.pool)
+                .await?;
         let submissions = sqlx::query_as::<_, StudentSubmission>(
-            "SELECT * FROM student_submissions WHERE schedule_id = ? ORDER BY submitted_at DESC",
+            "SELECT * FROM student_submissions WHERE schedule_id = ? ORDER BY submitted_at DESC LIMIT ? OFFSET ?",
         )
         .bind(&session.schedule_id)
+        .bind(page_size_i64)
+        .bind(offset)
         .fetch_all(&self.pool)
         .await?;
+        let total = total_submissions.max(0) as u64;
+        let has_more = offset.saturating_add(page_size_i64) < total_submissions.max(0);
 
         Ok(GradingSessionDetail {
             session,
             submissions,
+            pagination: Some(GradingSessionPagination {
+                page,
+                page_size,
+                total,
+                has_more,
+            }),
         })
     }
 
-    pub async fn get_submission_bundle(
+    pub async fn get_submission_summary(
         &self,
         ctx: &ActorContext,
         submission_id: Uuid,
-    ) -> Result<SubmissionReviewBundle, GradingError> {
-        self.ensure_materialized_state().await?;
+    ) -> Result<SubmissionReviewSummary, GradingError> {
+        self.maybe_sync_on_read().await?;
         let submission_id = submission_id.to_string();
 
         let submission = sqlx::query_as::<_, StudentSubmission>(
@@ -171,26 +235,75 @@ impl GradingService {
             schedule.organization_id.as_deref(),
         )?;
 
-        let sections = sqlx::query_as::<_, SectionSubmission>(
-            "SELECT * FROM section_submissions WHERE submission_id = ? ORDER BY section ASC",
-        )
-        .bind(&submission_id)
-        .fetch_all(&self.pool)
-        .await?;
-        let writing_tasks = sqlx::query_as::<_, WritingTaskSubmission>(
-            "SELECT * FROM writing_task_submissions WHERE submission_id = ? ORDER BY task_id ASC",
-        )
-        .bind(&submission_id)
-        .fetch_all(&self.pool)
-        .await?;
         let review_draft =
             sqlx::query_as::<_, ReviewDraft>("SELECT * FROM review_drafts WHERE submission_id = ?")
                 .bind(&submission_id)
                 .fetch_optional(&self.pool)
                 .await?;
 
-        Ok(SubmissionReviewBundle {
+        Ok(SubmissionReviewSummary {
             submission,
+            review_draft: review_draft.map(|draft| ReviewDraftSummary {
+                id: draft.id,
+                submission_id: draft.submission_id,
+                teacher_id: draft.teacher_id,
+                release_status: draft.release_status,
+                has_unsaved_changes: draft.has_unsaved_changes,
+                last_auto_save_at: draft.last_auto_save_at,
+                updated_at: draft.updated_at,
+                revision: draft.revision,
+            }),
+        })
+    }
+
+    pub async fn get_submission_sections(
+        &self,
+        ctx: &ActorContext,
+        submission_id: Uuid,
+    ) -> Result<Vec<SectionSubmission>, GradingError> {
+        let summary = self.get_submission_summary(ctx, submission_id).await?;
+        let sections = sqlx::query_as::<_, SectionSubmission>(
+            "SELECT * FROM section_submissions WHERE submission_id = ? ORDER BY section ASC",
+        )
+        .bind(&summary.submission.id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(sections)
+    }
+
+    pub async fn get_submission_writing_tasks(
+        &self,
+        ctx: &ActorContext,
+        submission_id: Uuid,
+    ) -> Result<Vec<WritingTaskSubmission>, GradingError> {
+        let summary = self.get_submission_summary(ctx, submission_id).await?;
+        let writing_tasks = sqlx::query_as::<_, WritingTaskSubmission>(
+            "SELECT * FROM writing_task_submissions WHERE submission_id = ? ORDER BY task_id ASC",
+        )
+        .bind(&summary.submission.id)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(writing_tasks)
+    }
+
+    pub async fn get_submission_bundle(
+        &self,
+        ctx: &ActorContext,
+        submission_id: Uuid,
+    ) -> Result<SubmissionReviewBundle, GradingError> {
+        let summary = self.get_submission_summary(ctx, submission_id).await?;
+        let sections = self.get_submission_sections(ctx, submission_id).await?;
+        let writing_tasks = self
+            .get_submission_writing_tasks(ctx, submission_id)
+            .await?;
+        let review_draft =
+            sqlx::query_as::<_, ReviewDraft>("SELECT * FROM review_drafts WHERE submission_id = ?")
+                .bind(summary.submission.id.clone())
+                .fetch_optional(&self.pool)
+                .await?;
+
+        Ok(SubmissionReviewBundle {
+            submission: summary.submission,
             sections,
             writing_tasks,
             review_draft,
@@ -203,7 +316,6 @@ impl GradingService {
         submission_id: Uuid,
         _req: StartReviewRequest,
     ) -> Result<ReviewDraft, GradingError> {
-        self.ensure_materialized_state().await?;
         let submission_id_uuid = submission_id;
         let submission_id = submission_id_uuid.to_string();
 
@@ -303,7 +415,7 @@ impl GradingService {
     }
 
     pub async fn get_review_draft(&self, submission_id: Uuid) -> Result<ReviewDraft, GradingError> {
-        self.ensure_materialized_state().await?;
+        self.maybe_sync_on_read().await?;
 
         sqlx::query_as::<_, ReviewDraft>("SELECT * FROM review_drafts WHERE submission_id = ?")
             .bind(submission_id.to_string())
@@ -319,7 +431,6 @@ impl GradingService {
         submission_id: Uuid,
         req: SaveReviewDraftRequest,
     ) -> Result<ReviewDraft, GradingError> {
-        self.ensure_materialized_state().await?;
         let submission_id_db = submission_id.to_string();
 
         // Get submission to check authorization
@@ -474,7 +585,6 @@ impl GradingService {
         submission_id: Uuid,
         req: ReleaseNowRequest,
     ) -> Result<StudentResult, GradingError> {
-        self.ensure_materialized_state().await?;
         let submission_id_db = submission_id.to_string();
 
         let submission = sqlx::query_as::<_, StudentSubmission>(
@@ -634,7 +744,6 @@ impl GradingService {
         submission_id: Uuid,
         req: ScheduleReleaseRequest,
     ) -> Result<ReviewDraft, GradingError> {
-        self.ensure_materialized_state().await?;
         let submission_id_db = submission_id.to_string();
 
         let submission = sqlx::query_as::<_, StudentSubmission>(
@@ -786,7 +895,7 @@ impl GradingService {
         &self,
         ctx: &ActorContext,
     ) -> Result<Vec<StudentResult>, GradingError> {
-        self.ensure_materialized_state().await?;
+        self.maybe_sync_on_read().await?;
 
         // Admins and AdminObservers can see all results
         // Other roles can only see results for their schedules
@@ -839,7 +948,7 @@ impl GradingService {
     }
 
     pub async fn analytics(&self) -> Result<ResultsAnalytics, GradingError> {
-        self.ensure_materialized_state().await?;
+        self.maybe_sync_on_read().await?;
 
         let total_results: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM student_results")
             .fetch_one(&self.pool)
@@ -885,7 +994,6 @@ impl GradingService {
         grading_status: OverallGradingStatus,
         event: ReviewAction,
     ) -> Result<ReviewDraft, GradingError> {
-        self.ensure_materialized_state().await?;
         let submission_id_db = submission_id.to_string();
         let actor_id_str = ctx.actor_id.to_string();
         let current_draft = self.get_review_draft(submission_id).await?;
@@ -991,35 +1099,101 @@ impl GradingService {
         Ok(())
     }
 
+    pub async fn run_projection_cycle(
+        &self,
+        request: GradingProjectionRequest,
+    ) -> Result<GradingProjectionReport, GradingError> {
+        let schedule_sync = self.sync_sessions_from_schedules(request.watermark).await?;
+        let submission_sync = self
+            .sync_submissions_from_attempts(request.watermark, request.bootstrap_after)
+            .await?;
+        let mut affected_schedule_ids = schedule_sync.affected_schedule_ids;
+        affected_schedule_ids.extend(submission_sync.affected_schedule_ids.clone());
+
+        if !affected_schedule_ids.is_empty() {
+            self.refresh_session_counters_for_schedules(&affected_schedule_ids)
+                .await?;
+        }
+
+        let next_watermark = [
+            request.watermark,
+            schedule_sync.max_updated_at,
+            submission_sync.max_updated_at,
+        ]
+        .into_iter()
+        .flatten()
+        .max();
+
+        Ok(GradingProjectionReport {
+            schedule_rows_synced: schedule_sync.rows_synced,
+            submission_rows_synced: submission_sync.submission_rows_synced,
+            section_rows_synced: submission_sync.section_rows_synced,
+            writing_task_rows_synced: submission_sync.writing_task_rows_synced,
+            affected_schedule_ids,
+            next_watermark,
+        })
+    }
+
     async fn ensure_materialized_state(&self) -> Result<(), GradingError> {
-        self.sync_sessions_from_schedules().await?;
-        self.sync_submissions_from_attempts().await?;
-        self.refresh_session_counters().await?;
+        self.run_projection_cycle(GradingProjectionRequest::default())
+            .await?;
         Ok(())
     }
 
-    async fn sync_sessions_from_schedules(&self) -> Result<(), GradingError> {
-        let schedules = sqlx::query_as::<_, ScheduleSeedRow>(
-            r#"
-            SELECT
-                id,
-                exam_id,
-                exam_title,
-                published_version_id,
-                cohort_name,
-                institution,
-                start_time,
-                end_time,
-                status,
-                created_at,
-                created_by,
-                updated_at
-            FROM exam_schedules
-            ORDER BY start_time ASC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    async fn sync_sessions_from_schedules(
+        &self,
+        watermark: Option<DateTime<Utc>>,
+    ) -> Result<ScheduleSyncReport, GradingError> {
+        let schedules = if let Some(watermark) = watermark {
+            sqlx::query_as::<_, ScheduleSeedRow>(
+                r#"
+                SELECT
+                    id,
+                    exam_id,
+                    exam_title,
+                    published_version_id,
+                    cohort_name,
+                    institution,
+                    start_time,
+                    end_time,
+                    status,
+                    created_at,
+                    created_by,
+                    updated_at
+                FROM exam_schedules
+                WHERE updated_at >= ?
+                ORDER BY updated_at ASC, start_time ASC
+                "#,
+            )
+            .bind(watermark)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, ScheduleSeedRow>(
+                r#"
+                SELECT
+                    id,
+                    exam_id,
+                    exam_title,
+                    published_version_id,
+                    cohort_name,
+                    institution,
+                    start_time,
+                    end_time,
+                    status,
+                    created_at,
+                    created_by,
+                    updated_at
+                FROM exam_schedules
+                ORDER BY updated_at ASC, start_time ASC
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+        let mut rows_synced: u64 = 0;
+        let mut affected_schedule_ids = HashSet::new();
+        let mut max_updated_at: Option<DateTime<Utc>> = None;
 
         for schedule in schedules {
             let assigned_teachers = json!([]);
@@ -1060,36 +1234,113 @@ impl GradingService {
             .bind(schedule.updated_at)
             .execute(&self.pool)
             .await?;
+            rows_synced = rows_synced.saturating_add(1);
+            max_updated_at = Some(max_updated_at.map_or(schedule.updated_at, |current| {
+                current.max(schedule.updated_at)
+            }));
+            affected_schedule_ids.insert(schedule.id.to_string());
         }
 
-        Ok(())
+        Ok(ScheduleSyncReport {
+            rows_synced,
+            affected_schedule_ids,
+            max_updated_at,
+        })
     }
 
-    async fn sync_submissions_from_attempts(&self) -> Result<(), GradingError> {
-        let attempts = sqlx::query_as::<_, AttemptSubmissionRow>(
-            r#"
-            SELECT
-                a.id,
-                a.schedule_id,
-                a.exam_id,
-                a.published_version_id,
-                a.candidate_id,
-                a.candidate_name,
-                a.candidate_email,
-                s.cohort_name,
-                a.submitted_at,
-                a.final_submission,
-                v.content_snapshot,
-                v.config_snapshot
-            FROM student_attempts a
-            JOIN exam_schedules s ON s.id = a.schedule_id
-            JOIN exam_versions v ON v.id = a.published_version_id
-            WHERE a.final_submission IS NOT NULL
-            ORDER BY a.updated_at ASC
-            "#,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+    async fn sync_submissions_from_attempts(
+        &self,
+        watermark: Option<DateTime<Utc>>,
+        bootstrap_after: Option<DateTime<Utc>>,
+    ) -> Result<SubmissionSyncReport, GradingError> {
+        let attempts = if let Some(watermark) = watermark {
+            sqlx::query_as::<_, AttemptSubmissionRow>(
+                r#"
+                SELECT
+                    a.id,
+                    a.schedule_id,
+                    a.exam_id,
+                    a.published_version_id,
+                    a.candidate_id,
+                    a.candidate_name,
+                    a.candidate_email,
+                    s.cohort_name,
+                    a.submitted_at,
+                    a.final_submission,
+                    v.content_snapshot,
+                    v.config_snapshot,
+                    a.updated_at
+                FROM student_attempts a
+                JOIN exam_schedules s ON s.id = a.schedule_id
+                JOIN exam_versions v ON v.id = a.published_version_id
+                WHERE a.final_submission IS NOT NULL
+                  AND a.updated_at >= ?
+                ORDER BY a.updated_at ASC
+                "#,
+            )
+            .bind(watermark)
+            .fetch_all(&self.pool)
+            .await?
+        } else if let Some(bootstrap_after) = bootstrap_after {
+            sqlx::query_as::<_, AttemptSubmissionRow>(
+                r#"
+                SELECT
+                    a.id,
+                    a.schedule_id,
+                    a.exam_id,
+                    a.published_version_id,
+                    a.candidate_id,
+                    a.candidate_name,
+                    a.candidate_email,
+                    s.cohort_name,
+                    a.submitted_at,
+                    a.final_submission,
+                    v.content_snapshot,
+                    v.config_snapshot,
+                    a.updated_at
+                FROM student_attempts a
+                JOIN exam_schedules s ON s.id = a.schedule_id
+                JOIN exam_versions v ON v.id = a.published_version_id
+                WHERE a.final_submission IS NOT NULL
+                  AND a.updated_at >= ?
+                ORDER BY a.updated_at ASC
+                "#,
+            )
+            .bind(bootstrap_after)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, AttemptSubmissionRow>(
+                r#"
+                SELECT
+                    a.id,
+                    a.schedule_id,
+                    a.exam_id,
+                    a.published_version_id,
+                    a.candidate_id,
+                    a.candidate_name,
+                    a.candidate_email,
+                    s.cohort_name,
+                    a.submitted_at,
+                    a.final_submission,
+                    v.content_snapshot,
+                    v.config_snapshot,
+                    a.updated_at
+                FROM student_attempts a
+                JOIN exam_schedules s ON s.id = a.schedule_id
+                JOIN exam_versions v ON v.id = a.published_version_id
+                WHERE a.final_submission IS NOT NULL
+                ORDER BY a.updated_at ASC
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+        let mut submission_rows_synced: u64 = 0;
+        let mut section_rows_synced: u64 = 0;
+        let mut writing_task_rows_synced: u64 = 0;
+        let mut affected_schedule_ids = HashSet::new();
+        let mut max_updated_at: Option<DateTime<Utc>> = None;
 
         for attempt in attempts {
             let attempt_id = attempt.id.to_string();
@@ -1139,6 +1390,11 @@ impl GradingService {
             .bind(&section_statuses)
             .execute(&self.pool)
             .await?;
+            submission_rows_synced = submission_rows_synced.saturating_add(1);
+            affected_schedule_ids.insert(attempt.schedule_id.to_string());
+            max_updated_at = Some(max_updated_at.map_or(attempt.updated_at, |current| {
+                current.max(attempt.updated_at)
+            }));
 
             let submission = sqlx::query_as::<_, StudentSubmission>(
                 "SELECT * FROM student_submissions WHERE attempt_id = ?",
@@ -1147,16 +1403,27 @@ impl GradingService {
             .fetch_one(&self.pool)
             .await?;
 
-            self.ensure_section_submissions(
-                &submission,
-                &attempt.final_submission,
-                &attempt.content_snapshot,
-                &attempt.config_snapshot,
-            )
-            .await?;
+            let section_sync = self
+                .ensure_section_submissions(
+                    &submission,
+                    &attempt.final_submission,
+                    &attempt.content_snapshot,
+                    &attempt.config_snapshot,
+                )
+                .await?;
+            section_rows_synced =
+                section_rows_synced.saturating_add(section_sync.section_rows_synced);
+            writing_task_rows_synced =
+                writing_task_rows_synced.saturating_add(section_sync.writing_task_rows_synced);
         }
 
-        Ok(())
+        Ok(SubmissionSyncReport {
+            submission_rows_synced,
+            section_rows_synced,
+            writing_task_rows_synced,
+            affected_schedule_ids,
+            max_updated_at,
+        })
     }
 
     async fn ensure_section_submissions(
@@ -1165,7 +1432,7 @@ impl GradingService {
         final_submission: &Value,
         content_snapshot: &Value,
         config_snapshot: &Value,
-    ) -> Result<(), GradingError> {
+    ) -> Result<SectionSyncReport, GradingError> {
         let answers = final_submission
             .get("answers")
             .cloned()
@@ -1178,6 +1445,8 @@ impl GradingService {
         let answer_sections = build_objective_answer_sections(content_snapshot);
         let listening_answers = filter_answers_for_section(&answers, &answer_sections, "listening");
         let reading_answers = filter_answers_for_section(&answers, &answer_sections, "reading");
+        let mut section_rows_synced: u64 = 0;
+        let mut writing_task_rows_synced: u64 = 0;
 
         for (section, payload, status) in [
             (
@@ -1235,6 +1504,7 @@ impl GradingService {
             .bind(submitted_at)
             .execute(&self.pool)
             .await?;
+            section_rows_synced = section_rows_synced.saturating_add(1);
 
             if section == "writing" {
                 let tasks =
@@ -1279,19 +1549,41 @@ impl GradingService {
                     .bind(submitted_at)
                     .execute(&self.pool)
                     .await?;
+                    writing_task_rows_synced = writing_task_rows_synced.saturating_add(1);
                 }
             }
         }
 
-        Ok(())
+        Ok(SectionSyncReport {
+            section_rows_synced,
+            writing_task_rows_synced,
+        })
     }
 
-    async fn refresh_session_counters(&self) -> Result<(), GradingError> {
-        let rows = sqlx::query_as::<_, SessionCounterRow>(REFRESH_SESSION_COUNTERS_SQL)
-            .fetch_all(&self.pool)
+    async fn refresh_session_counters_for_schedules(
+        &self,
+        schedule_ids: &HashSet<String>,
+    ) -> Result<(), GradingError> {
+        for schedule_id in schedule_ids {
+            let row = sqlx::query_as::<_, SessionCounterRow>(
+                r#"
+                SELECT
+                    CAST(? AS CHAR(36)) AS schedule_id,
+                    COUNT(*) AS total_students,
+                    COUNT(*) AS submitted_count,
+                    COUNT(CASE WHEN grading_status IN ('submitted', 'reopened') THEN 1 END) AS pending_manual_reviews,
+                    COUNT(CASE WHEN grading_status = 'in_progress' THEN 1 END) AS in_progress_reviews,
+                    COUNT(CASE WHEN grading_status IN ('grading_complete', 'ready_to_release', 'released') THEN 1 END) AS finalized_reviews,
+                    COUNT(CASE WHEN is_overdue THEN 1 END) AS overdue_reviews
+                FROM student_submissions
+                WHERE schedule_id = ?
+                "#,
+            )
+            .bind(schedule_id)
+            .bind(schedule_id)
+            .fetch_one(&self.pool)
             .await?;
 
-        for row in rows {
             sqlx::query(
                 r#"
                 UPDATE grading_sessions
@@ -1306,13 +1598,13 @@ impl GradingService {
                 WHERE schedule_id = ?
                 "#,
             )
-            .bind(row.total_students as i32)
-            .bind(row.submitted_count as i32)
-            .bind(row.pending_manual_reviews as i32)
-            .bind(row.in_progress_reviews as i32)
-            .bind(row.finalized_reviews as i32)
-            .bind(row.overdue_reviews as i32)
-            .bind(row.schedule_id)
+            .bind((row.total_students.max(0)).clamp(0, i32::MAX as i64) as i32)
+            .bind((row.submitted_count.max(0)).clamp(0, i32::MAX as i64) as i32)
+            .bind((row.pending_manual_reviews.max(0)).clamp(0, i32::MAX as i64) as i32)
+            .bind((row.in_progress_reviews.max(0)).clamp(0, i32::MAX as i64) as i32)
+            .bind((row.finalized_reviews.max(0)).clamp(0, i32::MAX as i64) as i32)
+            .bind((row.overdue_reviews.max(0)).clamp(0, i32::MAX as i64) as i32)
+            .bind(&row.schedule_id)
             .execute(&self.pool)
             .await?;
         }
@@ -1320,22 +1612,6 @@ impl GradingService {
         Ok(())
     }
 }
-
-// MySQL returns `DECIMAL` for `SUM(...)` in many cases, which `sqlx` will not decode into `i64`.
-// Using `COUNT(CASE WHEN ... THEN 1 END)` keeps the column type as an integer while producing the
-// same result.
-const REFRESH_SESSION_COUNTERS_SQL: &str = r#"
-SELECT
-    schedule_id,
-    COUNT(*) AS total_students,
-    COUNT(*) AS submitted_count,
-    COUNT(CASE WHEN grading_status IN ('submitted', 'reopened') THEN 1 END) AS pending_manual_reviews,
-    COUNT(CASE WHEN grading_status = 'in_progress' THEN 1 END) AS in_progress_reviews,
-    COUNT(CASE WHEN grading_status IN ('grading_complete', 'ready_to_release', 'released') THEN 1 END) AS finalized_reviews,
-    COUNT(CASE WHEN is_overdue THEN 1 END) AS overdue_reviews
-FROM student_submissions
-GROUP BY schedule_id
-"#;
 
 #[derive(FromRow)]
 struct ScheduleSeedRow {
@@ -1367,17 +1643,40 @@ struct AttemptSubmissionRow {
     final_submission: Value,
     content_snapshot: Value,
     config_snapshot: Value,
+    updated_at: chrono::DateTime<Utc>,
 }
 
 #[derive(FromRow)]
 struct SessionCounterRow {
-    schedule_id: Hyphenated,
+    schedule_id: String,
     total_students: i64,
     submitted_count: i64,
     pending_manual_reviews: i64,
     in_progress_reviews: i64,
     finalized_reviews: i64,
     overdue_reviews: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SectionSyncReport {
+    section_rows_synced: u64,
+    writing_task_rows_synced: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScheduleSyncReport {
+    rows_synced: u64,
+    affected_schedule_ids: HashSet<String>,
+    max_updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct SubmissionSyncReport {
+    submission_rows_synced: u64,
+    section_rows_synced: u64,
+    writing_task_rows_synced: u64,
+    affected_schedule_ids: HashSet<String>,
+    max_updated_at: Option<DateTime<Utc>>,
 }
 
 fn map_schedule_status(status: ScheduleStatus) -> GradingSessionStatus {
@@ -1407,23 +1706,6 @@ fn writing_task_array(
             })
             .collect(),
     )
-}
-
-#[cfg(test)]
-mod refresh_session_counters_tests {
-    use super::REFRESH_SESSION_COUNTERS_SQL;
-
-    #[test]
-    fn refresh_session_counters_query_avoids_mysql_decimal_sum_type() {
-        assert!(
-            !REFRESH_SESSION_COUNTERS_SQL.contains("SUM("),
-            "SUM(...) frequently yields DECIMAL in MySQL, which breaks decoding into i64"
-        );
-        assert!(
-            REFRESH_SESSION_COUNTERS_SQL.contains("pending_manual_reviews"),
-            "sanity check: query should still compute pending_manual_reviews"
-        );
-    }
 }
 
 #[derive(Debug, Clone)]

@@ -53,6 +53,12 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   const [activeSection, setActiveSection] = useState<'listening' | 'reading' | 'writing' | 'speaking'>('reading');
   const [activeTask, setActiveTask] = useState<string>('task1');
   const [loading, setLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [sectionsLoading, setSectionsLoading] = useState(false);
+  const [sectionsError, setSectionsError] = useState<string | null>(null);
+  const [writingLoading, setWritingLoading] = useState(false);
+  const [writingError, setWritingError] = useState<string | null>(null);
+  const [draftError, setDraftError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const examLoadSeq = useRef(0);
   const [releaseAction, setReleaseAction] = useState<
@@ -113,54 +119,93 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   const loadData = useCallback(async () => {
     const seq = ++submissionLoadSeq.current;
     setLoading(true);
+    setSummaryError(null);
+    setSectionsLoading(false);
+    setSectionsError(null);
+    setWritingLoading(false);
+    setWritingError(null);
+    setDraftError(null);
     try {
-      const [subData, sectionsData, writingsData] = await Promise.all([
-        gradingRepository.getSubmissionById(submissionId),
-        gradingRepository.getSectionSubmissionsBySubmissionId(submissionId),
-        gradingRepository.getWritingSubmissionsBySubmissionId(submissionId)
-      ]);
+      const subData = await gradingRepository.getSubmissionById(submissionId);
 
       if (seq !== submissionLoadSeq.current) return;
+
+      if (!subData) {
+        setSubmission(null);
+        setSummaryError('Submission not found.');
+        return;
+      }
 
       setSubmission(subData);
-      setSectionSubmissions(sectionsData);
-      setWritingSubmissions(writingsData);
+      setLoading(false);
 
-      // Load or create review draft
-      const existingDraft = await gradingRepository.getReviewDraftBySubmission(submissionId);
-      if (seq !== submissionLoadSeq.current) return;
-
-      if (existingDraft) {
-        setReviewDraft(existingDraft);
-      } else if (
-        subData &&
-        ['submitted', 'in_progress', 'reopened'].includes(subData.gradingStatus)
-      ) {
-        const result = await gradingService.startReview(submissionId, currentTeacherId, currentTeacherName);
+      setSectionsLoading(true);
+      try {
+        const sectionsData = await gradingRepository.getSectionSubmissionsBySubmissionId(submissionId);
         if (seq !== submissionLoadSeq.current) return;
-        if (result.success && result.data) {
-          // Initialize with default checklist
-          const initializedDraft = {
-            ...result.data,
-            releaseStatus: 'draft' as ReleaseStatus,
-            drawings: [],
-            checklist: {
-              listeningReviewed: false,
-              readingReviewed: false,
-              writingTask1Reviewed: false,
-              writingTask2Reviewed: false,
-              speakingReviewed: false,
-              overallFeedbackWritten: false,
-              rubricComplete: false,
-              annotationsComplete: false
-            }
-          };
-          setReviewDraft(initializedDraft);
+        setSectionSubmissions(sectionsData);
+      } catch (error) {
+        if (seq !== submissionLoadSeq.current) return;
+        setSectionsError(error instanceof Error ? error.message : 'Failed to load section answers.');
+      } finally {
+        if (seq === submissionLoadSeq.current) {
+          setSectionsLoading(false);
         }
+      }
+
+      setWritingLoading(true);
+      try {
+        const writingsData = await gradingRepository.getWritingSubmissionsBySubmissionId(submissionId);
+        if (seq !== submissionLoadSeq.current) return;
+        setWritingSubmissions(writingsData);
+      } catch (error) {
+        if (seq !== submissionLoadSeq.current) return;
+        setWritingError(error instanceof Error ? error.message : 'Failed to load writing payload.');
+      } finally {
+        if (seq === submissionLoadSeq.current) {
+          setWritingLoading(false);
+        }
+      }
+
+      try {
+        const existingDraft = await gradingRepository.getReviewDraftBySubmission(submissionId);
+        if (seq !== submissionLoadSeq.current) return;
+
+        if (existingDraft) {
+          setReviewDraft(existingDraft);
+        } else if (
+          ['submitted', 'in_progress', 'reopened'].includes(subData.gradingStatus)
+        ) {
+          const result = await gradingService.startReview(submissionId, currentTeacherId, currentTeacherName);
+          if (seq !== submissionLoadSeq.current) return;
+          if (result.success && result.data) {
+            // Initialize with default checklist
+            const initializedDraft = {
+              ...result.data,
+              releaseStatus: 'draft' as ReleaseStatus,
+              drawings: [],
+              checklist: {
+                listeningReviewed: false,
+                readingReviewed: false,
+                writingTask1Reviewed: false,
+                writingTask2Reviewed: false,
+                speakingReviewed: false,
+                overallFeedbackWritten: false,
+                rubricComplete: false,
+                annotationsComplete: false
+              }
+            };
+            setReviewDraft(initializedDraft);
+          }
+        }
+      } catch (error) {
+        if (seq !== submissionLoadSeq.current) return;
+        setDraftError(error instanceof Error ? error.message : 'Failed to load review draft.');
       }
     } catch (error) {
       if (seq !== submissionLoadSeq.current) return;
-      logger.error('Failed to load submission:', error);
+      logger.error('Failed to load submission summary:', error);
+      setSummaryError(error instanceof Error ? error.message : 'Failed to load submission summary.');
     } finally {
       if (seq === submissionLoadSeq.current) {
         setLoading(false);
@@ -177,6 +222,12 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     setReviewDraft(null);
     setExamState(null);
     setExamError(null);
+    setSummaryError(null);
+    setSectionsLoading(false);
+    setSectionsError(null);
+    setWritingLoading(false);
+    setWritingError(null);
+    setDraftError(null);
     setActiveSection('reading');
     setActiveTask('task1');
     setSaving(false);
@@ -588,10 +639,20 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     return results;
   }, [getWritingPrompt, getWritingResponseText, reviewDraft, writingTasks]);
 
-  if (loading || !submission) {
+  if (loading) {
     return (
       <div className="h-full bg-gray-50">
         <SectionLoadingSkeleton message="Loading review workspace..." />
+      </div>
+    );
+  }
+
+  if (!submission) {
+    return (
+      <div className="h-full bg-gray-50 p-6">
+        <div className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {summaryError || 'Submission is unavailable.'}
+        </div>
       </div>
     );
   }
@@ -744,6 +805,15 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
           }
         }
       `}</style>
+      {(sectionsError || writingError || draftError) && (
+        <div className="px-6 pt-4">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 space-y-1">
+            {sectionsError && <p>Section payload error: {sectionsError}</p>}
+            {writingError && <p>Writing payload error: {writingError}</p>}
+            {draftError && <p>Draft payload error: {draftError}</p>}
+          </div>
+        </div>
+      )}
       <div className="writing-print-root">
         <div className="writing-print-summary">
           <h1>Writing Results</h1>
@@ -1011,6 +1081,12 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             {/* Section Header */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h2 className="text-xl font-bold text-gray-900 mb-2 capitalize">{activeSection}</h2>
+              {activeSection !== 'writing' && sectionsLoading && (
+                <p className="text-sm text-gray-500">Loading section answers...</p>
+              )}
+              {activeSection === 'writing' && writingLoading && (
+                <p className="text-sm text-gray-500">Loading writing payload...</p>
+              )}
               {currentSectionSubmission && (
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <Clock size={14} />

@@ -391,6 +391,8 @@ pub struct UploadIntent {
 pub struct GradingSessionDetail {
     pub session: GradingSession,
     pub submissions: Vec<StudentSubmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<GradingSessionPagination>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -400,6 +402,35 @@ pub struct SubmissionReviewBundle {
     pub sections: Vec<SectionSubmission>,
     pub writing_tasks: Vec<WritingTaskSubmission>,
     pub review_draft: Option<ReviewDraft>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GradingSessionPagination {
+    pub page: u64,
+    pub page_size: u64,
+    pub total: u64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewDraftSummary {
+    pub id: String,
+    pub submission_id: String,
+    pub teacher_id: String,
+    pub release_status: ReleaseStatus,
+    pub has_unsaved_changes: bool,
+    pub last_auto_save_at: Option<DateTime<Utc>>,
+    pub updated_at: DateTime<Utc>,
+    pub revision: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubmissionReviewSummary {
+    pub submission: StudentSubmission,
+    pub review_draft: Option<ReviewDraftSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

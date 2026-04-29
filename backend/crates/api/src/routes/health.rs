@@ -13,7 +13,8 @@ use crate::{
     state::AppState,
 };
 use ielts_backend_infrastructure::database_monitor::{
-    inspect_outbox_backlog, inspect_storage_budget, ping_database,
+    inspect_grading_projection_snapshot, inspect_outbox_backlog, inspect_storage_budget,
+    ping_database,
 };
 use ielts_backend_infrastructure::telemetry::ProcessMemoryProfile;
 
@@ -104,6 +105,10 @@ pub async fn metrics(
                 storage.level.as_label(),
                 storage.level.as_severity_code(),
             );
+        }
+
+        if let Ok(projection) = inspect_grading_projection_snapshot(&pool).await {
+            state.telemetry.sync_grading_projection_metrics(&projection);
         }
     }
 

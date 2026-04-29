@@ -50,6 +50,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         .connect(&database_url)
         .await?;
     let fallback_interval = Duration::from_secs(config.worker_fallback_interval_secs);
+    let projection_interval =
+        Duration::from_millis(config.grading_projection_interval_ms.max(1_000));
+    let cycle_interval = fallback_interval.min(projection_interval);
     let (shutdown_tx, _) = broadcast::channel(1);
     let maintenance_handle = spawn_maintenance_loop(
         pool.clone(),
@@ -61,13 +64,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     tracing::info!(
         legacy_poll_interval_ms = config.worker_poll_interval_ms,
         fallback_interval_secs = config.worker_fallback_interval_secs,
+        grading_projection_interval_ms = config.grading_projection_interval_ms,
+        cycle_interval_ms = cycle_interval.as_millis() as u64,
         max_connections = config.db_pool_max_connections,
         "worker started (MySQL mode - outbox notify listener disabled)"
     );
 
     let result: Result<(), sqlx::Error> = 'worker: loop {
         let trigger = tokio::select! {
-            _ = tokio::time::sleep(fallback_interval) => WorkerTrigger::Poll,
+            _ = tokio::time::sleep(cycle_interval) => WorkerTrigger::Poll,
             _ = shutdown_signal() => {
                 tracing::info!("worker received shutdown signal");
                 break 'worker Ok(());
@@ -97,6 +102,24 @@ async fn run_outbox_cycle(
     cycle_started: Instant,
 ) -> Result<(), sqlx::Error> {
     let outbox = drain_outbox_until_empty(pool.clone(), &config.live_mode_notify_channel).await?;
+    let projection = match jobs::grading_projection::run_once(pool.clone(), config).await {
+        Ok(report) => report,
+        Err(error) => {
+            let failures_total = jobs::grading_projection::record_failure(pool)
+                .await
+                .unwrap_or(0);
+            tracing::error!(
+                error = %error,
+                failures_total,
+                "grading projection cycle failed"
+            );
+            jobs::grading_projection::GradingProjectionRunReport {
+                enabled: config.grading_projection_enabled,
+                failures_total,
+                ..jobs::grading_projection::GradingProjectionRunReport::default()
+            }
+        }
+    };
     let storage_budget =
         inspect_storage_budget(pool, config.storage_budget_thresholds.clone()).await?;
     let retention = jobs::retention::run_once_with_config_and_budget(
@@ -116,6 +139,15 @@ async fn run_outbox_cycle(
         outbox_wakeups_notified = outbox.wakeups_notified,
         outbox_failed = outbox.failed,
         outbox_duration_ms = outbox.duration_ms,
+        grading_projection_enabled = projection.enabled,
+        grading_projection_schedule_rows = projection.schedule_rows_synced,
+        grading_projection_submission_rows = projection.submission_rows_synced,
+        grading_projection_section_rows = projection.section_rows_synced,
+        grading_projection_writing_rows = projection.writing_task_rows_synced,
+        grading_projection_affected_schedules = projection.affected_schedules,
+        grading_projection_lag_seconds = projection.lag_seconds,
+        grading_projection_failures_total = projection.failures_total,
+        grading_projection_duration_ms = projection.duration_ms,
         retention_total_rows = retention.total_rows(),
         retention_cache_rows = retention.cache_rows,
         retention_idempotency_rows = retention.idempotency_rows,
