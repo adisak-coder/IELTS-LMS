@@ -1,14 +1,14 @@
 -- Enforce idempotency identity per attempt regardless of client session.
 -- This complements application-layer duplicate detection and stale-session guards.
-DELETE m1
-FROM student_attempt_mutations m1
-JOIN student_attempt_mutations m2
-  ON m1.attempt_id = m2.attempt_id
- AND m1.client_mutation_id = m2.client_mutation_id
- AND (
-      m1.server_received_at > m2.server_received_at
-   OR (m1.server_received_at = m2.server_received_at AND m1.id > m2.id)
- );
+SET @dup_attempt_mutation_count := (
+    SELECT COUNT(*)
+    FROM (
+        SELECT 1
+        FROM student_attempt_mutations
+        GROUP BY attempt_id, client_mutation_id
+        HAVING COUNT(*) > 1
+    ) duplicate_groups
+);
 
 SET @idx_attempt_mut_exists := (
     SELECT COUNT(*)
@@ -18,7 +18,7 @@ SET @idx_attempt_mut_exists := (
       AND index_name = 'idx_student_attempt_mutations_attempt_mutation_id'
 );
 SET @idx_attempt_mut_sql := IF(
-    @idx_attempt_mut_exists = 0,
+    @idx_attempt_mut_exists = 0 AND @dup_attempt_mutation_count = 0,
     'CREATE UNIQUE INDEX idx_student_attempt_mutations_attempt_mutation_id ON student_attempt_mutations(attempt_id, client_mutation_id)',
     'SELECT 1'
 );

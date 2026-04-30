@@ -25,17 +25,15 @@ PREPARE idx_slots_stmt FROM @idx_slots_sql;
 EXECUTE idx_slots_stmt;
 DEALLOCATE PREPARE idx_slots_stmt;
 
--- Normalize legacy duplicate mutation rows before enforcing uniqueness.
-DELETE m1
-FROM student_attempt_mutations m1
-JOIN student_attempt_mutations m2
-  ON m1.attempt_id = m2.attempt_id
- AND m1.client_session_id = m2.client_session_id
- AND m1.client_mutation_id = m2.client_mutation_id
- AND (
-      m1.server_received_at > m2.server_received_at
-   OR (m1.server_received_at = m2.server_received_at AND m1.id > m2.id)
- );
+SET @dup_session_mutation_count := (
+    SELECT COUNT(*)
+    FROM (
+        SELECT 1
+        FROM student_attempt_mutations
+        GROUP BY attempt_id, client_session_id, client_mutation_id
+        HAVING COUNT(*) > 1
+    ) duplicate_groups
+);
 
 SET @idx_session_mut_exists := (
     SELECT COUNT(*)
@@ -45,7 +43,7 @@ SET @idx_session_mut_exists := (
       AND index_name = 'idx_student_attempt_mutations_attempt_session_mutation_id'
 );
 SET @idx_session_mut_sql := IF(
-    @idx_session_mut_exists = 0,
+    @idx_session_mut_exists = 0 AND @dup_session_mutation_count = 0,
     'CREATE UNIQUE INDEX idx_student_attempt_mutations_attempt_session_mutation_id ON student_attempt_mutations(attempt_id, client_session_id, client_mutation_id)',
     'SELECT 1'
 );

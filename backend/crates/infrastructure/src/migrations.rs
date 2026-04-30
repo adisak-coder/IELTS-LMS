@@ -4,35 +4,53 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use sqlx::{Executor, MySqlPool};
+use sqlx::{Executor, MySqlConnection, MySqlPool};
 
 const ROLE_MIGRATION: &str = "0001_roles.sql";
+const STARTUP_MIGRATIONS_LOCK_NAME: &str = "ielts_backend_startup_migrations_lock";
+const STARTUP_MIGRATIONS_LOCK_TIMEOUT_SECS: i32 = 300;
 
 pub async fn run_startup_migrations(
     pool: &MySqlPool,
     migrations_dir: &Path,
 ) -> Result<(), sqlx::Error> {
+    let mut conn = pool.acquire().await?;
+    acquire_startup_migration_lock(conn.as_mut()).await?;
+    let run_result = run_startup_migrations_on_connection(conn.as_mut(), migrations_dir).await;
+    let release_result = release_startup_migration_lock(conn.as_mut()).await;
+
+    match (run_result, release_result) {
+        (Err(run_err), _) => Err(run_err),
+        (Ok(()), Ok(())) => Ok(()),
+        (Ok(()), Err(release_err)) => Err(release_err),
+    }
+}
+
+async fn run_startup_migrations_on_connection(
+    conn: &mut MySqlConnection,
+    migrations_dir: &Path,
+) -> Result<(), sqlx::Error> {
     let migrations = load_migrations(migrations_dir).map_err(sqlx::Error::Io)?;
 
-    ensure_schema_migrations_table(pool).await?;
-    maybe_backfill_schema_migrations(pool, &migrations).await?;
+    ensure_schema_migrations_table(conn).await?;
+    maybe_backfill_schema_migrations(conn, &migrations).await?;
 
     // Note: Role management removed - MySQL uses standard user management
     // The 0001_roles.sql migration is now a no-op comment file
-    if !is_migration_applied(pool, ROLE_MIGRATION).await? {
-        record_migration(pool, ROLE_MIGRATION).await?;
+    if !is_migration_applied(conn, ROLE_MIGRATION).await? {
+        record_migration(conn, ROLE_MIGRATION).await?;
     }
 
     for migration in migrations {
         if migration.filename == ROLE_MIGRATION
-            || is_migration_applied(pool, &migration.filename).await?
+            || is_migration_applied(conn, &migration.filename).await?
         {
             continue;
         }
 
         let sql = sanitize_migration_sql(&migration.sql);
-        pool.execute(sql.as_ref()).await?;
-        record_migration(pool, &migration.filename).await?;
+        conn.execute(sql.as_ref()).await?;
+        record_migration(conn, &migration.filename).await?;
     }
 
     Ok(())
@@ -73,8 +91,8 @@ fn load_migrations(migrations_dir: &Path) -> std::io::Result<Vec<MigrationFile>>
     Ok(entries)
 }
 
-async fn ensure_schema_migrations_table(pool: &MySqlPool) -> Result<(), sqlx::Error> {
-    pool.execute(
+async fn ensure_schema_migrations_table(conn: &mut MySqlConnection) -> Result<(), sqlx::Error> {
+    conn.execute(
         "create table if not exists schema_migrations (filename varchar(255) primary key, applied_at timestamp not null default current_timestamp)",
     )
     .await?;
@@ -82,16 +100,16 @@ async fn ensure_schema_migrations_table(pool: &MySqlPool) -> Result<(), sqlx::Er
 }
 
 async fn maybe_backfill_schema_migrations(
-    pool: &MySqlPool,
+    conn: &mut MySqlConnection,
     migrations: &[MigrationFile],
 ) -> Result<(), sqlx::Error> {
     let recorded_count: i64 = sqlx::query_scalar("select count(*) from schema_migrations")
-        .fetch_one(pool)
+        .fetch_one(&mut *conn)
         .await?;
     let existing_tables: i64 = sqlx::query_scalar(
         "select count(*) from information_schema.tables where table_schema = DATABASE() and table_name <> 'schema_migrations'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await?;
 
     if recorded_count != 0 || existing_tables == 0 {
@@ -100,21 +118,21 @@ async fn maybe_backfill_schema_migrations(
 
     // Drop all existing tables if schema exists without migration history
     // Disable foreign key checks to allow dropping tables with dependencies
-    pool.execute("SET FOREIGN_KEY_CHECKS = 0").await?;
+    conn.execute("SET FOREIGN_KEY_CHECKS = 0").await?;
 
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name <> 'schema_migrations'"
     )
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await?;
 
     for table in &tables {
         let drop_sql = format!("DROP TABLE IF EXISTS `{}`", table);
-        pool.execute(drop_sql.as_str()).await?;
+        conn.execute(drop_sql.as_str()).await?;
     }
 
     // Re-enable foreign key checks
-    pool.execute("SET FOREIGN_KEY_CHECKS = 1").await?;
+    conn.execute("SET FOREIGN_KEY_CHECKS = 1").await?;
 
     // Return early since we dropped all tables and will run fresh migrations
     Ok(())
@@ -123,21 +141,53 @@ async fn maybe_backfill_schema_migrations(
 // Note: ensure_roles_if_possible removed - MySQL uses standard user management
 // Note: roles_exist removed - MySQL uses standard user management
 
-async fn is_migration_applied(pool: &MySqlPool, filename: &str) -> Result<bool, sqlx::Error> {
+async fn is_migration_applied(conn: &mut MySqlConnection, filename: &str) -> Result<bool, sqlx::Error> {
     let value: Option<i32> =
         sqlx::query_scalar("select 1 from schema_migrations where filename = ?")
             .bind(filename)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await?;
     Ok(value.is_some())
 }
 
-async fn record_migration(pool: &MySqlPool, filename: &str) -> Result<(), sqlx::Error> {
+async fn record_migration(conn: &mut MySqlConnection, filename: &str) -> Result<(), sqlx::Error> {
     sqlx::query("insert ignore into schema_migrations (filename) values (?)")
         .bind(filename)
-        .execute(pool)
+        .execute(&mut *conn)
         .await?;
     Ok(())
+}
+
+async fn acquire_startup_migration_lock(conn: &mut MySqlConnection) -> Result<(), sqlx::Error> {
+    let lock_state: Option<i8> = sqlx::query_scalar("SELECT GET_LOCK(?, ?)")
+        .bind(STARTUP_MIGRATIONS_LOCK_NAME)
+        .bind(STARTUP_MIGRATIONS_LOCK_TIMEOUT_SECS)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    match lock_state {
+        Some(1) => Ok(()),
+        Some(0) => Err(sqlx::Error::Protocol(
+            "Timed out waiting for startup migration advisory lock.".to_owned(),
+        )),
+        _ => Err(sqlx::Error::Protocol(
+            "Failed to acquire startup migration advisory lock.".to_owned(),
+        )),
+    }
+}
+
+async fn release_startup_migration_lock(conn: &mut MySqlConnection) -> Result<(), sqlx::Error> {
+    let lock_state: Option<i8> = sqlx::query_scalar("SELECT RELEASE_LOCK(?)")
+        .bind(STARTUP_MIGRATIONS_LOCK_NAME)
+        .fetch_one(&mut *conn)
+        .await?;
+
+    match lock_state {
+        Some(1) | Some(0) | None => Ok(()),
+        _ => Err(sqlx::Error::Protocol(
+            "Failed to release startup migration advisory lock.".to_owned(),
+        )),
+    }
 }
 
 fn sanitize_migration_sql<'a>(sql: &'a str) -> Cow<'a, str> {
