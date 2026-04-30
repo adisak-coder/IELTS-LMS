@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS student_attempt_answer_slots (
         FOREIGN KEY (attempt_id) REFERENCES student_attempts(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_student_attempt_answer_slots_attempt_question
+CREATE INDEX idx_student_attempt_answer_slots_attempt_question
     ON student_attempt_answer_slots(attempt_id, question_id, slot_index);
 
 CREATE UNIQUE INDEX idx_student_attempt_mutations_attempt_session_mutation_id
