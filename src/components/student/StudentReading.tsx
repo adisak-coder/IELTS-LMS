@@ -11,6 +11,7 @@ import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 import type { StimulusAnnotation } from '../../types';
 import { formatQuestionRange } from './questionRangeLabel';
+import { useSplitPaneResize } from './useSplitPaneResize';
 
 interface StudentReadingProps {
   state: ExamState;
@@ -40,9 +41,12 @@ export function StudentReading({
   tabletMode = false,
 }: StudentReadingProps) {
   const isTabletMode = Boolean(tabletMode);
-  const [leftWidth, setLeftWidth] = useState(40);
   const [collapsedInstructions, setCollapsedInstructions] = useState<Record<string, boolean>>({});
   const questionContainerRef = useRef<HTMLDivElement>(null);
+  const { handleDrag, setPresetWidth, splitPaneStyle, workspaceRef } = useSplitPaneResize({
+    isTabletMode,
+    materialPaneWidthProperty: '--reading-pane-width',
+  });
   const allQuestions = useMemo(() => getStudentQuestionsForModule(state, 'reading'), [state]);
   const currentQ = allQuestions.find((question) => question.id === currentQuestionId) || allQuestions[0];
   const activePassageId = currentQ?.groupId || state.reading.passages[0]?.id;
@@ -57,15 +61,6 @@ export function StudentReading({
   const hasNext = currentIndex >= 0 && currentIndex < allQuestions.length - 1;
   const previousQuestion = hasPrev ? allQuestions[currentIndex - 1] : undefined;
   const nextQuestion = hasNext ? allQuestions[currentIndex + 1] : undefined;
-  const splitPaneStyle = useMemo(
-    () =>
-      ({
-        ['--reading-pane-width' as string]: `${leftWidth}%`,
-        ['--question-pane-width' as string]: `calc(${100 - leftWidth}% - 16px)`,
-      }) as React.CSSProperties,
-    [leftWidth],
-  );
-
   const renderBlockInstruction = (blockId: string, instruction: string) => {
     const isLong = instruction.trim().length > 140;
     const isCollapsed = isLong && collapsedInstructions[blockId] !== false;
@@ -178,31 +173,6 @@ export function StudentReading({
     }
   }, [currentQuestionId]);
   
-  const handleDrag = (e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    const handleMouseMove = (e: MouseEvent | TouchEvent) => {
-      const firstTouch = 'touches' in e ? e.touches[0] : undefined;
-      if ('touches' in e && !firstTouch) {
-        return;
-      }
-      const clientX = firstTouch ? firstTouch.clientX : (e as MouseEvent).clientX;
-      const newWidth = (clientX / window.innerWidth) * 100;
-      if (newWidth >= 20 && newWidth <= 80) {
-        setLeftWidth(newWidth);
-      }
-    };
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.removeEventListener('touchmove', handleMouseMove);
-      document.removeEventListener('touchend', handleMouseUp);
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-      document.addEventListener('touchmove', handleMouseMove);
-      document.addEventListener('touchend', handleMouseUp);
-    };
-
   if (!activePassage) {
     return null;
   }
@@ -213,12 +183,13 @@ export function StudentReading({
         className={`relative flex flex-1 overflow-hidden border-t border-gray-300 ${
           isTabletMode ? 'flex-row' : 'flex-col md:flex-row'
         }`}
+        ref={workspaceRef}
         style={splitPaneStyle}
         data-testid="reading-split-workspace"
       >
         <div
           className={`h-full w-full overflow-y-auto p-4 pr-4 font-sans text-gray-900 md:p-6 md:pr-6 ${
-            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[220px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
+            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[180px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           style={{
             fontSize: 'var(--student-passage-font-size)',
@@ -226,6 +197,19 @@ export function StudentReading({
           }}
           data-student-zoom-scroll
         >
+          {isTabletMode ? (
+            <div className="mb-3 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-1 shadow-sm" data-testid="reading-split-presets">
+              <button type="button" onClick={() => setPresetWidth(60)} className="flex h-9 w-9 items-center justify-center rounded bg-white text-gray-700 shadow-sm active:bg-gray-100" title="Material wider" aria-label="Set split to material wider">
+                <ArrowRight size={15} />
+              </button>
+              <button type="button" onClick={() => setPresetWidth(50)} className="flex h-9 w-9 items-center justify-center rounded bg-white text-gray-700 shadow-sm active:bg-gray-100" title="Equal split" aria-label="Set split to equal">
+                <ArrowLeftRight size={15} />
+              </button>
+              <button type="button" onClick={() => setPresetWidth(40)} className="flex h-9 w-9 items-center justify-center rounded bg-white text-gray-700 shadow-sm active:bg-gray-100" title="Answers wider" aria-label="Set split to answers wider">
+                <ArrowLeft size={15} />
+              </button>
+            </div>
+          ) : null}
           <h2 className="mb-4 font-bold leading-tight text-gray-950 md:mb-6" style={{ fontSize: 'var(--student-passage-title-font-size)' }}>
             {activePassage.title}
           </h2>
@@ -267,7 +251,7 @@ export function StudentReading({
           </div>
         </div>
 
-        <div className={`relative flex h-full min-w-0 flex-col md:min-w-[320px] min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)]' : 'w-full lg:w-[var(--question-pane-width)]'}`}>
+        <div className={`relative flex h-full min-w-0 flex-col min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)] min-w-[280px]' : 'w-full md:min-w-[320px] lg:w-[var(--question-pane-width)]'}`}>
           <div
             className={`flex-1 overflow-y-auto p-4 md:p-5 lg:p-8 pb-20 md:pb-24 space-y-6 md:space-y-8 ${
               isTabletMode ? 'pb-28 md:pb-28' : ''

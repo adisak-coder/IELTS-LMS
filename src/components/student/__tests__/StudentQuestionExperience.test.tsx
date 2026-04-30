@@ -502,15 +502,38 @@ describe('student question experience', () => {
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
       '--reading-pane-width': '40%',
-      '--question-pane-width': 'calc(60% - 16px)',
+      '--question-pane-width': 'calc(60% - var(--split-divider-width))',
+      '--split-divider-width': '32px',
     });
     expect(screen.getByTestId('reading-pane-resizer')).toBeInTheDocument();
     expect(screen.getByTestId('reading-pane-resizer')).toHaveClass('w-8');
-    expect(screen.queryByRole('button', { name: /material wider/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /equal/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /answers wider/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /set split to material wider/i })).toHaveClass('h-9');
+    expect(screen.getByRole('button', { name: /set split to equal/i })).toHaveClass('h-9');
+    expect(screen.getByRole('button', { name: /set split to answers wider/i })).toHaveClass('h-9');
+    expect(screen.queryByText('Material wider')).not.toBeInTheDocument();
+    expect(screen.queryByText('Equal')).not.toBeInTheDocument();
+    expect(screen.queryByText('Answers wider')).not.toBeInTheDocument();
     expect(screen.queryByText(/select passage text to highlight it/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
+
+    vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 100,
+      right: 900,
+      top: 0,
+      width: 800,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.mouseDown(screen.getByTestId('reading-pane-resizer'), { clientX: 420 });
+    fireEvent.mouseMove(document, { clientX: 580 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--reading-pane-width': '60%',
+      '--question-pane-width': 'calc(40% - var(--split-divider-width))',
+    });
   });
 
   it('shows a single reading question number without a repeated range', () => {
@@ -1235,18 +1258,41 @@ describe('student question experience', () => {
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
       '--listening-pane-width': '40%',
-      '--question-pane-width': 'calc(60% - 16px)',
+      '--question-pane-width': 'calc(60% - var(--split-divider-width))',
+      '--split-divider-width': '32px',
     });
     expect(screen.getByTestId('listening-pane-resizer')).toBeInTheDocument();
     expect(screen.queryByText(/staff instructions/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
     expect(screen.queryByText(longInstruction.trim())).not.toBeInTheDocument();
     expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('w-8');
-    expect(screen.queryByRole('button', { name: /material wider/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /equal/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /answers wider/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /set split to material wider/i })).toHaveClass('h-9');
+    expect(screen.getByRole('button', { name: /set split to equal/i })).toHaveClass('h-9');
+    expect(screen.getByRole('button', { name: /set split to answers wider/i })).toHaveClass('h-9');
+    expect(screen.queryByText('Material wider')).not.toBeInTheDocument();
+    expect(screen.queryByText('Equal')).not.toBeInTheDocument();
+    expect(screen.queryByText('Answers wider')).not.toBeInTheDocument();
     expect(screen.queryByText(/select reference text to highlight it/i)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
+
+    vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 100,
+      right: 900,
+      top: 0,
+      width: 800,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.mouseDown(screen.getByTestId('listening-pane-resizer'), { clientX: 420 });
+    fireEvent.mouseMove(document, { clientX: 580 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--listening-pane-width': '60%',
+      '--question-pane-width': 'calc(40% - var(--split-divider-width))',
+    });
   });
 
   it('places listening diagram material on the left and answers on the right', () => {

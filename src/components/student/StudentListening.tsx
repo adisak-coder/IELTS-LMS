@@ -9,6 +9,7 @@ import { RichTextHighlighter } from './RichTextHighlighter';
 import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
+import { useSplitPaneResize } from './useSplitPaneResize';
 
 interface StudentListeningProps {
   state: ExamState;
@@ -100,10 +101,13 @@ export function StudentListening({
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(70);
-  const [leftWidth, setLeftWidth] = useState(40);
   const [diagramZoom, setDiagramZoom] = useState(1);
   const questionContainerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const { handleDrag, setPresetWidth, splitPaneStyle, workspaceRef } = useSplitPaneResize({
+    isTabletMode,
+    materialPaneWidthProperty: '--listening-pane-width',
+  });
   const allQuestions = useMemo(() => getStudentQuestionsForModule(state, 'listening'), [state]);
   const currentQ = allQuestions.find((question) => question.id === currentQuestionId) || allQuestions[0];
   const activePart = useMemo(() => {
@@ -132,14 +136,6 @@ export function StudentListening({
   const hasNext = currentIndex >= 0 && currentIndex < allQuestions.length - 1;
   const previousQuestion = hasPrev ? allQuestions[currentIndex - 1] : undefined;
   const nextQuestion = hasNext ? allQuestions[currentIndex + 1] : undefined;
-  const splitPaneStyle = useMemo(
-    () =>
-      ({
-        ['--listening-pane-width' as string]: `${leftWidth}%`,
-        ['--question-pane-width' as string]: `calc(${100 - leftWidth}% - 16px)`,
-      }) as React.CSSProperties,
-    [leftWidth],
-  );
   const audioPlaybackEnabled = state.config.sections.listening.audioPlaybackEnabled ?? true;
   const activeTranscript = ((activePart as { transcript?: string | undefined }).transcript ?? '').trim();
   const hasAudioSource = Boolean(activePart?.audioUrl);
@@ -230,31 +226,6 @@ export function StudentListening({
     setIsPlaying(false);
   };
   
-  const handleDrag = (e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
-    const handleMouseMove = (e: MouseEvent | TouchEvent) => {
-      const firstTouch = 'touches' in e ? e.touches[0] : undefined;
-      if ('touches' in e && !firstTouch) {
-        return;
-      }
-      const clientX = firstTouch ? firstTouch.clientX : (e as MouseEvent).clientX;
-      const newWidth = (clientX / window.innerWidth) * 100;
-      if (newWidth >= 20 && newWidth <= 80) {
-        setLeftWidth(newWidth);
-      }
-    };
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.removeEventListener('touchmove', handleMouseMove);
-      document.removeEventListener('touchend', handleMouseUp);
-    };
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-    document.addEventListener('touchmove', handleMouseMove);
-    document.addEventListener('touchend', handleMouseUp);
-  };
-
   const formatTime = (seconds: number) => {
     const bounded = Math.max(0, Math.floor(seconds));
     const m = Math.floor(bounded / 60);
@@ -277,15 +248,29 @@ export function StudentListening({
         className={`relative flex flex-1 overflow-hidden border-t border-gray-300 ${
           isTabletMode ? 'flex-row' : 'flex-col md:flex-row'
         }`}
+        ref={workspaceRef}
         style={splitPaneStyle}
         data-testid="listening-split-workspace"
       >
         <div
           className={`h-full w-full overflow-y-auto p-4 pr-4 font-sans text-sm leading-relaxed text-gray-900 md:p-6 md:pr-6 md:text-base ${
-            isTabletMode ? 'w-[var(--listening-pane-width)] min-w-[220px] border-r border-gray-200' : 'lg:w-[var(--listening-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
+            isTabletMode ? 'w-[var(--listening-pane-width)] min-w-[180px] border-r border-gray-200' : 'lg:w-[var(--listening-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           data-student-zoom-scroll
         >
+          {isTabletMode ? (
+            <div className="mb-3 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-1 shadow-sm" data-testid="listening-split-presets">
+              <button type="button" onClick={() => setPresetWidth(60)} className="flex h-9 w-9 items-center justify-center rounded bg-white text-gray-700 shadow-sm active:bg-gray-100" title="Material wider" aria-label="Set split to material wider">
+                <ArrowRight size={15} />
+              </button>
+              <button type="button" onClick={() => setPresetWidth(50)} className="flex h-9 w-9 items-center justify-center rounded bg-white text-gray-700 shadow-sm active:bg-gray-100" title="Equal split" aria-label="Set split to equal">
+                <ArrowLeftRight size={15} />
+              </button>
+              <button type="button" onClick={() => setPresetWidth(40)} className="flex h-9 w-9 items-center justify-center rounded bg-white text-gray-700 shadow-sm active:bg-gray-100" title="Answers wider" aria-label="Set split to answers wider">
+                <ArrowLeft size={15} />
+              </button>
+            </div>
+          ) : null}
           <h2 className="text-lg md:text-xl font-bold mb-4 md:mb-6">{activePart.title}</h2>
 
           {canPlayAudio ? (
@@ -445,7 +430,7 @@ export function StudentListening({
           </div>
         </div>
 
-        <div className={`relative flex h-full min-w-0 flex-col md:min-w-[320px] min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)]' : 'w-full lg:w-[var(--question-pane-width)]'}`}>
+        <div className={`relative flex h-full min-w-0 flex-col min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)] min-w-[280px]' : 'w-full md:min-w-[320px] lg:w-[var(--question-pane-width)]'}`}>
           <div
             className={`flex-1 overflow-y-auto p-4 md:p-5 lg:p-8 pb-20 md:pb-24 space-y-6 md:space-y-8 ${
               isTabletMode ? 'pb-28 md:pb-28' : ''
