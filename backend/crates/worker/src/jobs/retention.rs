@@ -117,31 +117,45 @@ pub async fn run_once_with_config_and_budget(
     .execute(&pool)
     .await?
     .rows_affected();
-    let mutation_rows = sqlx::query(
+    let retention_mutation_days = config.retention_mutation_days.max(0);
+    let mutation_rows = match sqlx::query(
         r#"
         DELETE FROM student_attempt_mutations
-        WHERE COALESCE(applied_at, server_received_at) < DATE_SUB(NOW(), INTERVAL ? DAY)
+        WHERE server_received_at < DATE_SUB(NOW(), INTERVAL ? DAY)
+          AND (applied_at IS NULL OR applied_at < DATE_SUB(NOW(), INTERVAL ? DAY))
           AND (
-              attempt_id IN (
-                  SELECT id
+              EXISTS (
+                  SELECT 1
                   FROM student_attempts
-                  WHERE submitted_at IS NOT NULL
+                  WHERE id = student_attempt_mutations.attempt_id
+                    AND submitted_at IS NOT NULL
               )
-              OR schedule_id IN (
-                  SELECT id
+              OR EXISTS (
+                  SELECT 1
                   FROM exam_schedules
-                  WHERE status IN ('completed', 'cancelled')
+                  WHERE id = student_attempt_mutations.schedule_id
+                    AND status IN ('completed', 'cancelled')
               )
           )
-        ORDER BY COALESCE(applied_at, server_received_at) ASC
         LIMIT ?
         "#,
     )
-    .bind(config.retention_mutation_days.max(0))
+    .bind(retention_mutation_days)
+    .bind(retention_mutation_days)
     .bind(cleanup_batch_limit)
     .execute(&pool)
-    .await?
-    .rows_affected();
+    .await
+    {
+        Ok(result) => result.rows_affected(),
+        Err(error) if is_transient_cleanup_error(&error) => {
+            tracing::warn!(
+                error = %error,
+                "skipping mutation retention batch due transient lock contention"
+            );
+            0
+        }
+        Err(error) => return Err(error),
+    };
     let outbox_rows = outbox.purge_published(cleanup_batch_limit).await?;
 
     Ok(RetentionRunReport {
@@ -169,6 +183,15 @@ fn cache_grace_hours(config: &AppConfig, storage_budget_level: StorageBudgetLeve
         StorageBudgetLevel::Normal => config.retention_shared_cache_grace_hours.max(0),
         StorageBudgetLevel::Warning => config.retention_shared_cache_grace_hours.min(1).max(0),
         StorageBudgetLevel::HighWater | StorageBudgetLevel::Critical => 0,
+    }
+}
+
+fn is_transient_cleanup_error(error: &sqlx::Error) -> bool {
+    match error {
+        sqlx::Error::Database(db_error) => {
+            matches!(db_error.code().as_deref(), Some("1205" | "1213"))
+        }
+        _ => false,
     }
 }
 

@@ -5,7 +5,7 @@ use std::{
 
 use ielts_backend_infrastructure::{
     config::AppConfig,
-    database_monitor::{inspect_storage_budget, StorageBudgetLevel},
+    database_monitor::{inspect_storage_budget, StorageBudgetLevel, StorageBudgetSnapshot},
 };
 use ielts_backend_worker::jobs;
 use sqlx::mysql::MySqlPoolOptions;
@@ -120,15 +120,38 @@ async fn run_outbox_cycle(
             }
         }
     };
-    let storage_budget =
-        inspect_storage_budget(pool, config.storage_budget_thresholds.clone()).await?;
-    let retention = jobs::retention::run_once_with_config_and_budget(
+    let storage_budget = match inspect_storage_budget(
+        pool,
+        config.storage_budget_thresholds.clone(),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            tracing::warn!(error = %error, "storage budget probe failed; defaulting to normal budget for this cycle");
+            fallback_storage_budget_snapshot()
+        }
+    };
+    let retention = match jobs::retention::run_once_with_config_and_budget(
         pool.clone(),
         config,
         storage_budget.level,
     )
-    .await?;
-    let media = jobs::media::run_once(pool.clone()).await?;
+    .await
+    {
+        Ok(report) => report,
+        Err(error) => {
+            tracing::warn!(error = %error, "retention cycle failed; continuing worker cycle");
+            jobs::retention::RetentionRunReport::default()
+        }
+    };
+    let media = match jobs::media::run_once(pool.clone()).await {
+        Ok(report) => report,
+        Err(error) => {
+            tracing::warn!(error = %error, "media cleanup failed; continuing worker cycle");
+            jobs::media::MediaRunReport::default()
+        }
+    };
     log_storage_budget_snapshot(&storage_budget);
 
     tracing::info!(
@@ -287,6 +310,14 @@ fn log_storage_budget_snapshot(
             largest_relations = ?snapshot.largest_relations,
             "storage budget critical threshold reached"
         ),
+    }
+}
+
+fn fallback_storage_budget_snapshot() -> StorageBudgetSnapshot {
+    StorageBudgetSnapshot {
+        total_bytes: 0,
+        level: StorageBudgetLevel::Normal,
+        largest_relations: Vec::new(),
     }
 }
 

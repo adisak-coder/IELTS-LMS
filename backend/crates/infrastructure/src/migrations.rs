@@ -156,7 +156,10 @@ async fn maybe_backfill_schema_migrations(
 // Note: ensure_roles_if_possible removed - MySQL uses standard user management
 // Note: roles_exist removed - MySQL uses standard user management
 
-async fn is_migration_applied(conn: &mut MySqlConnection, filename: &str) -> Result<bool, sqlx::Error> {
+async fn is_migration_applied(
+    conn: &mut MySqlConnection,
+    filename: &str,
+) -> Result<bool, sqlx::Error> {
     let value: Option<i32> =
         sqlx::query_scalar("select 1 from schema_migrations where filename = ?")
             .bind(filename)

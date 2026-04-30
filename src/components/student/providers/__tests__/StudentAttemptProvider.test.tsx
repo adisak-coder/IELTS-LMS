@@ -526,6 +526,38 @@ describe('StudentAttemptProvider', () => {
     );
   });
 
+  it('persists slot identity metadata for slot-scoped answer mutations', async () => {
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      result.current.actions.persistAnswer(
+        'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+        ['239', 'WOLF', 'BIRD'],
+        {
+          slotIndex: 1,
+          slotId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd:blank-b',
+          slotCount: 3,
+        },
+      );
+    });
+
+    await waitFor(() => {
+      expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalled();
+    });
+
+    const pendingMutations = vi
+      .mocked(studentAttemptRepository.savePendingMutations)
+      .mock.calls.at(-1)?.[1];
+
+    expect(pendingMutations).toHaveLength(1);
+    expect(pendingMutations?.[0]?.payload).toMatchObject({
+      questionId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+      slotIndex: 1,
+      slotId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd:blank-b',
+      slotCount: 3,
+    });
+  });
+
   it('flushes pending mutations before submitting the attempt', async () => {
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
@@ -757,6 +789,25 @@ describe('StudentAttemptProvider', () => {
 
     expect(second.result.current.state.pendingMutationCount).toBe(1);
     expect(second.result.current.state.attemptId).toBe('attempt-1');
+  });
+
+  it('does not generate autosave mutations when hydrating existing answers', async () => {
+    const hydratedAttempt: StudentAttempt = {
+      ...createAttemptSnapshot(),
+      answers: {
+        'blk-af811567-c9aa-4a4d-8775-44b529b499fd': ['cat', 'dog', 'bird'],
+      },
+      currentQuestionId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+    };
+
+    renderHook(() => useStudentAttempt(), { wrapper: createWrapper(hydratedAttempt) });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(studentAttemptRepository.savePendingMutations).not.toHaveBeenCalled();
+    expect(studentAttemptRepository.saveAttempt).not.toHaveBeenCalled();
   });
 
   it('hydrates proctor warnings even while local mutations are pending', async () => {

@@ -234,6 +234,49 @@ describe('student question experience', () => {
     expect(screen.queryByText(/limit:/i)).not.toBeInTheDocument();
   });
 
+  it('updates only the edited sentence-completion slot and preserves sibling values', () => {
+    const onChange = vi.fn();
+    const question = {
+      id: 'sentence-1',
+      sentence: 'The library is open ____ and ____.',
+      blanks: [
+        { id: 'blank-1', correctAnswer: 'daily', position: 0 },
+        { id: 'blank-2', correctAnswer: 'late', position: 1 },
+      ],
+      answerRule: 'TWO_WORDS' as const,
+    };
+
+    const block: SentenceCompletionBlock = {
+      id: 'sentence-block-1',
+      type: 'SENTENCE_COMPLETION',
+      instruction: 'Complete the sentence.',
+      questions: [question],
+    };
+
+    render(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={7}
+        answer={['cat', 'bird']}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Answer for question 7' }), {
+      target: { value: 'wolf' },
+    });
+
+    expect(onChange).toHaveBeenCalledWith(
+      ['wolf', 'bird'],
+      expect.objectContaining({
+        slotIndex: 0,
+        slotId: 'sentence-block-1:0',
+        slotCount: 2,
+      }),
+    );
+  });
+
   it('renders diagram-labeling answers below a sticky diagram reference', () => {
     const onChange = vi.fn();
     const block: DiagramLabelingBlock = {
@@ -272,7 +315,14 @@ describe('student question experience', () => {
       target: { value: 'wheel' },
     });
 
-    expect(onChange).toHaveBeenCalledWith(['existing', 'wheel']);
+    expect(onChange).toHaveBeenCalledWith(
+      ['existing', 'wheel'],
+      expect.objectContaining({
+        slotIndex: 1,
+        slotId: 'diagram-1:label-b',
+        slotCount: 2,
+      }),
+    );
   });
 
   it('shows diagram-labeling fallback fields with top prompts and supports custom label text', () => {

@@ -1069,6 +1069,455 @@ describe('StudentApp runtime-backed mode', () => {
     });
   });
 
+  it('deduplicates rapid Finish clicks while a runtime-backed flush is already in-flight', async () => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-02T00:00:00.000Z',
+        },
+      ]),
+    );
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const config = createDefaultConfig('Academic', 'Academic');
+    config.security.requireFullscreen = false;
+    config.security.detectSecondaryScreen = false;
+    config.progression.autoSubmit = false;
+    config.progression.unansweredSubmissionPolicy = 'allow';
+    config.sections.listening.enabled = false;
+    config.sections.writing.enabled = false;
+    config.sections.speaking.enabled = false;
+
+    const examState: ExamState = {
+      title: 'Submit Exam',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'p1',
+      activeListeningPartId: 'l1',
+      config,
+      reading: {
+        passages: [
+          {
+            id: 'p1',
+            title: 'Passage 1',
+            content: 'Seeded passage',
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question using one word from the passage.',
+                questions: [
+                  {
+                    id: 'q1',
+                    prompt: 'Question 1',
+                    correctAnswer: 'seeded answer',
+                    answerRule: 'ONE_WORD',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: {
+        task1Prompt: 'Task 1 prompt',
+        task2Prompt: 'Task 2 prompt',
+      },
+      speaking: {
+        part1Topics: [],
+        cueCard: '',
+        part3Discussion: [],
+      },
+    };
+
+    const runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: 'sched-1',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'reading',
+      currentSectionKey: 'reading',
+      currentSectionRemainingSeconds: 600,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'reading',
+          label: 'Reading',
+          order: 1,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'reading',
+      currentQuestionId: 'q1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      integrity: {
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: true,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        lastDroppedMutations: null,
+        pendingMutationCount: 1,
+        serverAcceptedThroughSeq: 0,
+        clientSessionId: null,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    vi.spyOn(studentAttemptRepository as any, 'getPendingMutations').mockResolvedValue([
+      {
+        id: 'mutation-1',
+        attemptId: attemptSnapshot.id,
+        scheduleId: attemptSnapshot.scheduleId,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        type: 'answer',
+        payload: {
+          questionId: 'q1',
+          value: 'seeded answer',
+          module: 'reading',
+        },
+      },
+    ]);
+
+    let resolveSave: (() => void) | null = null;
+    const saveAttempt = vi
+      .spyOn(studentAttemptRepository as any, 'saveAttempt')
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSave = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+
+    render(
+      <StudentAppWrapper
+        state={examState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={runtimeSnapshot}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+
+    const finishButton = screen.getByRole('button', { name: 'Finish' });
+    fireEvent.click(finishButton);
+    fireEvent.click(finishButton);
+
+    await waitFor(() => {
+      expect(saveAttempt).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      resolveSave?.();
+      await Promise.resolve();
+    });
+  });
+
+  it('does not trigger duplicate runtime auto-submit while the first zero-timer flush is still in-flight', async () => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-02T00:00:00.000Z',
+        },
+      ]),
+    );
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const config = createDefaultConfig('Academic', 'Academic');
+    config.security.requireFullscreen = false;
+    config.security.detectSecondaryScreen = false;
+    config.progression.autoSubmit = true;
+
+    const examState: ExamState = {
+      ...state,
+      config,
+      activeModule: 'reading',
+      reading: {
+        passages: [
+          {
+            id: 'p1',
+            title: 'Passage 1',
+            content: 'Seeded passage',
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question using one word from the passage.',
+                questions: [
+                  {
+                    id: 'q1',
+                    prompt: 'Question 1',
+                    correctAnswer: 'seeded answer',
+                    answerRule: 'ONE_WORD',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: 'sched-1',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'reading',
+      currentSectionKey: 'reading',
+      currentSectionRemainingSeconds: 1,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'reading',
+          label: 'Reading',
+          order: 1,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'reading',
+      currentQuestionId: 'q1',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      integrity: {
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: true,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        lastDroppedMutations: null,
+        pendingMutationCount: 1,
+        serverAcceptedThroughSeq: 0,
+        clientSessionId: null,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    vi.spyOn(studentAttemptRepository as any, 'getPendingMutations').mockResolvedValue([
+      {
+        id: 'mutation-1',
+        attemptId: attemptSnapshot.id,
+        scheduleId: attemptSnapshot.scheduleId,
+        timestamp: '2026-01-01T00:00:00.000Z',
+        type: 'answer',
+        payload: {
+          questionId: 'q1',
+          value: 'seeded answer',
+          module: 'reading',
+        },
+      },
+    ]);
+
+    let resolveSave: (() => void) | null = null;
+    const saveAttempt = vi
+      .spyOn(studentAttemptRepository as any, 'saveAttempt')
+      .mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            resolveSave = resolve;
+          }),
+      )
+      .mockResolvedValue(undefined);
+
+    const { rerender } = render(
+      <StudentAppWrapper
+        state={examState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={runtimeSnapshot}
+      />,
+    );
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+
+    const atZeroSnapshot = {
+      ...runtimeSnapshot,
+      currentSectionRemainingSeconds: 0,
+      updatedAt: '2026-01-01T00:00:01.000Z',
+    };
+    rerender(
+      <StudentAppWrapper
+        state={examState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={atZeroSnapshot}
+      />,
+    );
+
+    rerender(
+      <StudentAppWrapper
+        state={examState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={{
+          ...atZeroSnapshot,
+          updatedAt: '2026-01-01T00:00:02.000Z',
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(saveAttempt).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      resolveSave?.();
+      await Promise.resolve();
+    });
+  });
+
   it('retries auto-submit when flushing pending mutations fails', async () => {
     vi.useFakeTimers();
     window.sessionStorage.clear();

@@ -933,27 +933,74 @@ function toOperationCommand(
     const slotIndex = mutation.payload['slotIndex'];
     const rawValue = mutation.payload['value'];
     if (typeof slotIndex === 'number' && Number.isInteger(slotIndex) && slotIndex >= 0) {
-      const slotValue =
-        Array.isArray(rawValue) && slotIndex < rawValue.length
-          ? rawValue[slotIndex]
-          : rawValue;
-      if (typeof slotValue === 'string' && slotValue.trim()) {
+      if (Array.isArray(rawValue)) {
+        // Guard against partial/unloaded slot payloads so missing indices never become accidental clears.
+        if (slotIndex >= rawValue.length) {
+          return null;
+        }
+        const slotValue = rawValue[slotIndex];
+        if (typeof slotValue === 'string') {
+          if (slotValue.trim().length > 0) {
+            return {
+              mutationId: mutation.id,
+              baseRevision,
+              type: 'SetSlot',
+              questionId,
+              slotIndex,
+              value: slotValue,
+            };
+          }
+          return {
+            mutationId: mutation.id,
+            baseRevision,
+            type: 'ClearSlot',
+            questionId,
+            slotIndex,
+          };
+        }
+        if (slotValue === null) {
+          return {
+            mutationId: mutation.id,
+            baseRevision,
+            type: 'ClearSlot',
+            questionId,
+            slotIndex,
+          };
+        }
+        return null;
+      }
+
+      if (typeof rawValue === 'string') {
+        if (rawValue.trim().length > 0) {
+          return {
+            mutationId: mutation.id,
+            baseRevision,
+            type: 'SetSlot',
+            questionId,
+            slotIndex,
+            value: rawValue,
+          };
+        }
         return {
           mutationId: mutation.id,
           baseRevision,
-          type: 'SetSlot',
+          type: 'ClearSlot',
           questionId,
           slotIndex,
-          value: slotValue,
         };
       }
-      return {
-        mutationId: mutation.id,
-        baseRevision,
-        type: 'ClearSlot',
-        questionId,
-        slotIndex,
-      };
+
+      if (rawValue === null) {
+        return {
+          mutationId: mutation.id,
+          baseRevision,
+          type: 'ClearSlot',
+          questionId,
+          slotIndex,
+        };
+      }
+
+      return null;
     }
 
     if (Array.isArray(rawValue)) {

@@ -378,6 +378,125 @@ describe('studentAttemptRepository backend mode', () => {
     expect(cachedAttempts[0]?.answers).toEqual({ q1: 'A' });
   });
 
+  it('maps an explicitly cleared slot to a ClearSlot command', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: null,
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          attempt: buildBackendAttempt({
+            answers: { 'q-slot': ['cat', ''] },
+            updatedAt: '2026-01-01T09:01:00.000Z',
+            revision: 2,
+          }),
+          appliedMutationCount: 1,
+          serverAcceptedThroughSeq: 1,
+        }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    await studentAttemptRepository.savePendingMutations(attempt.id, [
+      {
+        id: 'mutation-clear-slot',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: '2026-01-01T09:00:30.000Z',
+        type: 'answer',
+        payload: {
+          questionId: 'q-slot',
+          slotIndex: 1,
+          value: ['cat', ''],
+        },
+      },
+    ]);
+
+    await studentAttemptRepository.saveAttempt({
+      ...attempt,
+      answers: { 'q-slot': ['cat', ''] },
+    });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(payload.mutations).toEqual([
+      expect.objectContaining({
+        mutationId: 'mutation-clear-slot',
+        type: 'ClearSlot',
+        questionId: 'q-slot',
+        slotIndex: 1,
+        baseRevision: 1,
+      }),
+    ]);
+  });
+
+  it('skips slot mutations when the targeted slot value is missing from payload', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        schedule: buildSchedule(),
+        version: buildVersion(),
+        runtime: null,
+        attempt: buildBackendAttempt(),
+        attemptCredential: buildAttemptCredential(),
+        degradedLiveMode: false,
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    await studentAttemptRepository.savePendingMutations(attempt.id, [
+      {
+        id: 'mutation-missing-slot',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: '2026-01-01T09:00:30.000Z',
+        type: 'answer',
+        payload: {
+          questionId: 'q-slot',
+          slotIndex: 2,
+          value: ['cat'],
+        },
+      },
+    ]);
+
+    await studentAttemptRepository.saveAttempt({
+      ...attempt,
+      answers: { 'q-slot': ['cat'] },
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await studentAttemptRepository.getPendingMutations(attempt.id)).toEqual([]);
+  });
+
   it('preserves local pending answers when an ack-only flush starts from a stale backend snapshot', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
     const fetchMock = vi.fn().mockResolvedValueOnce(
@@ -588,6 +707,60 @@ describe('studentAttemptRepository backend mode', () => {
       toModule: 'reading',
       reason: 'SECTION_MISMATCH',
     });
+  });
+
+  it('marks the local attempt unsynced and preserves pending mutations on ACTIVE_SESSION_SUPERSEDED', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: null,
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonConflict('ACTIVE_SESSION_SUPERSEDED', 'Another active session already holds write ownership.'),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    const pendingMutation: StudentAttemptMutation = {
+      id: 'mutation-1',
+      attemptId: attempt.id,
+      scheduleId: attempt.scheduleId,
+      timestamp: '2026-01-01T09:00:30.000Z',
+      type: 'answer',
+      payload: { questionId: 'q1', value: 'A' },
+    };
+    await studentAttemptRepository.savePendingMutations(attempt.id, [pendingMutation]);
+
+    await expect(
+      studentAttemptRepository.saveAttempt({
+        ...attempt,
+        answers: { q1: 'A' },
+      }),
+    ).rejects.toThrow();
+
+    expect(await studentAttemptRepository.getPendingMutations(attempt.id)).toEqual([pendingMutation]);
+
+    const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
+    expect(cachedAttempts[0]?.recovery.syncState).toBe('error');
   });
 
   it('refreshes attempt credentials and retries once on 401 during mutation flush', async () => {
