@@ -341,7 +341,7 @@ describe('student question experience', () => {
     expect(onChange).toHaveBeenCalledWith(['existing', 'wheel']);
   });
 
-  it('shows diagram-labeling fallback fields with top prompts and supports custom label text', () => {
+  it('shows diagram-labeling fallback fields with label prompts', () => {
     const block: DiagramLabelingBlock = {
       id: 'diagram-1',
       type: 'DIAGRAM_LABELING',
@@ -366,38 +366,8 @@ describe('student question experience', () => {
     expect(screen.getByText(/image url is missing or inaccessible/i)).toBeInTheDocument();
     const firstAnswer = screen.getByRole('textbox', { name: 'Answer for question 12' });
     expect(screen.getByRole('textbox', { name: 'Answer for question 13' })).toBeInTheDocument();
-    const customPrompt = screen.getByText('Engine label');
-    expect(customPrompt.compareDocumentPosition(firstAnswer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByText(/^Label 1$/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/label 1/i)).toBeInTheDocument();
     expect(screen.getByText(/label 2/i)).toBeInTheDocument();
-  });
-
-  it('can render diagram-labeling answers without duplicating the diagram reference', () => {
-    const block: DiagramLabelingBlock = {
-      id: 'diagram-1',
-      type: 'DIAGRAM_LABELING',
-      instruction: 'Label the diagram.',
-      imageUrl: '/diagram.jpg',
-      labels: [
-        { id: 'label-a', x: 25, y: 35, correctAnswer: 'engine' },
-        { id: 'label-b', x: 70, y: 62, correctAnswer: 'wheel' },
-      ],
-    };
-
-    render(
-      <QuestionRenderer
-        question={null}
-        block={block}
-        number={12}
-        answer={['', '']}
-        onChange={() => {}}
-        hideDiagramReference
-      />,
-    );
-
-    expect(screen.queryByAltText('Diagram reference')).not.toBeInTheDocument();
-    expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Answer for question 12' })).toBeInTheDocument();
   });
 
   it('can render diagram-labeling answers without duplicating the diagram reference', () => {
@@ -1348,7 +1318,7 @@ describe('student question experience', () => {
     expect(screen.queryByText(/listening audio track/i)).toBeNull();
   });
 
-  it('keeps listening split-screen side by side in tablet mode and hides instruction clutter', () => {
+  it('keeps listening split-screen side by side in tablet mode and shows question instructions', () => {
     const longInstruction = 'Answer the question using the words you hear. '.repeat(6);
     const state: ExamState = {
       title: 'Listening Test',
@@ -1424,7 +1394,7 @@ describe('student question experience', () => {
     expect(screen.getByTestId('listening-pane-resizer')).toBeInTheDocument();
     expect(screen.queryByText(/staff instructions/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(longInstruction.trim())).not.toBeInTheDocument();
+    expect(screen.getByText(/answer the question using the words you hear/i)).toBeInTheDocument();
     expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('w-11');
     expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('absolute');
     expect(screen.getByTestId('listening-pane-resizer').querySelector('.w-14')).toBeInTheDocument();

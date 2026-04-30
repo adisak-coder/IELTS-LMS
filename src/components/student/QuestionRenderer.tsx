@@ -53,6 +53,7 @@ interface QuestionRendererProps {
   flags?: Record<string, boolean> | undefined;
   onToggleFlag?: ((id: string) => void) | undefined;
   tabletMode?: boolean | undefined;
+  compactPane?: boolean | undefined;
   highlightEnabled?: boolean | undefined;
   highlightColor?: StudentHighlightColor | undefined;
   security?: {
@@ -76,6 +77,7 @@ export function QuestionRenderer({
   flags = {},
   onToggleFlag,
   tabletMode = false,
+  compactPane = false,
   highlightEnabled = false,
   highlightColor,
   security = { preventAutofill: false, preventAutocorrect: false },
@@ -84,8 +86,9 @@ export function QuestionRenderer({
   hideDiagramReference = false,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
+  const isCompactPane = tabletMode && compactPane;
   const fieldIndentClass = tabletMode ? 'ml-0' : 'ml-9';
-  const inputWidthClass = tabletMode ? 'max-w-full' : 'max-w-md';
+  const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
 
   const getSlotId = (index: number, fallback: string) => slotIds[index] ?? fallback;
   const getSlotClassName = (slotId: string) => {
@@ -134,7 +137,7 @@ export function QuestionRenderer({
     extraCopyPosition: 'top' | 'bottom' = 'bottom',
   ) => (
     <div id={`question-${slotId}`} className={getSlotClassName(slotId)}>
-      <div className="flex items-center gap-3">
+      <div className={isCompactPane ? 'flex flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
         <span className="min-w-[2rem] font-bold text-gray-900">{slotNumber}.</span>
         <ProtectedInput
           type="text"
@@ -244,7 +247,7 @@ export function QuestionRenderer({
         <select
           value={typeof answer === 'string' ? answer : ''}
           onChange={(event) => onChange(event.target.value)}
-          className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${tabletMode ? 'max-w-full' : 'max-w-xs'}`}
+          className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-xs'}`}
           aria-label={`Heading selection for question ${number}`}
         >
           <option value="">Choose heading…</option>
@@ -454,7 +457,7 @@ export function QuestionRenderer({
                     name={getSlotId(index, `${q.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`w-28 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${tabletMode ? 'max-w-full' : ''}`}
+                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -496,7 +499,7 @@ export function QuestionRenderer({
                     name={getSlotId(index, `${noteQuestion.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`w-28 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${tabletMode ? 'max-w-full' : ''}`}
+                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -523,15 +526,19 @@ export function QuestionRenderer({
             stringArrayAnswer[index] ?? '',
             (nextValue) => updateIndexedAnswer(index, nextValue, diagramBlock.labels.length),
             `Label ${index + 1}`,
-          ),
-        )}
-      </div>
+          )}
+        </React.Fragment>
+      ))}
     </div>
   );
 
   const renderDiagramLabeling = (diagramBlock: DiagramLabelingBlock) => {
     const sources = getImageUrlCandidates(diagramBlock.imageUrl ?? '');
     const hasImage = Boolean(sources[0]);
+
+    if (hideDiagramReference) {
+      return renderDiagramFallbackFields(diagramBlock);
+    }
 
     return (
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)] lg:items-start">
@@ -590,7 +597,7 @@ export function QuestionRenderer({
 
     return (
       <div className="overflow-x-auto rounded-2xl border border-gray-200">
-        <table className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
+        <table className={`w-full border-collapse text-sm ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
           <thead className="bg-gray-50">
             <tr>
               {tableBlock.headers.map((header, index) => (
@@ -663,7 +670,7 @@ export function QuestionRenderer({
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, classificationBlock.items.length)}
-                    className="min-w-[11rem] rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Category selection for question ${number + index}`}
                   >
                     <option value="">Choose category…</option>
@@ -699,7 +706,7 @@ export function QuestionRenderer({
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, matchingFeaturesBlock.features.length)}
-                    className="min-w-[11rem] rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                    className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Matching selection for question ${number + index}`}
                   >
                     <option value="">Choose match…</option>

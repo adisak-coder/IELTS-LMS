@@ -5,6 +5,7 @@ import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft,
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
+import { FormattedText } from './FormattedText';
 import { RichTextHighlighter } from './RichTextHighlighter';
 import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
@@ -281,74 +282,6 @@ export function StudentListening({
     );
   };
 
-  const renderBlockInsertedImages = (block: QuestionBlock) => {
-    if (!supportsInsertedImages(block)) {
-      return null;
-    }
-
-    const insertedImages = getInsertedImages(block).filter((image) => image.url.trim());
-    if (insertedImages.length === 0) {
-      return null;
-    }
-
-    return (
-      <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
-        {insertedImages.map((image, index) => {
-          const caption = image.caption?.trim() ?? '';
-          return (
-            <div key={image.id || `${block.id}-inserted-image-${index}`} className="space-y-1">
-              <StudentZoomableMedia
-                sources={getImageUrlCandidates(image.url)}
-                alt={caption || `Question reference image ${index + 1}`}
-                label={`Question reference image ${index + 1}`}
-                hint="Tap to zoom the image"
-                className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
-                imageClassName="max-h-[56dvh]"
-              />
-              {caption ? (
-                <p className="text-xs text-gray-600">{caption}</p>
-              ) : null}
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
-
-  const renderInstructionLevelReferenceImage = (block: QuestionBlock) => {
-    if (!isInstructionReferencePlacement(block)) {
-      return null;
-    }
-
-    if (block.type === 'MAP') {
-      return (
-        <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
-          <StudentZoomableMedia
-            sources={getImageUrlCandidates(block.assetUrl ?? '')}
-            alt="Map reference"
-            label="Map reference image"
-            hint="Tap to zoom the map"
-            className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
-            imageClassName="max-h-[56dvh]"
-          />
-        </div>
-      );
-    }
-
-    return (
-      <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
-        <StudentZoomableMedia
-          sources={getImageUrlCandidates(block.imageUrl ?? '')}
-          alt="Diagram reference"
-          label="Diagram reference image"
-          hint="Tap to zoom the diagram"
-          className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
-          imageClassName="max-h-[56dvh]"
-        />
-      </div>
-    );
-  };
-
   if (!activePart) {
     return null;
   }
@@ -570,6 +503,7 @@ export function StudentListening({
                     <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
                       Questions {formatQuestionRange(blockStartQ, blockEndQ)}
                     </h3>
+                    {renderBlockInstruction(block.instruction)}
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8'}>
