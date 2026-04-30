@@ -318,6 +318,70 @@ describe('useProctorRouteController backend mode', () => {
     });
   });
 
+  it('keeps all-cohorts view when selection is cleared manually', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/proctor/sessions') {
+          return jsonResponse([
+            {
+              schedule: buildSchedule(),
+              runtime: buildRuntime(),
+              studentCount: 1,
+              activeCount: 1,
+              alertCount: 1,
+              violationCount: 0,
+              degradedLiveMode: false,
+            },
+            {
+              schedule: buildSchedule2(),
+              runtime: buildRuntime2(),
+              studentCount: 1,
+              activeCount: 1,
+              alertCount: 0,
+              violationCount: 0,
+              degradedLiveMode: false,
+            },
+          ]);
+        }
+
+        if (url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100') {
+          return jsonResponse(buildDetail());
+        }
+
+        if (url === '/api/v1/proctor/sessions/sched-2?mode=dashboard&auditLimit=200&alertLimit=100') {
+          return jsonResponse(buildDetail2());
+        }
+
+        return jsonFailure(`Unhandled ${url}`);
+      });
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.selectedScheduleId).toBe('sched-1');
+    });
+
+    await act(async () => {
+      result.current.setSelectedScheduleId(null);
+    });
+
+    await waitFor(() => {
+      expect(result.current.selectedScheduleId).toBeNull();
+    });
+
+    await act(async () => {
+      await result.current.reload();
+    });
+
+    await waitFor(() => {
+      expect(result.current.selectedScheduleId).toBeNull();
+    });
+  });
+
   it('hydrates roster, alerts, and audit data through the backend proctor endpoints', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
     const fetchMock = vi
