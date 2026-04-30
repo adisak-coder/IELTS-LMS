@@ -185,6 +185,10 @@ function sortAlertsByTimestamp(left: ProctorAlert, right: ProctorAlert) {
 }
 
 function getLiveUpdateScheduleId(event: LiveUpdateEvent): string | null {
+  if (event.scheduleId) {
+    return event.scheduleId;
+  }
+
   if (event.kind === 'schedule_runtime' || event.kind === 'schedule_roster' || event.kind === 'schedule_alert') {
     return event.id;
   }
@@ -238,31 +242,31 @@ export function useProctorRouteController(): ProctorRouteController {
   const [selectedScheduleId, setSelectedScheduleId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [pollIntervalMs, setPollIntervalMs] = useState(4_000);
+  const [summaryPollIntervalMs, setSummaryPollIntervalMs] = useState(4_000);
+  const [detailPollIntervalMs, setDetailPollIntervalMs] = useState(6_000);
   const scheduleStudentIdsRef = useRef<Map<string, Set<string>>>(new Map());
 
-  const summariesQuery = useProctorSessionSummaries(pollIntervalMs);
+  const summariesQuery = useProctorSessionSummaries(summaryPollIntervalMs);
   const summaries = summariesQuery.data ?? [];
-  const detailScheduleIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const summary of summaries) {
-      const status = summary.runtime?.status;
-      if (status === 'live' || status === 'paused') {
-        ids.add(summary.schedule.id);
-      }
+  useEffect(() => {
+    if (!selectedScheduleId && summaries.length > 0) {
+      setSelectedScheduleId(summaries[0].schedule.id);
     }
-    if (selectedScheduleId) {
-      ids.add(selectedScheduleId);
-    }
-    return [...ids].sort();
   }, [selectedScheduleId, summaries]);
+
+  const detailScheduleIds = useMemo(() => {
+    if (!selectedScheduleId) {
+      return [];
+    }
+    return [selectedScheduleId];
+  }, [selectedScheduleId]);
 
   const detailQueryState = useQueries({
     queries: detailScheduleIds.map((scheduleId) => ({
       queryKey: queryKeys.proctoring.detail(scheduleId),
       queryFn: () => fetchProctorSessionDetail(scheduleId),
       ...liveQueryPolicy,
-      refetchInterval: pollIntervalMs,
+      refetchInterval: detailPollIntervalMs,
     })),
     combine: (results) => ({
       details: results
@@ -284,7 +288,8 @@ export function useProctorRouteController(): ProctorRouteController {
         setAuditLogs([]);
         setNotes([]);
         setViolationRules([]);
-        setPollIntervalMs(4_000);
+        setSummaryPollIntervalMs(4_000);
+        setDetailPollIntervalMs(6_000);
         return;
       }
 
@@ -299,7 +304,9 @@ export function useProctorRouteController(): ProctorRouteController {
         };
       }
 
-      setPollIntervalMs(nextSummaries.some((summary) => summary.degradedLiveMode) ? 1_000 : 4_000);
+      const degradedMode = nextSummaries.some((summary) => summary.degradedLiveMode);
+      setSummaryPollIntervalMs(degradedMode ? 2_000 : 4_000);
+      setDetailPollIntervalMs(degradedMode ? 3_000 : 6_000);
       setScheduleMetrics(metrics);
       setSchedules(nextSummaries.map((summary) => mapBackendSchedule(summary.schedule)));
       setRuntimeSnapshots(
@@ -415,7 +422,10 @@ export function useProctorRouteController(): ProctorRouteController {
     [refresh, refreshSchedule, selectedScheduleId],
   );
 
-  useLiveUpdates({ onEvent: handleLiveUpdate });
+  useLiveUpdates({
+    ...(selectedScheduleId ? { scheduleId: selectedScheduleId } : {}),
+    onEvent: handleLiveUpdate,
+  });
 
   const handleStartScheduledSession = useCallback(
     async (scheduleId: string) => {

@@ -16,6 +16,9 @@ use tokio::sync::broadcast;
 #[derive(Clone)]
 pub struct LiveUpdateHub {
     sender: broadcast::Sender<LiveUpdateEvent>,
+    schedule_senders: Arc<Mutex<HashMap<String, broadcast::Sender<LiveUpdateEvent>>>>,
+    attempt_senders: Arc<Mutex<HashMap<String, broadcast::Sender<LiveUpdateEvent>>>>,
+    topic_channel_capacity: usize,
     connection_count: Arc<AtomicI64>,
     connection_cap: i64,
     user_connections: Arc<Mutex<HashMap<String, usize>>>,
@@ -47,6 +50,9 @@ impl LiveUpdateHub {
         let (sender, _) = broadcast::channel(256);
         Self {
             sender,
+            schedule_senders: Arc::new(Mutex::new(HashMap::new())),
+            attempt_senders: Arc::new(Mutex::new(HashMap::new())),
+            topic_channel_capacity: 64,
             connection_count: Arc::new(AtomicI64::new(0)),
             connection_cap: i64::try_from(config.websocket_connection_cap).unwrap_or(i64::MAX),
             user_connections: Arc::new(Mutex::new(HashMap::new())),
@@ -57,11 +63,91 @@ impl LiveUpdateHub {
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<LiveUpdateEvent> {
+        self.subscribe_all()
+    }
+
+    pub fn subscribe_all(&self) -> broadcast::Receiver<LiveUpdateEvent> {
         self.sender.subscribe()
     }
 
+    fn subscribe_topic(
+        &self,
+        topics: &Arc<Mutex<HashMap<String, broadcast::Sender<LiveUpdateEvent>>>>,
+        topic_key: &str,
+    ) -> broadcast::Receiver<LiveUpdateEvent> {
+        let sender = {
+            let mut guard = topics.lock().unwrap();
+            guard.retain(|_, sender| sender.receiver_count() > 0);
+            if let Some(existing) = guard.get(topic_key) {
+                existing.clone()
+            } else {
+                let (topic_sender, _) = broadcast::channel(self.topic_channel_capacity);
+                guard.insert(topic_key.to_owned(), topic_sender.clone());
+                topic_sender
+            }
+        };
+        sender.subscribe()
+    }
+
+    pub fn subscribe_schedule(&self, schedule_id: &str) -> broadcast::Receiver<LiveUpdateEvent> {
+        self.subscribe_topic(&self.schedule_senders, schedule_id)
+    }
+
+    pub fn subscribe_attempt(&self, attempt_id: &str) -> broadcast::Receiver<LiveUpdateEvent> {
+        self.subscribe_topic(&self.attempt_senders, attempt_id)
+    }
+
+    fn cleanup_topic(
+        &self,
+        topics: &Arc<Mutex<HashMap<String, broadcast::Sender<LiveUpdateEvent>>>>,
+        topic_key: &str,
+    ) {
+        let mut guard = topics.lock().unwrap();
+        if guard
+            .get(topic_key)
+            .is_some_and(|sender| sender.receiver_count() == 0)
+        {
+            guard.remove(topic_key);
+        }
+    }
+
+    pub fn cleanup_schedule_topic_if_idle(&self, schedule_id: &str) {
+        self.cleanup_topic(&self.schedule_senders, schedule_id);
+    }
+
+    pub fn cleanup_attempt_topic_if_idle(&self, attempt_id: &str) {
+        self.cleanup_topic(&self.attempt_senders, attempt_id);
+    }
+
+    fn publish_to_topic(
+        &self,
+        topics: &Arc<Mutex<HashMap<String, broadcast::Sender<LiveUpdateEvent>>>>,
+        topic_key: &str,
+        event: LiveUpdateEvent,
+    ) {
+        let sender = { topics.lock().unwrap().get(topic_key).cloned() };
+        if let Some(sender) = sender {
+            let _ = sender.send(event);
+            if sender.receiver_count() == 0 {
+                self.cleanup_topic(topics, topic_key);
+            }
+        }
+    }
+
     pub fn publish(&self, event: LiveUpdateEvent) {
-        let _ = self.sender.send(event);
+        let _ = self.sender.send(event.clone());
+        let topic_key = event.id.clone();
+
+        if matches!(
+            event.kind.as_str(),
+            "schedule_runtime" | "schedule_roster" | "schedule_alert"
+        ) {
+            self.publish_to_topic(&self.schedule_senders, &topic_key, event.clone());
+        }
+
+        if event.kind == "attempt" {
+            self.publish_to_topic(&self.attempt_senders, &topic_key, event);
+        }
     }
 
     pub fn connection_opened(&self, user_id: &str) -> i64 {
@@ -126,6 +212,24 @@ impl LiveUpdateHub {
             }
         }
     }
+
+    #[cfg(test)]
+    fn topic_count(
+        &self,
+        topics: &Arc<Mutex<HashMap<String, broadcast::Sender<LiveUpdateEvent>>>>,
+    ) -> usize {
+        topics.lock().unwrap().len()
+    }
+
+    #[cfg(test)]
+    fn schedule_topic_count(&self) -> usize {
+        self.topic_count(&self.schedule_senders)
+    }
+
+    #[cfg(test)]
+    fn attempt_topic_count(&self) -> usize {
+        self.topic_count(&self.attempt_senders)
+    }
 }
 
 pub fn spawn_postgres_listener(
@@ -141,6 +245,7 @@ pub fn spawn_postgres_listener(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn schedule_capacity_counts_connections_not_unique_users() {
@@ -184,5 +289,77 @@ mod tests {
         hub.connection_opened("user-1");
         assert!(hub.is_at_capacity());
         assert!(!hub.can_user_connect("user-1"));
+    }
+
+    #[tokio::test]
+    async fn publishes_schedule_events_only_to_matching_schedule_subscribers() {
+        let hub = LiveUpdateHub::new();
+        let mut schedule_rx = hub.subscribe_schedule("schedule-1");
+        let mut other_schedule_rx = hub.subscribe_schedule("schedule-2");
+
+        hub.publish(LiveUpdateEvent {
+            kind: "schedule_runtime".to_owned(),
+            id: "schedule-1".to_owned(),
+            revision: 1,
+            event: "runtime_tick".to_owned(),
+        });
+
+        let received = tokio::time::timeout(Duration::from_millis(200), schedule_rx.recv())
+            .await
+            .expect("schedule subscriber should receive event")
+            .expect("schedule event should be readable");
+        assert_eq!(received.id, "schedule-1");
+
+        let missed =
+            tokio::time::timeout(Duration::from_millis(100), other_schedule_rx.recv()).await;
+        assert!(
+            missed.is_err(),
+            "other schedule subscriber must not receive event"
+        );
+    }
+
+    #[tokio::test]
+    async fn publishes_attempt_events_only_to_matching_attempt_subscribers() {
+        let hub = LiveUpdateHub::new();
+        let mut attempt_rx = hub.subscribe_attempt("attempt-1");
+        let mut other_attempt_rx = hub.subscribe_attempt("attempt-2");
+
+        hub.publish(LiveUpdateEvent {
+            kind: "attempt".to_owned(),
+            id: "attempt-1".to_owned(),
+            revision: 9,
+            event: "mutated".to_owned(),
+        });
+
+        let received = tokio::time::timeout(Duration::from_millis(200), attempt_rx.recv())
+            .await
+            .expect("attempt subscriber should receive event")
+            .expect("attempt event should be readable");
+        assert_eq!(received.id, "attempt-1");
+
+        let missed =
+            tokio::time::timeout(Duration::from_millis(100), other_attempt_rx.recv()).await;
+        assert!(
+            missed.is_err(),
+            "other attempt subscriber must not receive event"
+        );
+    }
+
+    #[test]
+    fn cleans_up_idle_topic_senders() {
+        let hub = LiveUpdateHub::new();
+
+        let schedule_rx = hub.subscribe_schedule("schedule-1");
+        let attempt_rx = hub.subscribe_attempt("attempt-1");
+        assert_eq!(hub.schedule_topic_count(), 1);
+        assert_eq!(hub.attempt_topic_count(), 1);
+
+        drop(schedule_rx);
+        drop(attempt_rx);
+
+        hub.cleanup_schedule_topic_if_idle("schedule-1");
+        hub.cleanup_attempt_topic_if_idle("attempt-1");
+        assert_eq!(hub.schedule_topic_count(), 0);
+        assert_eq!(hub.attempt_topic_count(), 0);
     }
 }

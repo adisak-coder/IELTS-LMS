@@ -5,6 +5,7 @@ export interface LiveUpdateEvent {
   id: string;
   revision: number;
   event: string;
+  scheduleId?: string;
 }
 
 type LiveUpdateFrame =
@@ -42,6 +43,7 @@ function isLiveUpdateEvent(frame: unknown): frame is LiveUpdateEvent {
     typeof value['kind'] === 'string' &&
     typeof value['id'] === 'string' &&
     typeof value['event'] === 'string' &&
+    (value['scheduleId'] === undefined || typeof value['scheduleId'] === 'string') &&
     (typeof value['revision'] === 'number' || typeof value['revision'] === 'string')
   );
 }
@@ -145,6 +147,7 @@ export function useLiveUpdates(options: {
         id: frame.id,
         revision: Number(frame.revision),
         event: frame.event,
+        scheduleId: frame.scheduleId,
       };
       flushDebounced();
     };

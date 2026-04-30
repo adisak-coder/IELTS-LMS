@@ -52,6 +52,7 @@ export interface StudentAttempt {
   scheduleId: string;
   studentKey: string;
   examId: string;
+  publishedVersionId?: string | null;
   examTitle: string;
   candidateId: string;
   candidateName: string;

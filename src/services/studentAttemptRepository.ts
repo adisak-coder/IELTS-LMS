@@ -89,6 +89,7 @@ interface BackendStudentAttempt {
   scheduleId: string;
   studentKey: string;
   examId: string;
+  publishedVersionId?: string | null | undefined;
   examTitle: string;
   candidateId: string;
   candidateName: string;
@@ -958,6 +959,7 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
     scheduleId: payload.scheduleId,
     studentKey: payload.studentKey,
     examId: payload.examId,
+    publishedVersionId: payload.publishedVersionId ?? null,
     examTitle: payload.examTitle,
     candidateId: payload.candidateId,
     candidateName: payload.candidateName,

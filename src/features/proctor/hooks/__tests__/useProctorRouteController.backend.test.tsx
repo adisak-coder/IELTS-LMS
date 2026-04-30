@@ -57,6 +57,17 @@ function buildSchedule() {
   };
 }
 
+function buildSchedule2() {
+  return {
+    ...buildSchedule(),
+    id: 'sched-2',
+    examId: 'exam-2',
+    examTitle: 'Mock Exam 2',
+    publishedVersionId: 'ver-2',
+    cohortName: 'Cohort B',
+  };
+}
+
 function buildRuntime() {
   return {
     id: 'runtime-1',
@@ -96,6 +107,15 @@ function buildRuntime() {
         projectedEndAt: '2026-01-01T10:00:00.000Z',
       },
     ],
+  };
+}
+
+function buildRuntime2() {
+  return {
+    ...buildRuntime(),
+    id: 'runtime-2',
+    scheduleId: 'sched-2',
+    examId: 'exam-2',
   };
 }
 
@@ -192,6 +212,29 @@ function buildDetail() {
   };
 }
 
+function buildDetail2() {
+  const detail = buildDetail();
+  return {
+    ...detail,
+    schedule: buildSchedule2(),
+    runtime: buildRuntime2(),
+    sessions: detail.sessions.map((session) => ({
+      ...session,
+      attemptId: 'attempt-2',
+      studentId: 'bob',
+      studentName: 'Bob Roe',
+      studentEmail: 'bob@example.com',
+      scheduleId: 'sched-2',
+      examId: 'exam-2',
+      examName: 'Mock Exam 2',
+    })),
+    alerts: [],
+    auditLogs: [],
+    notes: [],
+    violationRules: [],
+  };
+}
+
 describe('useProctorRouteController backend mode', () => {
   beforeEach(() => {
     localStorage.clear();
@@ -202,6 +245,77 @@ describe('useProctorRouteController backend mode', () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     global.fetch = originalFetch;
+  });
+
+  it('polls summaries for all schedules but fetches detail only for the selected schedule', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === '/api/v1/proctor/sessions') {
+          return jsonResponse([
+            {
+              schedule: buildSchedule(),
+              runtime: buildRuntime(),
+              studentCount: 1,
+              activeCount: 1,
+              alertCount: 1,
+              violationCount: 0,
+              degradedLiveMode: false,
+            },
+            {
+              schedule: buildSchedule2(),
+              runtime: buildRuntime2(),
+              studentCount: 1,
+              activeCount: 1,
+              alertCount: 0,
+              violationCount: 0,
+              degradedLiveMode: false,
+            },
+          ]);
+        }
+
+        if (url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100') {
+          return jsonResponse(buildDetail());
+        }
+
+        if (url === '/api/v1/proctor/sessions/sched-2?mode=dashboard&auditLimit=200&alertLimit=100') {
+          return jsonResponse(buildDetail2());
+        }
+
+        return jsonFailure(`Unhandled ${url}`);
+      });
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.schedules).toHaveLength(2);
+    });
+
+    const sched1DetailCalls = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100',
+    );
+    const sched2DetailCalls = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/v1/proctor/sessions/sched-2?mode=dashboard&auditLimit=200&alertLimit=100',
+    );
+
+    expect(sched1DetailCalls.length).toBeGreaterThanOrEqual(1);
+    expect(sched2DetailCalls).toHaveLength(0);
+
+    await act(async () => {
+      result.current.setSelectedScheduleId('sched-2');
+    });
+
+    await waitFor(() => {
+      const nextSched2Calls = fetchMock.mock.calls.filter(
+        ([url]) =>
+          url === '/api/v1/proctor/sessions/sched-2?mode=dashboard&auditLimit=200&alertLimit=100',
+      );
+      expect(nextSched2Calls.length).toBeGreaterThanOrEqual(1);
+    });
   });
 
   it('hydrates roster, alerts, and audit data through the backend proctor endpoints', async () => {

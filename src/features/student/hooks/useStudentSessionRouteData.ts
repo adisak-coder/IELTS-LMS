@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAsyncPolling } from '@app/hooks/useAsyncPolling';
 import { useLiveUpdates, type LiveUpdateEvent } from '@app/hooks/useLiveUpdates';
 import { useAuthSession } from '../../auth/authSession';
@@ -10,10 +10,7 @@ import {
   mapBackendSchedule,
 } from '@services/backendBridge';
 import {
-  hasAttemptCredential,
   mapBackendStudentAttempt,
-  ensureClientSessionIdForAttempt,
-  refreshAttemptCredentialForAttempt,
   studentAttemptRepository,
 } from '@services/studentAttemptRepository';
 import type { ExamState } from '../../../types';
@@ -39,9 +36,14 @@ function buildStudentKey(scheduleId: string, candidateId: string) {
   return `student-${scheduleId}-${candidateId}`;
 }
 
-function buildBackendSessionEndpoint(scheduleId: string, candidateId: string) {
+function buildBackendStaticSessionEndpoint(scheduleId: string, candidateId: string) {
   const query = new URLSearchParams({ candidateId });
-  return `/v1/student/sessions/${scheduleId}?${query.toString()}`;
+  return `/v1/student/sessions/${scheduleId}/static?${query.toString()}`;
+}
+
+function buildBackendLiveSessionEndpoint(scheduleId: string, candidateId: string) {
+  const query = new URLSearchParams({ candidateId });
+  return `/v1/student/sessions/${scheduleId}/live?${query.toString()}`;
 }
 
 function loadStoredCandidateProfile(
@@ -97,6 +99,23 @@ interface StudentSessionRouteData {
   retry: () => Promise<void>;
 }
 
+type BackendStaticSession = {
+  schedule: Parameters<typeof mapBackendSchedule>[0];
+  version: Parameters<typeof mapBackendExamVersion>[0];
+};
+
+type BackendLiveSession = {
+  runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
+  attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
+  publishedVersionId?: string | null | undefined;
+};
+
+interface LoadedStaticSnapshot {
+  examState: ExamState;
+  scheduleEntity: ExamSchedule;
+  versionId: string;
+}
+
 export function useStudentSessionRouteData(
   scheduleId?: string,
   studentId?: string,
@@ -109,6 +128,7 @@ export function useStudentSessionRouteData(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const candidateId = useMemo(() => normalizeWcodeCandidateId(studentId), [studentId]);
+  const staticVersionIdRef = useRef<string | null>(null);
   const storedCandidateProfile = useMemo(
     () => (scheduleId && candidateId ? loadStoredCandidateProfile(scheduleId, candidateId) : null),
     [candidateId, scheduleId],
@@ -118,43 +138,97 @@ export function useStudentSessionRouteData(
     [candidateId, scheduleId],
   );
 
+  const loadStaticSessionSnapshot = useCallback(async (): Promise<LoadedStaticSnapshot | null> => {
+    if (!scheduleId || !candidateId || !isWcodeCandidateId(candidateId)) {
+      return null;
+    }
+
+    const session = await backendGet<BackendStaticSession>(
+      buildBackendStaticSessionEndpoint(scheduleId, candidateId),
+    );
+    const scheduleEntity = mapBackendSchedule(session.schedule);
+    const version = mapBackendExamVersion(session.version);
+    const examState = hydrateExamState({
+      ...version.contentSnapshot,
+      config: version.configSnapshot,
+    } satisfies ExamState);
+
+    setSchedule(scheduleEntity);
+    setState(examState);
+    staticVersionIdRef.current = version.id;
+
+    return {
+      examState,
+      scheduleEntity,
+      versionId: version.id,
+    };
+  }, [candidateId, scheduleId]);
+
+  const maybeRebootstrapStaticOnVersionMismatch = useCallback(
+    async (live: BackendLiveSession): Promise<LoadedStaticSnapshot | null> => {
+      const expectedVersionId = staticVersionIdRef.current;
+      if (!expectedVersionId || !live.publishedVersionId || live.publishedVersionId === expectedVersionId) {
+        return null;
+      }
+
+      return loadStaticSessionSnapshot();
+    },
+    [loadStaticSessionSnapshot],
+  );
+
   const refreshBackendSessionSnapshot = useCallback(async () => {
     if (!scheduleId || !candidateId || !isWcodeCandidateId(candidateId)) {
       return;
     }
 
-    const session = await backendGet<{
-      schedule: Parameters<typeof mapBackendSchedule>[0];
-      version: Parameters<typeof mapBackendExamVersion>[0];
-      runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-      attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-    }>(buildBackendSessionEndpoint(scheduleId, candidateId));
-    const nextSchedule = mapBackendSchedule(session.schedule);
+    let scheduleEntity = schedule;
+    if (!scheduleEntity) {
+      const loaded = await loadStaticSessionSnapshot();
+      scheduleEntity = loaded?.scheduleEntity ?? null;
+    }
 
-    setSchedule(nextSchedule);
+    let live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+    const reloadedStatic = await maybeRebootstrapStaticOnVersionMismatch(live);
+    if (reloadedStatic) {
+      scheduleEntity = reloadedStatic.scheduleEntity;
+      live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+    }
+
     setRuntimeSnapshot(
-      session.runtime ? mapBackendRuntime(session.runtime, nextSchedule) : null,
+      live.runtime && scheduleEntity ? mapBackendRuntime(live.runtime, scheduleEntity) : null,
     );
 
-    if (session.attempt) {
-      const nextAttempt = mapBackendStudentAttempt(session.attempt);
+    if (live.attempt) {
+      const nextAttempt = mapBackendStudentAttempt(live.attempt);
       await studentAttemptRepository.saveAttempt(nextAttempt);
       setAttemptSnapshot(nextAttempt);
     }
-  }, [candidateId, scheduleId]);
+  }, [
+    candidateId,
+    loadStaticSessionSnapshot,
+    maybeRebootstrapStaticOnVersionMismatch,
+    schedule,
+    scheduleId,
+  ]);
 
   const handleLiveUpdate = useCallback(
     (event: LiveUpdateEvent) => {
       if (!scheduleId) {
         return;
       }
+
       if (event.kind === 'schedule_runtime') {
-        if (event.id !== scheduleId) return;
+        if (event.id !== scheduleId) {
+          return;
+        }
       } else if (event.kind === 'attempt') {
-        if (!attemptSnapshot?.id || event.id !== attemptSnapshot.id) return;
+        if (!attemptSnapshot?.id || event.id !== attemptSnapshot.id) {
+          return;
+        }
       } else {
         return;
       }
+
       void refreshBackendSessionSnapshot();
     },
     [attemptSnapshot?.id, refreshBackendSessionSnapshot, scheduleId],
@@ -196,70 +270,40 @@ export function useStudentSessionRouteData(
         throw new Error('Student identity not found');
       }
 
-      const session = await backendGet<{
-        schedule: Parameters<typeof mapBackendSchedule>[0];
-        version: Parameters<typeof mapBackendExamVersion>[0];
-        runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-        attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-      }>(buildBackendSessionEndpoint(scheduleId, candidateId));
-      const scheduleEntity = mapBackendSchedule(session.schedule);
-      const version = mapBackendExamVersion(session.version);
-      const examState = hydrateExamState({
-        ...version.contentSnapshot,
-        config: version.configSnapshot,
-      } satisfies ExamState);
+      let loadedStatic = await loadStaticSessionSnapshot();
+      if (!loadedStatic) {
+        throw new Error('Unable to load static exam session context');
+      }
 
-      setSchedule(scheduleEntity);
-      setState(examState);
-      setRuntimeSnapshot(
-        session.runtime ? mapBackendRuntime(session.runtime, scheduleEntity) : null,
-      );
+      let live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+      const reloadedStatic = await maybeRebootstrapStaticOnVersionMismatch(live);
+      if (reloadedStatic) {
+        loadedStatic = reloadedStatic;
+        live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+      }
 
-      if (session.attempt) {
-        const nextAttempt = mapBackendStudentAttempt(session.attempt);
-        const isSubmittedAttempt = Boolean(
-          (
-            session.attempt as {
-              submittedAt?: string | null | undefined;
-            }
-          ).submittedAt,
-        );
+      const mappedRuntime = live.runtime
+        ? mapBackendRuntime(live.runtime, loadedStatic.scheduleEntity)
+        : null;
+      setRuntimeSnapshot(mappedRuntime);
 
-        if (!isSubmittedAttempt) {
-          // Restore/lock the clientSessionId used for mutation sequencing if sessionStorage was lost.
-          ensureClientSessionIdForAttempt(nextAttempt);
-          if (!hasAttemptCredential(nextAttempt.scheduleId, nextAttempt.id)) {
-            await refreshAttemptCredentialForAttempt(nextAttempt).catch(() => false);
-          }
-        }
-
+      if (live.attempt) {
+        const nextAttempt = mapBackendStudentAttempt(live.attempt);
         await studentAttemptRepository.saveAttempt(nextAttempt);
-        if (isSubmittedAttempt) {
-          setAttemptSnapshot(nextAttempt);
-        } else if (!hasAttemptCredential(nextAttempt.scheduleId, nextAttempt.id)) {
-          const hydratedAttempt = await studentAttemptRepository.getAttemptByScheduleId(
-            scheduleId,
-            nextAttempt.studentKey,
-          );
-          setAttemptSnapshot(hydratedAttempt ?? nextAttempt);
-        } else {
-          setAttemptSnapshot(nextAttempt);
-        }
+        setAttemptSnapshot(nextAttempt);
       } else {
         const firstEnabledModule =
           (['listening', 'reading', 'writing', 'speaking'] as const).find(
-            (module) => examState.config.sections[module].enabled,
+            (module) => loadedStatic.examState.config.sections[module].enabled,
           ) ?? 'listening';
+
         const createdAttempt = await studentAttemptRepository.createAttempt({
           scheduleId,
           studentKey,
-          examId: scheduleEntity.examId,
-          examTitle: scheduleEntity.examTitle,
+          examId: loadedStatic.scheduleEntity.examId,
+          examTitle: loadedStatic.scheduleEntity.examTitle,
           ...createCandidateProfile(candidateId, storedCandidateProfile),
-          currentModule:
-            (session.runtime
-              ? mapBackendRuntime(session.runtime, scheduleEntity).currentSectionKey
-              : null) ?? firstEnabledModule,
+          currentModule: mappedRuntime?.currentSectionKey ?? firstEnabledModule,
         });
         setAttemptSnapshot(createdAttempt);
       }
@@ -268,22 +312,33 @@ export function useStudentSessionRouteData(
     } finally {
       setIsLoading(false);
     }
-  }, [authStatus, candidateId, scheduleId, storedCandidateProfile, studentKey]);
+  }, [
+    authStatus,
+    candidateId,
+    loadStaticSessionSnapshot,
+    maybeRebootstrapStaticOnVersionMismatch,
+    scheduleId,
+    storedCandidateProfile,
+    studentKey,
+  ]);
 
   useEffect(() => {
     void loadStudentData();
   }, [loadStudentData]);
 
-  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 10_000 : 4_000;
-  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 15_000 : 8_000;
+  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 10_000 : 20_000;
+  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 15_000 : 30_000;
 
-  useAsyncPolling(async () => {
-    await refreshBackendSessionSnapshot();
-  }, {
-    enabled: Boolean(scheduleId && state && !error),
-    intervalMs: pollIntervalMs,
-    maxIntervalMs: pollMaxIntervalMs,
-  });
+  useAsyncPolling(
+    async () => {
+      await refreshBackendSessionSnapshot();
+    },
+    {
+      enabled: Boolean(scheduleId && state && !error),
+      intervalMs: pollIntervalMs,
+      maxIntervalMs: pollMaxIntervalMs,
+    },
+  );
 
   return {
     attemptSnapshot,

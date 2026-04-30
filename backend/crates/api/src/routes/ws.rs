@@ -11,6 +11,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{
     borrow::Cow,
+    future::pending,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -138,6 +139,35 @@ fn extract_ws_session_token(headers: &axum::http::HeaderMap, cookie_name: &str) 
     parse_cookie(Some(cookie_header), cookie_name).map(|s| s.to_owned())
 }
 
+fn should_forward_event(
+    event: &LiveUpdateEvent,
+    user_role: &UserRole,
+    schedule_id: Option<&str>,
+    attempt_id: Option<&str>,
+) -> bool {
+    if *user_role == UserRole::Student {
+        return match event.kind.as_str() {
+            "schedule_runtime" => schedule_id.is_some_and(|value| value == event.id),
+            "attempt" => attempt_id.is_some_and(|value| value == event.id),
+            _ => false,
+        };
+    }
+
+    // By default, staff connections don't receive attempt-scoped events
+    // unless they explicitly subscribe with attemptId.
+    if event.kind == "attempt" && attempt_id.is_none() {
+        return false;
+    }
+
+    let schedule_match = schedule_id.is_some_and(|value| value == event.id);
+    let attempt_match = attempt_id.is_some_and(|value| value == event.id);
+    if (schedule_id.is_some() || attempt_id.is_some()) && !(schedule_match || attempt_match) {
+        return false;
+    }
+
+    true
+}
+
 async fn handle_socket(
     mut socket: WebSocket,
     state: AppState,
@@ -155,7 +185,6 @@ async fn handle_socket(
     state
         .telemetry
         .set_websocket_connections(current_connections);
-    let mut subscription = state.live_updates.subscribe();
 
     // Check per-schedule subscription cap
     if let Some(ref sid) = schedule_id {
@@ -173,6 +202,18 @@ async fn handle_socket(
         }
         state.live_updates.subscribe_to_schedule(sid, &user_id);
     }
+
+    let mut all_subscription = if schedule_id.is_none() && attempt_id.is_none() {
+        Some(state.live_updates.subscribe_all())
+    } else {
+        None
+    };
+    let mut schedule_subscription = schedule_id
+        .as_ref()
+        .map(|sid| state.live_updates.subscribe_schedule(sid));
+    let mut attempt_subscription = attempt_id
+        .as_ref()
+        .map(|aid| state.live_updates.subscribe_attempt(aid));
 
     let connected_message = json!({
         "type": "connected",
@@ -290,6 +331,15 @@ async fn handle_socket(
                 reason: "slow client".to_owned(),
             });
             notify.notify_one();
+            drop(all_subscription);
+            drop(schedule_subscription);
+            drop(attempt_subscription);
+            if let Some(ref sid) = schedule_id {
+                state.live_updates.cleanup_schedule_topic_if_idle(sid);
+            }
+            if let Some(ref aid) = attempt_id {
+                state.live_updates.cleanup_attempt_topic_if_idle(aid);
+            }
             let remaining = state.live_updates.connection_closed(&user_id);
             if let Some(ref sid) = schedule_id {
                 state.live_updates.unsubscribe_from_schedule(sid, &user_id);
@@ -307,6 +357,15 @@ async fn handle_socket(
                 reason: "slow client".to_owned(),
             });
             notify.notify_one();
+            drop(all_subscription);
+            drop(schedule_subscription);
+            drop(attempt_subscription);
+            if let Some(ref sid) = schedule_id {
+                state.live_updates.cleanup_schedule_topic_if_idle(sid);
+            }
+            if let Some(ref aid) = attempt_id {
+                state.live_updates.cleanup_attempt_topic_if_idle(aid);
+            }
             let remaining = state.live_updates.connection_closed(&user_id);
             if let Some(ref sid) = schedule_id {
                 state.live_updates.unsubscribe_from_schedule(sid, &user_id);
@@ -320,30 +379,118 @@ async fn handle_socket(
 
     loop {
         tokio::select! {
-            update = subscription.recv() => {
-                match update {
+            all_update = async {
+                if let Some(subscription) = all_subscription.as_mut() {
+                    subscription.recv().await
+                } else {
+                    pending().await
+                }
+            } => {
+                match all_update {
                     Ok(event) => {
-                        if user_role == UserRole::Student {
-                            let matches = match event.kind.as_str() {
-                                "schedule_runtime" => schedule_id.as_deref().is_some_and(|value| value == event.id),
-                                "attempt" => attempt_id.as_deref().is_some_and(|value| value == event.id),
-                                _ => false,
-                            };
-                            if !matches {
-                                continue;
-                            }
-                        } else {
-                            // By default, staff connections don't receive attempt-scoped events
-                            // unless they explicitly subscribe with attemptId.
-                            if event.kind == "attempt" && attempt_id.is_none() {
-                                continue;
-                            }
+                        if !should_forward_event(
+                            &event,
+                            &user_role,
+                            schedule_id.as_deref(),
+                            attempt_id.as_deref(),
+                        ) {
+                            continue;
+                        }
 
-                            let schedule_match = schedule_id.as_deref().is_some_and(|value| value == event.id);
-                            let attempt_match = attempt_id.as_deref().is_some_and(|value| value == event.id);
-                            if (schedule_id.is_some() || attempt_id.is_some()) && !(schedule_match || attempt_match) {
-                                continue;
+                        match outbound_tx.try_send(OutboundItem::Event(event)) {
+                            Ok(()) => {
+                                saturation_since = None;
                             }
+                            Err(mpsc::error::TrySendError::Full(event)) => {
+                                if saturation_since.is_none() {
+                                    saturation_since = Some(Instant::now());
+                                }
+                                *latest_event.lock().unwrap() = Some(match event {
+                                    OutboundItem::Event(value) => value,
+                                    _ => unreachable!("mpsc full returns original item"),
+                                });
+                                notify.notify_one();
+
+                                if saturation_since.is_some_and(|since| since.elapsed() >= slow_client_disconnect) {
+                                    *disconnect_reason.lock().unwrap() = Some(DisconnectReason {
+                                        code: 1008,
+                                        reason: "slow client".to_owned(),
+                                    });
+                                    notify.notify_one();
+                                    break;
+                                }
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => break,
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            schedule_update = async {
+                if let Some(subscription) = schedule_subscription.as_mut() {
+                    subscription.recv().await
+                } else {
+                    pending().await
+                }
+            } => {
+                match schedule_update {
+                    Ok(event) => {
+                        if !should_forward_event(
+                            &event,
+                            &user_role,
+                            schedule_id.as_deref(),
+                            attempt_id.as_deref(),
+                        ) {
+                            continue;
+                        }
+
+                        match outbound_tx.try_send(OutboundItem::Event(event)) {
+                            Ok(()) => {
+                                saturation_since = None;
+                            }
+                            Err(mpsc::error::TrySendError::Full(event)) => {
+                                if saturation_since.is_none() {
+                                    saturation_since = Some(Instant::now());
+                                }
+                                *latest_event.lock().unwrap() = Some(match event {
+                                    OutboundItem::Event(value) => value,
+                                    _ => unreachable!("mpsc full returns original item"),
+                                });
+                                notify.notify_one();
+
+                                if saturation_since.is_some_and(|since| since.elapsed() >= slow_client_disconnect) {
+                                    *disconnect_reason.lock().unwrap() = Some(DisconnectReason {
+                                        code: 1008,
+                                        reason: "slow client".to_owned(),
+                                    });
+                                    notify.notify_one();
+                                    break;
+                                }
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => break,
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            attempt_update = async {
+                if let Some(subscription) = attempt_subscription.as_mut() {
+                    subscription.recv().await
+                } else {
+                    pending().await
+                }
+            } => {
+                match attempt_update {
+                    Ok(event) => {
+                        if !should_forward_event(
+                            &event,
+                            &user_role,
+                            schedule_id.as_deref(),
+                            attempt_id.as_deref(),
+                        ) {
+                            continue;
                         }
 
                         match outbound_tx.try_send(OutboundItem::Event(event)) {
@@ -404,9 +551,82 @@ async fn handle_socket(
         }
     }
 
+    drop(all_subscription);
+    drop(schedule_subscription);
+    drop(attempt_subscription);
+    if let Some(ref sid) = schedule_id {
+        state.live_updates.cleanup_schedule_topic_if_idle(sid);
+    }
+    if let Some(ref aid) = attempt_id {
+        state.live_updates.cleanup_attempt_topic_if_idle(aid);
+    }
+
     let remaining = state.live_updates.connection_closed(&user_id);
     if let Some(ref sid) = schedule_id {
         state.live_updates.unsubscribe_from_schedule(sid, &user_id);
     }
     state.telemetry.set_websocket_connections(remaining);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_forward_event;
+    use ielts_backend_domain::{auth::UserRole, schedule::LiveUpdateEvent};
+
+    fn event(kind: &str, id: &str) -> LiveUpdateEvent {
+        LiveUpdateEvent {
+            kind: kind.to_owned(),
+            id: id.to_owned(),
+            revision: 1,
+            event: "changed".to_owned(),
+        }
+    }
+
+    #[test]
+    fn student_schedule_subscriptions_only_receive_runtime_or_matching_attempt() {
+        let role = UserRole::Student;
+
+        assert!(should_forward_event(
+            &event("schedule_runtime", "schedule-1"),
+            &role,
+            Some("schedule-1"),
+            Some("attempt-1")
+        ));
+        assert!(should_forward_event(
+            &event("attempt", "attempt-1"),
+            &role,
+            Some("schedule-1"),
+            Some("attempt-1")
+        ));
+        assert!(!should_forward_event(
+            &event("schedule_roster", "schedule-1"),
+            &role,
+            Some("schedule-1"),
+            Some("attempt-1")
+        ));
+        assert!(!should_forward_event(
+            &event("schedule_alert", "schedule-1"),
+            &role,
+            Some("schedule-1"),
+            Some("attempt-1")
+        ));
+    }
+
+    #[test]
+    fn staff_attempt_events_require_attempt_subscription() {
+        let role = UserRole::Proctor;
+
+        assert!(!should_forward_event(
+            &event("attempt", "attempt-1"),
+            &role,
+            Some("schedule-1"),
+            None
+        ));
+        assert!(should_forward_event(
+            &event("attempt", "attempt-1"),
+            &role,
+            None,
+            Some("attempt-1")
+        ));
+    }
 }
