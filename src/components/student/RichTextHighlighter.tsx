@@ -1,14 +1,9 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
-import {
-  applyHighlightFromSnapshot,
-  applySelectionHighlight,
-  escapeHtml,
-  removeHighlightAtIndex,
-  type HighlightSelectionSnapshot,
-} from './highlightSelection';
+import { applySelectionHighlight, escapeHtml, removeHighlightAtIndex } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
 import { usePersistedStudentHighlightHtml } from './highlightPersistence';
+import { useDeferredSelectionHighlight } from './useDeferredSelectionHighlight';
 
 interface RichTextHighlighterProps {
   content: string;
@@ -19,6 +14,8 @@ interface RichTextHighlighterProps {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   highlightPersistenceKey?: string | undefined;
+  showHighlightButton?: boolean | undefined;
+  highlightButtonLabel?: string | undefined;
 }
 
 export function RichTextHighlighter({
@@ -30,6 +27,8 @@ export function RichTextHighlighter({
   highlightColor,
   highlightClassName,
   highlightPersistenceKey,
+  showHighlightButton = false,
+  highlightButtonLabel = 'Highlight selected text',
 }: RichTextHighlighterProps) {
   const Tag = as as any;
   const containerRef = useRef<HTMLElement | null>(null);
@@ -43,7 +42,7 @@ export function RichTextHighlighter({
     highlightPersistenceKey,
   );
 
-  const handleSelection = () => {
+  const handleSelection = useCallback(() => {
     if (!enabled) {
       return false;
     }
@@ -72,67 +71,16 @@ export function RichTextHighlighter({
       setHtml(nextHtml);
       return true;
     }
-
-    return false;
   }, [enabled, highlightClassName, highlightColor, setHtml]);
-  const applySelectionFromSnapshot = useCallback(
-    (snapshot: HighlightSelectionSnapshot) => {
-      if (!enabled) {
-        return false;
-      }
-
-      const container = containerRef.current;
-      if (!container) {
-        return false;
-      }
-
-      const nextHtml = applyHighlightFromSnapshot(
-        container,
-        snapshot,
-        highlightClassName ??
-          (highlightColor ? getStudentHighlightClassName(highlightColor) : 'rounded-sm bg-yellow-200/80 text-gray-900'),
-      );
-
-      if (!nextHtml) {
-        return false;
-      }
-
-      setHtml(nextHtml);
-      window.getSelection()?.removeAllRanges();
-      return true;
-    },
-    [enabled, highlightClassName, highlightColor, setHtml],
-  );
-  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession } =
-    useDeferredSelectionHighlight({
+  const scheduleSelectionHighlight = useDeferredSelectionHighlight({
     enabled,
     containerRef,
     applySelection: handleSelection,
-    applySelectionFromSnapshot,
-    });
+  });
 
   const removeTappedHighlight = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
       if (!enabled) {
-        return;
-      }
-      if (isWithinRecentTouchAutoApplyGuard()) {
-        return;
-      }
-      const lastMouseSelectionIntentAt = lastMouseSelectionIntentAtRef.current;
-      if (
-        lastMouseSelectionIntentAt &&
-        Date.now() - lastMouseSelectionIntentAt < MOUSE_SELECTION_REMOVE_GUARD_MS
-      ) {
-        return;
-      }
-      const activeSelection = window.getSelection();
-      if (
-        activeSelection &&
-        activeSelection.rangeCount > 0 &&
-        !activeSelection.isCollapsed &&
-        activeSelection.toString().trim().length > 0
-      ) {
         return;
       }
 
@@ -151,17 +99,31 @@ export function RichTextHighlighter({
         setHtml(nextHtml);
       }
     },
-    [enabled, isWithinRecentTouchAutoApplyGuard, setHtml],
+    [enabled, setHtml],
   );
 
   return (
-    <Tag
-      ref={containerRef as any}
-      className={className}
-      onMouseUp={enabled ? handleSelection : undefined}
-      onKeyUp={enabled ? handleSelection : undefined}
-      onTouchEnd={enabled ? handleSelection : undefined}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    <>
+      <Tag
+        ref={containerRef as any}
+        className={className}
+        data-student-highlightable="true"
+        style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
+        onClick={removeTappedHighlight}
+        onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
+        onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionHighlight : undefined}
+        onKeyUp={enabled ? handleSelection : undefined}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+      {enabled && showHighlightButton ? (
+        <button
+          type="button"
+          onClick={handleSelection}
+          className="mt-2 inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 shadow-sm"
+        >
+          {highlightButtonLabel}
+        </button>
+      ) : null}
+    </>
   );
 }

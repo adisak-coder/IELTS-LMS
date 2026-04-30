@@ -1,14 +1,9 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 import { parseBoldMarkdown } from '../../utils/boldMarkdown';
-import {
-  applyHighlightFromSnapshot,
-  applySelectionHighlight,
-  escapeHtml,
-  removeHighlightAtIndex,
-  type HighlightSelectionSnapshot,
-} from './highlightSelection';
+import { applySelectionHighlight, escapeHtml, removeHighlightAtIndex } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
 import { usePersistedStudentHighlightHtml } from './highlightPersistence';
+import { useDeferredSelectionHighlight } from './useDeferredSelectionHighlight';
 
 type FormattedTextProps = {
   text: string;
@@ -46,7 +41,7 @@ export function FormattedText({
     highlightPersistenceKey,
   );
 
-  const handleSelection = () => {
+  const handleSelection = useCallback(() => {
     if (!highlightEnabled) {
       return false;
     }
@@ -75,17 +70,52 @@ export function FormattedText({
       setHtml(nextHtml);
       return true;
     }
+  }, [highlightClassName, highlightColor, highlightEnabled, setHtml]);
+  const scheduleSelectionHighlight = useDeferredSelectionHighlight({
+    enabled: highlightEnabled,
+    containerRef,
+    applySelection: handleSelection,
+  });
+
+  const removeTappedHighlight = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (!highlightEnabled) {
+        return;
+      }
+
+      const container = containerRef.current;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const highlightedNode = target?.closest('mark[data-highlighted="true"]');
+      if (!container || !highlightedNode || !container.contains(highlightedNode)) {
+        return;
+      }
+
+      const highlightIndex = Array.from(container.querySelectorAll('mark[data-highlighted="true"]')).indexOf(highlightedNode);
+      const nextHtml = removeHighlightAtIndex(container, highlightIndex);
+      if (nextHtml) {
+        event.preventDefault();
+        event.stopPropagation();
+        setHtml(nextHtml);
+      }
+    },
+    [highlightEnabled, setHtml],
+  );
 
   if (highlightEnabled || hasPersistedHtml) {
     return (
-      <Tag
-        ref={containerRef as any}
-        className={classes}
-        onMouseUp={highlightEnabled ? handleSelection : undefined}
-        onKeyUp={highlightEnabled ? handleSelection : undefined}
-        onTouchEnd={highlightEnabled ? handleSelection : undefined}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
+      <>
+        <Tag
+          ref={containerRef as any}
+          className={classes}
+          data-student-highlightable="true"
+          style={{ WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' }}
+          onClick={removeTappedHighlight}
+          onMouseUp={highlightEnabled ? handleSelection : undefined}
+          onTouchEnd={highlightEnabled ? scheduleSelectionHighlight : undefined}
+          onKeyUp={highlightEnabled ? handleSelection : undefined}
+          dangerouslySetInnerHTML={{ __html: html }}
+        />
+      </>
     );
   }
 
