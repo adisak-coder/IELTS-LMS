@@ -25,6 +25,7 @@ interface StudentReadingProps {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   tabletMode?: boolean | undefined;
+  contentZoom?: number | undefined;
 }
 
 export function StudentReading({
@@ -39,8 +40,28 @@ export function StudentReading({
   highlightColor,
   highlightClassName,
   tabletMode = false,
+  contentZoom = 1,
 }: StudentReadingProps) {
   const isTabletMode = Boolean(tabletMode);
+  const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
+  const supportsCssZoom = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('zoom', '1.01');
+  const tabletContentZoomStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!isTabletMode || clampedContentZoom === 1) {
+      return undefined;
+    }
+
+    if (supportsCssZoom) {
+      return { zoom: clampedContentZoom };
+    }
+
+    const inverseZoom = 1 / clampedContentZoom;
+    return {
+      transform: `scale(${clampedContentZoom})`,
+      transformOrigin: 'top left',
+      width: `${inverseZoom * 100}%`,
+      minHeight: `${inverseZoom * 100}%`,
+    };
+  }, [clampedContentZoom, isTabletMode, supportsCssZoom]);
   const [collapsedInstructions, setCollapsedInstructions] = useState<Record<string, boolean>>({});
   const questionContainerRef = useRef<HTMLDivElement>(null);
   const { answerCompact, handleDrag, leftWidth, materialCompact, splitPaneStyle, workspaceRef } = useSplitPaneResize({
@@ -195,6 +216,7 @@ export function StudentReading({
             isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[48px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           style={{
+            ...(tabletContentZoomStyle ?? {}),
             fontSize: 'var(--student-passage-font-size)',
             lineHeight: 'var(--student-passage-line-height)',
           }}
@@ -252,6 +274,7 @@ export function StudentReading({
             ref={questionContainerRef}
             data-student-zoom-scroll
             data-testid="reading-question-scroll"
+            style={tabletContentZoomStyle}
           >
             {activePassage.blocks.map((block) => {
               const blockQuestions = allQuestions.filter((question) => question.blockId === block.id);

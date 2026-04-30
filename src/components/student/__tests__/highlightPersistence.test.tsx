@@ -106,13 +106,14 @@ describe('student highlight persistence', () => {
     }
 
     currentTextNode = textElement.firstChild;
+    fireEvent.touchStart(textElement);
     fireEvent.touchEnd(textElement);
 
     expect(container.querySelector('mark')).toBeNull();
     expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
 
     await act(async () => {
-      vi.advanceTimersByTime(179);
+      vi.advanceTimersByTime(419);
     });
     expect(container.querySelector('mark')).toBeNull();
 
@@ -154,11 +155,11 @@ describe('student highlight persistence', () => {
     }
 
     currentTextNode = textElement.firstChild;
-    fireEvent.touchEnd(textElement);
+    fireEvent.touchStart(textElement);
     getSelectionSpy.mockReturnValue(collapsedSelection);
 
     await act(async () => {
-      vi.advanceTimersByTime(180);
+      vi.advanceTimersByTime(420);
     });
 
     expect(container.querySelector('mark')).not.toBeNull();
@@ -167,7 +168,7 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockRestore();
   });
 
-  it('does not reset the timer for identical selectionchange snapshots', async () => {
+  it('does not reset the timer for identical selectionchange snapshots and does not require container touchend', async () => {
     vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
@@ -185,7 +186,7 @@ describe('student highlight persistence', () => {
     }
 
     currentTextNode = textElement.firstChild;
-    fireEvent.touchEnd(textElement);
+    fireEvent.touchStart(textElement);
 
     expect(container.querySelector('mark')).toBeNull();
     expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
@@ -195,7 +196,7 @@ describe('student highlight persistence', () => {
     });
     fireEvent(document, new Event('selectionchange'));
     await act(async () => {
-      vi.advanceTimersByTime(79);
+      vi.advanceTimersByTime(319);
     });
     expect(container.querySelector('mark')).toBeNull();
 
@@ -241,7 +242,7 @@ describe('student highlight persistence', () => {
     }
 
     currentTextNode = textElement.firstChild;
-    fireEvent.touchEnd(textElement);
+    fireEvent.touchStart(textElement);
 
     const changeSelection = (nextEnd: number, nextText: string) => {
       end = nextEnd;
@@ -250,32 +251,32 @@ describe('student highlight persistence', () => {
     };
 
     await act(async () => {
-      vi.advanceTimersByTime(120);
+      vi.advanceTimersByTime(200);
     });
     changeSelection(16, 'beta gamma');
 
     await act(async () => {
-      vi.advanceTimersByTime(120);
+      vi.advanceTimersByTime(200);
     });
     changeSelection(22, 'beta gamma delta');
 
     await act(async () => {
-      vi.advanceTimersByTime(120);
+      vi.advanceTimersByTime(200);
     });
     changeSelection(30, 'beta gamma delta epsilon');
 
     await act(async () => {
-      vi.advanceTimersByTime(120);
+      vi.advanceTimersByTime(200);
     });
     changeSelection(35, 'beta gamma delta epsilon zeta');
 
     await act(async () => {
-      vi.advanceTimersByTime(120);
+      vi.advanceTimersByTime(200);
     });
     changeSelection(39, 'beta gamma delta epsilon zeta eta');
 
     await act(async () => {
-      vi.advanceTimersByTime(99);
+      vi.advanceTimersByTime(199);
     });
     expect(container.querySelector('mark')).toBeNull();
 
@@ -285,6 +286,49 @@ describe('student highlight persistence', () => {
 
     expect(container.querySelector('mark')).not.toBeNull();
     expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta epsilon zeta eta');
+
+    getSelectionSpy.mockRestore();
+  });
+
+  it('does not remove a highlight on the immediate post-auto-apply tap but allows removal after the guard window', async () => {
+    vi.useFakeTimers();
+    let currentTextNode: ChildNode | null = null;
+    const selectionMock = createSelectionMock(() => currentTextNode, {
+      start: 6,
+      end: 10,
+      text: 'beta',
+    });
+    const getSelectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selectionMock);
+
+    const { container } = render(<RichTextHighlighter content="Alpha beta gamma" enabled />);
+    const textElement = container.querySelector('[data-student-highlightable="true"]');
+    if (!textElement) {
+      throw new Error('Expected a rendered highlight container');
+    }
+
+    currentTextNode = textElement.firstChild;
+    fireEvent.touchStart(textElement);
+    fireEvent.touchEnd(textElement);
+
+    await act(async () => {
+      vi.advanceTimersByTime(420);
+    });
+
+    const highlight = container.querySelector('mark[data-highlighted="true"]');
+    expect(highlight).not.toBeNull();
+    if (!highlight) {
+      throw new Error('Expected a highlight to be created');
+    }
+
+    fireEvent.click(highlight);
+    expect(container.querySelectorAll('mark[data-highlighted="true"]')).toHaveLength(1);
+
+    await act(async () => {
+      vi.advanceTimersByTime(701);
+    });
+
+    fireEvent.click(highlight);
+    expect(container.querySelectorAll('mark[data-highlighted="true"]')).toHaveLength(0);
 
     getSelectionSpy.mockRestore();
   });

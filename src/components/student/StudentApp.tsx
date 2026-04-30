@@ -134,7 +134,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   }, [highlightNamespace]);
   const studentShellStyle = {
     height: 'var(--student-viewport-height, 100dvh)',
-    zoom: uiState.accessibilitySettings.zoom,
+    zoom: tabletMode ? 1 : uiState.accessibilitySettings.zoom,
     fontSize: studentTypography.rootFontSize,
     lineHeight: studentTypography.lineHeight,
     ['--student-meta-font-size' as string]: studentTypography.metaFontSize,
@@ -918,6 +918,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             flags={runtimeState.flags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
+            contentZoom={uiState.accessibilitySettings.zoom}
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
@@ -933,6 +934,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             flags={runtimeState.flags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
+            contentZoom={uiState.accessibilitySettings.zoom}
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}

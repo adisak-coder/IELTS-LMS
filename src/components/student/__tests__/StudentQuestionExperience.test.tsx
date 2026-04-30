@@ -851,11 +851,15 @@ describe('student question experience', () => {
 
     const zoomPanel = screen.getByRole('dialog', { name: /zoom controls/i });
     expect(within(zoomPanel).getByTestId('zoom-controls')).toBeInTheDocument();
+    expect(zoomPanel.parentElement).toBe(document.body);
+    expect(zoomPanel).toHaveClass('z-[90]');
 
     fireEvent.click(within(zoomPanel).getByRole('button', { name: /zoom in/i }));
     fireEvent.click(screen.getByRole('button', { name: /open highlight options/i }));
     const highlightPanel = screen.getByRole('dialog', { name: /highlight options/i });
     expect(within(highlightPanel).queryByTestId('zoom-controls')).not.toBeInTheDocument();
+    expect(highlightPanel.parentElement).toBe(document.body);
+    expect(highlightPanel).toHaveClass('z-[90]');
     fireEvent.click(within(highlightPanel).getByRole('button', { name: /select amber highlight color/i }));
     fireEvent.click(screen.getByRole('button', { name: /open accessibility settings/i }));
 
@@ -1386,6 +1390,146 @@ describe('student question experience', () => {
       '--question-pane-width': 'calc(3%)',
     });
     expect(screen.getByTestId('listening-question-scroll')).toHaveClass('p-2.5');
+  });
+
+  it('applies tablet zoom scaling to reading and listening content panes', () => {
+    const readingState = {
+      title: 'Reading Test',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: {
+        passages: [
+          {
+            id: 'passage-1',
+            title: 'Passage 1',
+            content: 'Read this passage carefully.',
+            images: [],
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question.',
+                questions: [{ id: 'reading-q1', prompt: 'What?', correctAnswer: 'answer', answerRule: 'ONE_WORD' }],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    const { unmount } = render(
+      <StudentReading
+        state={readingState}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="reading-q1"
+        onNavigate={() => {}}
+        tabletMode
+        contentZoom={1.3}
+      />,
+    );
+
+    const readingZoomedPanes = screen
+      .getByTestId('reading-split-workspace')
+      .querySelectorAll<HTMLElement>('[data-student-zoom-scroll]');
+    expect(readingZoomedPanes.length).toBeGreaterThan(1);
+    for (const pane of readingZoomedPanes) {
+      const style = pane.getAttribute('style') ?? '';
+      expect(style).toMatch(/zoom: 1\.3|transform: scale\(1\.3\)/);
+    }
+
+    unmount();
+
+    const listeningState: ExamState = {
+      title: 'Listening Test',
+      type: 'Academic',
+      activeModule: 'listening',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: {
+            enabled: true,
+            order: 1,
+            duration: 30,
+            autoContinue: true,
+            allowedQuestionTypes: ['SHORT_ANSWER'],
+            audioPlaybackEnabled: false,
+          },
+          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: { passages: [] },
+      listening: {
+        parts: [
+          {
+            id: 'part-1',
+            title: 'Part 1',
+            audioUrl: '',
+            transcript: 'Reference transcript text.',
+            pins: [],
+            blocks: [
+              {
+                id: 'listening-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question.',
+                questions: [{ id: 'q1', prompt: 'What?', correctAnswer: 'answer', answerRule: 'ONE_WORD' }],
+              },
+            ],
+          },
+        ],
+      },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    };
+
+    render(
+      <StudentListening
+        state={listeningState}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="q1"
+        onNavigate={() => {}}
+        tabletMode
+        contentZoom={1.3}
+      />,
+    );
+
+    const listeningZoomedPanes = screen
+      .getByTestId('listening-split-workspace')
+      .querySelectorAll<HTMLElement>('[data-student-zoom-scroll]');
+    expect(listeningZoomedPanes.length).toBeGreaterThan(1);
+    for (const pane of listeningZoomedPanes) {
+      const style = pane.getAttribute('style') ?? '';
+      expect(style).toMatch(/zoom: 1\.3|transform: scale\(1\.3\)/);
+    }
   });
 
   it('places listening diagram material on the left and answers on the right', () => {

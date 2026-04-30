@@ -49,13 +49,13 @@ export function RichTextHighlighter({
 
   const handleSelection = useCallback(() => {
     if (!enabled) {
-      return;
+      return false;
     }
 
     const container = containerRef.current;
     const selection = window.getSelection();
     if (!container || !selection) {
-      return;
+      return false;
     }
 
     const nextHtml = applySelectionHighlight(
@@ -67,7 +67,10 @@ export function RichTextHighlighter({
 
     if (nextHtml) {
       setHtml(nextHtml);
+      return true;
     }
+
+    return false;
   }, [enabled, highlightClassName, highlightColor, setHtml]);
   const applySelectionFromSnapshot = useCallback(
     (snapshot: HighlightSelectionSnapshot) => {
@@ -97,16 +100,20 @@ export function RichTextHighlighter({
     },
     [enabled, highlightClassName, highlightColor, setHtml],
   );
-  const scheduleSelectionHighlight = useDeferredSelectionHighlight({
+  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
+    useDeferredSelectionHighlight({
     enabled,
     containerRef,
     applySelection: handleSelection,
     applySelectionFromSnapshot,
-  });
+    });
 
   const removeTappedHighlight = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
       if (!enabled) {
+        return;
+      }
+      if (isWithinRecentTouchAutoApplyGuard()) {
         return;
       }
 
@@ -125,7 +132,7 @@ export function RichTextHighlighter({
         setHtml(nextHtml);
       }
     },
-    [enabled, setHtml],
+    [enabled, isWithinRecentTouchAutoApplyGuard, setHtml],
   );
 
   return (
@@ -137,6 +144,7 @@ export function RichTextHighlighter({
         style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
         onClick={removeTappedHighlight}
         onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
+        onTouchStart={enabled && !showHighlightButton ? startTouchSelectionSession : undefined}
         onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionHighlight : undefined}
         onKeyUp={enabled ? handleSelection : undefined}
         dangerouslySetInnerHTML={{ __html: html }}

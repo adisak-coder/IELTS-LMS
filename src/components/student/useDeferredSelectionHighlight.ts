@@ -5,12 +5,13 @@ import { createHighlightSelectionSnapshot, type HighlightSelectionSnapshot } fro
 interface UseDeferredSelectionHighlightOptions {
   enabled: boolean;
   containerRef: RefObject<HTMLElement | null>;
-  applySelection: () => void;
+  applySelection: () => boolean;
   applySelectionFromSnapshot?: ((snapshot: HighlightSelectionSnapshot) => boolean) | undefined;
 }
 
-const FAST_TOUCH_APPLY_MS = 180;
-const TOUCH_MAX_WAIT_MS = 700;
+const FAST_TOUCH_APPLY_MS = 420;
+const TOUCH_MAX_WAIT_MS = 1200;
+const TOUCH_AUTO_APPLY_REMOVE_GUARD_MS = 700;
 
 export function useDeferredSelectionHighlight({
   enabled,
@@ -24,6 +25,7 @@ export function useDeferredSelectionHighlight({
   const touchSessionActiveRef = useRef(false);
   const pendingSnapshotRef = useRef<HighlightSelectionSnapshot | null>(null);
   const pendingSignatureRef = useRef<string | null>(null);
+  const lastTouchAutoApplyAtRef = useRef<number | null>(null);
 
   const clearPending = useCallback(() => {
     if (fastApplyTimerRef.current) {
@@ -44,11 +46,16 @@ export function useDeferredSelectionHighlight({
     const pendingSnapshot = pendingSnapshotRef.current;
     clearPending();
 
+    let applied = false;
     if (pendingSnapshot && applySelectionFromSnapshot?.(pendingSnapshot)) {
-      return;
+      applied = true;
+    } else {
+      applied = applySelection();
     }
 
-    applySelection();
+    if (applied) {
+      lastTouchAutoApplyAtRef.current = Date.now();
+    }
   }, [applySelection, applySelectionFromSnapshot, clearPending]);
 
   const queueSelectionHighlight = useCallback(
@@ -90,12 +97,7 @@ export function useDeferredSelectionHighlight({
     [applyPending],
   );
 
-  const scheduleSelectionHighlight = useCallback(() => {
-    if (!enabled) {
-      return;
-    }
-    touchSessionActiveRef.current = true;
-
+  const queueCurrentSelection = useCallback(() => {
     const container = containerRef.current;
     const selection = window.getSelection();
     if (!container || !selection) {
@@ -108,7 +110,38 @@ export function useDeferredSelectionHighlight({
     }
 
     queueSelectionHighlight(snapshot);
-  }, [containerRef, enabled, queueSelectionHighlight]);
+  }, [containerRef, queueSelectionHighlight]);
+
+  const startTouchSelectionSession = useCallback(() => {
+    if (!enabled) {
+      return;
+    }
+
+    if (touchWindowStartedAtRef.current !== null && pendingSnapshotRef.current) {
+      clearPending();
+    }
+
+    touchSessionActiveRef.current = true;
+    queueCurrentSelection();
+  }, [clearPending, enabled, queueCurrentSelection]);
+
+  const scheduleSelectionHighlight = useCallback(() => {
+    if (!enabled) {
+      return;
+    }
+
+    touchSessionActiveRef.current = true;
+    queueCurrentSelection();
+  }, [enabled, queueCurrentSelection]);
+
+  const isWithinRecentTouchAutoApplyGuard = useCallback(() => {
+    const lastTouchAutoApplyAt = lastTouchAutoApplyAtRef.current;
+    if (!lastTouchAutoApplyAt) {
+      return false;
+    }
+
+    return Date.now() - lastTouchAutoApplyAt < TOUCH_AUTO_APPLY_REMOVE_GUARD_MS;
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -127,18 +160,7 @@ export function useDeferredSelectionHighlight({
         return;
       }
 
-      const container = containerRef.current;
-      const selection = window.getSelection();
-      if (!container || !selection) {
-        return;
-      }
-
-      const snapshot = createHighlightSelectionSnapshot(container, selection);
-      if (!snapshot) {
-        return;
-      }
-
-      queueSelectionHighlight(snapshot);
+      queueCurrentSelection();
     };
 
     document.addEventListener('selectionchange', handleSelectionChange);
@@ -146,7 +168,33 @@ export function useDeferredSelectionHighlight({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [clearPending, containerRef, enabled, queueSelectionHighlight]);
+  }, [clearPending, enabled, queueCurrentSelection]);
 
-  return scheduleSelectionHighlight;
+  useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
+    const handleTouchEnd = () => {
+      if (!touchSessionActiveRef.current) {
+        return;
+      }
+
+      queueCurrentSelection();
+    };
+
+    document.addEventListener('touchend', handleTouchEnd);
+    document.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      document.removeEventListener('touchend', handleTouchEnd);
+      document.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [enabled, queueCurrentSelection]);
+
+  return {
+    isWithinRecentTouchAutoApplyGuard,
+    startTouchSelectionSession,
+    scheduleSelectionHighlight,
+  };
 }

@@ -23,6 +23,7 @@ interface StudentListeningProps {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   tabletMode?: boolean | undefined;
+  contentZoom?: number | undefined;
 }
 
 function getDiagramSlotIds(block: DiagramLabelingBlock): string[] {
@@ -96,8 +97,28 @@ export function StudentListening({
   highlightColor,
   highlightClassName,
   tabletMode = false,
+  contentZoom = 1,
 }: StudentListeningProps) {
   const isTabletMode = Boolean(tabletMode);
+  const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
+  const supportsCssZoom = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('zoom', '1.01');
+  const tabletContentZoomStyle = useMemo<React.CSSProperties | undefined>(() => {
+    if (!isTabletMode || clampedContentZoom === 1) {
+      return undefined;
+    }
+
+    if (supportsCssZoom) {
+      return { zoom: clampedContentZoom };
+    }
+
+    const inverseZoom = 1 / clampedContentZoom;
+    return {
+      transform: `scale(${clampedContentZoom})`,
+      transformOrigin: 'top left',
+      width: `${inverseZoom * 100}%`,
+      minHeight: `${inverseZoom * 100}%`,
+    };
+  }, [clampedContentZoom, isTabletMode, supportsCssZoom]);
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(70);
@@ -260,6 +281,7 @@ export function StudentListening({
             isTabletMode ? 'w-[var(--listening-pane-width)] min-w-[48px] border-r border-gray-200' : 'lg:w-[var(--listening-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           data-student-zoom-scroll
+          style={tabletContentZoomStyle}
         >
           <h2 className={`${materialCompact ? 'mb-2 text-base md:text-lg' : 'mb-4 text-lg md:mb-6 md:text-xl'} font-bold break-words [overflow-wrap:anywhere]`}>{activePart.title}</h2>
 
@@ -431,6 +453,7 @@ export function StudentListening({
             ref={questionContainerRef}
             data-student-zoom-scroll
             data-testid="listening-question-scroll"
+            style={tabletContentZoomStyle}
           >
             {activePart.blocks.map((block) => {
               const blockQuestions = allQuestions.filter((question) => question.blockId === block.id);

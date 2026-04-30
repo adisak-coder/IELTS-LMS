@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bell,
   ChevronDown,
@@ -244,6 +245,141 @@ export function StudentHeader({
     setShowHighlightPalette(false);
   };
 
+  const renderOverlayPanel = useCallback((panel: React.ReactNode) => {
+    if (typeof document === 'undefined') {
+      return null;
+    }
+
+    return createPortal(panel, document.body);
+  }, []);
+
+  const tabletZoomPanel = showTabletZoomControls
+    ? renderOverlayPanel(
+        <div
+          ref={tabletZoomPanelRef}
+          role="dialog"
+          aria-label="Zoom controls"
+          className="fixed z-[90] max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
+          style={tabletZoomControlsStyle}
+        >
+          <div className="mb-2 text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
+            Zoom
+          </div>
+          <div
+            data-testid="zoom-controls"
+            className="flex w-full items-center gap-1 rounded-sm border border-gray-200 bg-gray-50 p-1"
+          >
+            <button
+              type="button"
+              onClick={onZoomOut}
+              className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+              aria-label="Zoom out"
+              title="Zoom out"
+            >
+              <Minus size={16} />
+            </button>
+            <div
+              data-testid="zoom-percent"
+              className="flex-1 px-1 text-center text-sm font-bold text-gray-700 tabular-nums"
+              aria-live="polite"
+              aria-label={zoomPercent !== null ? `Zoom level ${zoomPercent}%` : undefined}
+            >
+              {zoomPercent !== null ? `${zoomPercent}%` : null}
+            </div>
+            <button
+              type="button"
+              onClick={onZoomIn}
+              className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+              aria-label="Zoom in"
+              title="Zoom in"
+            >
+              <Plus size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={onZoomReset}
+              className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
+              aria-label="Reset zoom"
+              title="Reset zoom"
+            >
+              <RefreshCw size={14} />
+            </button>
+          </div>
+        </div>,
+      )
+    : null;
+
+  const highlightPalettePanel = showHighlightPalette
+    ? renderOverlayPanel(
+        <div
+          ref={highlightPaletteRef}
+          id="student-highlight-palette"
+          role="dialog"
+          aria-label="Highlight options"
+          className="fixed z-[90] max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
+          style={highlightPaletteStyle}
+        >
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
+                Highlight
+              </div>
+              <div className="text-xs text-gray-600">
+                Pick a color and turn highlight mode on or off.
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                onHighlightModeToggle?.();
+              }}
+              className={`rounded-full border px-3 py-1.5 text-[length:var(--student-meta-font-size)] font-bold uppercase tracking-wide transition-colors ${
+                highlightEnabled
+                  ? 'border-amber-500 bg-amber-50 text-amber-800'
+                  : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300'
+              }`}
+            >
+              {highlightEnabled ? 'On' : 'Off'}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {studentHighlightPalette.map((color) => {
+              const isActive = highlightColor === color.id;
+              return (
+                <button
+                  key={color.id}
+                  type="button"
+                  onClick={() => handleHighlightColorChange(color.id)}
+                  className={`rounded-lg border-2 p-2 text-left transition-all ${
+                    isActive
+                      ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                      : 'border-gray-200 bg-white hover:border-gray-300'
+                  }`}
+                  aria-pressed={isActive}
+                  aria-label={`Select ${color.label} highlight color`}
+                >
+                  <div className={`h-6 rounded-md ${color.swatchClassName}`} />
+                  <div className="mt-1 text-xs font-semibold text-gray-900">{color.label}</div>
+                </button>
+              );
+            })}
+          </div>
+          {onClearHighlights ? (
+            <button
+              type="button"
+              onClick={() => {
+                onClearHighlights();
+                setShowHighlightPalette(false);
+              }}
+              className="mt-3 w-full rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[length:var(--student-control-font-size)] font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100"
+            >
+              Remove all highlights
+            </button>
+          ) : null}
+        </div>,
+      )
+    : null;
+
   return (
     <header className="h-14 md:h-16 border-b border-gray-200 bg-white flex items-center justify-between px-3 md:px-4 lg:px-6 flex-shrink-0 z-10 shadow-sm" role="banner">
       <div className="flex items-center gap-3 md:gap-4 lg:gap-6 min-w-0">
@@ -326,59 +462,7 @@ export function StudentHeader({
                     </span>
                   ) : null}
                 </button>
-                {showTabletZoomControls ? (
-                  <div
-                    ref={tabletZoomPanelRef}
-                    role="dialog"
-                    aria-label="Zoom controls"
-                    className="fixed z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
-                    style={tabletZoomControlsStyle}
-                  >
-                    <div className="mb-2 text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
-                      Zoom
-                    </div>
-                    <div
-                      data-testid="zoom-controls"
-                      className="flex w-full items-center gap-1 rounded-sm border border-gray-200 bg-gray-50 p-1"
-                    >
-                      <button
-                        type="button"
-                        onClick={onZoomOut}
-                        className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
-                        aria-label="Zoom out"
-                        title="Zoom out"
-                      >
-                        <Minus size={16} />
-                      </button>
-                      <div
-                        data-testid="zoom-percent"
-                        className="flex-1 px-1 text-center text-sm font-bold text-gray-700 tabular-nums"
-                        aria-live="polite"
-                        aria-label={zoomPercent !== null ? `Zoom level ${zoomPercent}%` : undefined}
-                      >
-                        {zoomPercent !== null ? `${zoomPercent}%` : null}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={onZoomIn}
-                        className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
-                        aria-label="Zoom in"
-                        title="Zoom in"
-                      >
-                        <Plus size={16} />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={onZoomReset}
-                        className="flex h-10 w-10 items-center justify-center rounded-sm border border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
-                        aria-label="Reset zoom"
-                        title="Reset zoom"
-                      >
-                        <RefreshCw size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                {tabletZoomPanel}
               </div>
             ) : null}
             {showHighlightControls ? (
@@ -401,74 +485,7 @@ export function StudentHeader({
                   <span>Highlight</span>
                   <span className={`h-2.5 w-2.5 rounded-full border border-white shadow-sm ${selectedHighlight.swatchClassName}`} />
                 </button>
-                {showHighlightPalette ? (
-                  <div
-                    ref={highlightPaletteRef}
-                    id="student-highlight-palette"
-                    role="dialog"
-                    aria-label="Highlight options"
-                    className="fixed z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
-                    style={highlightPaletteStyle}
-                  >
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
-                          Highlight
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          Pick a color and turn highlight mode on or off.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onHighlightModeToggle?.();
-                        }}
-                        className={`rounded-full border px-3 py-1.5 text-[length:var(--student-meta-font-size)] font-bold uppercase tracking-wide transition-colors ${
-                          highlightEnabled
-                            ? 'border-amber-500 bg-amber-50 text-amber-800'
-                            : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300'
-                        }`}
-                      >
-                        {highlightEnabled ? 'On' : 'Off'}
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {studentHighlightPalette.map((color) => {
-                        const isActive = highlightColor === color.id;
-                        return (
-                          <button
-                            key={color.id}
-                            type="button"
-                            onClick={() => handleHighlightColorChange(color.id)}
-                            className={`rounded-lg border-2 p-2 text-left transition-all ${
-                              isActive
-                                ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                                : 'border-gray-200 bg-white hover:border-gray-300'
-                            }`}
-                            aria-pressed={isActive}
-                            aria-label={`Select ${color.label} highlight color`}
-                          >
-                            <div className={`h-6 rounded-md ${color.swatchClassName}`} />
-                            <div className="mt-1 text-xs font-semibold text-gray-900">{color.label}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {onClearHighlights ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onClearHighlights();
-                          setShowHighlightPalette(false);
-                        }}
-                        className="mt-3 w-full rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[length:var(--student-control-font-size)] font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100"
-                      >
-                        Remove all highlights
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
+                {highlightPalettePanel}
               </div>
             ) : null}
           </>
@@ -537,74 +554,7 @@ export function StudentHeader({
                   <span className={`h-2.5 w-2.5 rounded-full border border-white shadow-sm ${selectedHighlight.swatchClassName}`} />
                   <ChevronDown size={12} className="hidden sm:inline" />
                 </button>
-                {showHighlightPalette ? (
-                  <div
-                    ref={highlightPaletteRef}
-                    id="student-highlight-palette"
-                    role="dialog"
-                    aria-label="Highlight options"
-                    className="fixed z-50 max-h-[calc(100vh-5rem)] overflow-y-auto rounded-xl border border-gray-200 bg-white p-3 shadow-2xl"
-                    style={highlightPaletteStyle}
-                  >
-                    <div className="mb-3 flex items-center justify-between gap-3">
-                      <div>
-                        <div className="text-[length:var(--student-meta-font-size)] font-black uppercase tracking-[0.18em] text-gray-500">
-                          Highlight
-                        </div>
-                        <div className="text-xs text-gray-600">
-                          Pick a color and turn highlight mode on or off.
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onHighlightModeToggle?.();
-                        }}
-                        className={`rounded-full border px-3 py-1.5 text-[length:var(--student-meta-font-size)] font-bold uppercase tracking-wide transition-colors ${
-                          highlightEnabled
-                            ? 'border-amber-500 bg-amber-50 text-amber-800'
-                            : 'border-gray-200 bg-gray-50 text-gray-700 hover:border-gray-300'
-                        }`}
-                      >
-                        {highlightEnabled ? 'On' : 'Off'}
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {studentHighlightPalette.map((color) => {
-                        const isActive = highlightColor === color.id;
-                        return (
-                          <button
-                            key={color.id}
-                            type="button"
-                            onClick={() => handleHighlightColorChange(color.id)}
-                            className={`rounded-lg border-2 p-2 text-left transition-all ${
-                              isActive
-                                ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
-                                : 'border-gray-200 bg-white hover:border-gray-300'
-                            }`}
-                            aria-pressed={isActive}
-                            aria-label={`Select ${color.label} highlight color`}
-                          >
-                            <div className={`h-6 rounded-md ${color.swatchClassName}`} />
-                            <div className="mt-1 text-xs font-semibold text-gray-900">{color.label}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                    {onClearHighlights ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          onClearHighlights();
-                          setShowHighlightPalette(false);
-                        }}
-                        className="mt-3 w-full rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-[length:var(--student-control-font-size)] font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100"
-                      >
-                        Remove all highlights
-                      </button>
-                    ) : null}
-                  </div>
-                ) : null}
+                {highlightPalettePanel}
               </div>
             ) : null}
           </>
