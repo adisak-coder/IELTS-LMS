@@ -126,7 +126,48 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockRestore();
   });
 
-  it('debounces selectionchange before auto-highlighting rich text containers', async () => {
+  it('auto-highlights from snapshot even if live touch selection collapses before timer completes', async () => {
+    vi.useFakeTimers();
+    let currentTextNode: ChildNode | null = null;
+    const activeSelection = createSelectionMock(() => currentTextNode, {
+      start: 6,
+      end: 22,
+      text: 'beta gamma delta',
+    });
+    const collapsedSelection = {
+      rangeCount: 0,
+      getRangeAt: () => {
+        throw new Error('Selection collapsed');
+      },
+      toString: () => '',
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const getSelectionSpy = vi
+      .spyOn(window, 'getSelection')
+      .mockReturnValue(activeSelection);
+
+    const { container } = render(<FormattedText text="Alpha beta gamma delta" highlightEnabled />);
+    const textElement = container.querySelector('span');
+    if (!textElement) {
+      throw new Error('Expected a rendered text span');
+    }
+
+    currentTextNode = textElement.firstChild;
+    fireEvent.touchEnd(textElement);
+    getSelectionSpy.mockReturnValue(collapsedSelection);
+
+    await act(async () => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(container.querySelector('mark')).not.toBeNull();
+    expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
+
+    getSelectionSpy.mockRestore();
+  });
+
+  it('does not reset the timer for identical selectionchange snapshots', async () => {
     vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
@@ -154,7 +195,7 @@ describe('student highlight persistence', () => {
     });
     fireEvent(document, new Event('selectionchange'));
     await act(async () => {
-      vi.advanceTimersByTime(1999);
+      vi.advanceTimersByTime(999);
     });
     expect(container.querySelector('mark')).toBeNull();
 

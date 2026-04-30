@@ -7,27 +7,27 @@ export function escapeHtml(text: string): string {
     .replace(/'/g, '&#39;');
 }
 
+export interface HighlightSelectionSnapshot {
+  startNodePath: number[];
+  startOffset: number;
+  endNodePath: number[];
+  endOffset: number;
+  selectedText: string;
+  signature: string;
+}
+
 export function applySelectionHighlight(
   container: HTMLElement,
   selection: Selection,
   highlightClassName = 'rounded-sm bg-yellow-200/80 text-gray-900',
 ): string | null {
-  if (selection.rangeCount === 0) {
-    return null;
-  }
-
-  const range = selection.getRangeAt(0);
-  const selectedText = selection.toString().trim();
-  if (!selectedText) {
-    return null;
-  }
-
-  if (!container.contains(range.commonAncestorContainer)) {
+  const snapshot = createHighlightSelectionSnapshot(container, selection);
+  if (!snapshot) {
     return null;
   }
 
   const clonedContainer = container.cloneNode(true) as HTMLElement;
-  const clonedRange = createClonedRange(container, clonedContainer, range);
+  const clonedRange = createClonedRangeFromSnapshot(clonedContainer, snapshot);
   if (!clonedRange) {
     return null;
   }
@@ -48,6 +48,39 @@ export function applySelectionHighlight(
   }
 
   selection.removeAllRanges();
+
+  return clonedContainer.innerHTML;
+}
+
+export function applyHighlightFromSnapshot(
+  container: HTMLElement,
+  snapshot: HighlightSelectionSnapshot,
+  highlightClassName = 'rounded-sm bg-yellow-200/80 text-gray-900',
+): string | null {
+  const clonedContainer = container.cloneNode(true) as HTMLElement;
+  const clonedRange = createClonedRangeFromSnapshot(clonedContainer, snapshot);
+  if (!clonedRange) {
+    return null;
+  }
+
+  if (!clonedRange.toString().trim()) {
+    return null;
+  }
+
+  const wrapper = document.createElement('mark');
+  wrapper.className = highlightClassName;
+  wrapper.setAttribute('data-highlighted', 'true');
+
+  try {
+    clonedRange.surroundContents(wrapper);
+  } catch {
+    try {
+      wrapper.appendChild(clonedRange.extractContents());
+      clonedRange.insertNode(wrapper);
+    } catch {
+      return null;
+    }
+  }
 
   return clonedContainer.innerHTML;
 }
@@ -73,27 +106,59 @@ export function removeHighlightAtIndex(container: HTMLElement, highlightIndex: n
   return clonedContainer.innerHTML;
 }
 
-function createClonedRange(
-  sourceContainer: HTMLElement,
-  clonedContainer: HTMLElement,
-  sourceRange: Range,
-): Range | null {
-  const startNodePath = getNodePath(sourceContainer, sourceRange.startContainer);
-  const endNodePath = getNodePath(sourceContainer, sourceRange.endContainer);
+export function createHighlightSelectionSnapshot(
+  container: HTMLElement,
+  selection: Selection,
+): HighlightSelectionSnapshot | null {
+  if (selection.rangeCount === 0) {
+    return null;
+  }
+
+  let range: Range;
+  try {
+    range = selection.getRangeAt(0);
+  } catch {
+    return null;
+  }
+  const selectedText = selection.toString().trim();
+  if (!selectedText) {
+    return null;
+  }
+
+  if (!container.contains(range.commonAncestorContainer)) {
+    return null;
+  }
+
+  const startNodePath = getNodePath(container, range.startContainer);
+  const endNodePath = getNodePath(container, range.endContainer);
   if (!startNodePath || !endNodePath) {
     return null;
   }
 
-  const clonedStartNode = resolveNodePath(clonedContainer, startNodePath);
-  const clonedEndNode = resolveNodePath(clonedContainer, endNodePath);
+  return {
+    startNodePath,
+    startOffset: range.startOffset,
+    endNodePath,
+    endOffset: range.endOffset,
+    selectedText,
+    signature: `${startNodePath.join('.')}:${range.startOffset}|${endNodePath.join('.')}:${range.endOffset}|${selectedText}`,
+  };
+}
+
+function createClonedRangeFromSnapshot(
+  clonedContainer: HTMLElement,
+  snapshot: HighlightSelectionSnapshot,
+): Range | null {
+  const clonedStartNode = resolveNodePath(clonedContainer, snapshot.startNodePath);
+  const clonedEndNode = resolveNodePath(clonedContainer, snapshot.endNodePath);
   if (!clonedStartNode || !clonedEndNode) {
     return null;
   }
 
   const clonedRange = document.createRange();
   try {
-    clonedRange.setStart(clonedStartNode, sourceRange.startOffset);
-    clonedRange.setEnd(clonedEndNode, sourceRange.endOffset);
+    clonedRange.setStart(clonedStartNode, snapshot.startOffset);
+    clonedRange.setEnd(clonedEndNode, snapshot.endOffset);
   } catch {
     return null;
   }

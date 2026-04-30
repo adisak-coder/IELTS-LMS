@@ -82,6 +82,33 @@ describe('student question experience', () => {
     expect(screen.getByRole('option', { name: 'Category B' })).toBeInTheDocument();
   });
 
+  it('uses full-width compact controls for classification in narrow tablet panes', () => {
+    const block: ClassificationBlock = {
+      id: 'classify-compact',
+      type: 'CLASSIFICATION',
+      instruction: 'Classify each item.',
+      categories: ['Category A', 'Category B'],
+      items: [{ id: 'item-1', text: 'First item', correctAnswer: 'Category A' }],
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={1}
+        answer={[]}
+        onChange={() => {}}
+        tabletMode
+        compactPane
+      />,
+    );
+
+    const select = screen.getByRole('combobox', { name: 'Category selection for question 1' });
+    expect(select).toHaveClass('w-full');
+    expect(select).toHaveClass('min-w-0');
+    expect(select).not.toHaveClass('min-w-[11rem]');
+  });
+
   it('does not show decorative option tags for matching feature questions', () => {
     const block: MatchingFeaturesBlock = {
       id: 'features-1',
@@ -502,11 +529,12 @@ describe('student question experience', () => {
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
       '--reading-pane-width': '40%',
-      '--question-pane-width': 'calc(60% - var(--split-divider-width))',
+      '--question-pane-width': 'calc(60%)',
       '--split-divider-width': '32px',
     });
     expect(screen.getByTestId('reading-pane-resizer')).toBeInTheDocument();
     expect(screen.getByTestId('reading-pane-resizer')).toHaveClass('w-11');
+    expect(screen.getByTestId('reading-pane-resizer')).toHaveClass('absolute');
     expect(screen.getByTestId('reading-pane-resizer').querySelector('.w-14')).toBeInTheDocument();
     expect(screen.getByTestId('reading-pane-resizer').querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
     expect(workspace.querySelector('.min-w-\\[48px\\]')).toBeInTheDocument();
@@ -536,7 +564,7 @@ describe('student question experience', () => {
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
       '--reading-pane-width': '60%',
-      '--question-pane-width': 'calc(40% - var(--split-divider-width))',
+      '--question-pane-width': 'calc(40%)',
     });
 
     fireEvent.mouseDown(screen.getByTestId('reading-pane-resizer'), { clientX: 580 });
@@ -544,7 +572,7 @@ describe('student question experience', () => {
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
       '--reading-pane-width': '6%',
-      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
+      '--question-pane-width': 'calc(94%)',
     });
 
     readingWorkspaceRect.mockReturnValue({
@@ -562,9 +590,10 @@ describe('student question experience', () => {
     fireEvent.mouseMove(document, { clientX: 1800 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--reading-pane-width': '95%',
-      '--question-pane-width': 'calc(5% - var(--split-divider-width))',
+      '--reading-pane-width': '97%',
+      '--question-pane-width': 'calc(3%)',
     });
+    expect(screen.getByTestId('reading-question-scroll')).toHaveClass('p-2.5');
   });
 
   it('shows a single reading question number without a repeated range', () => {
@@ -1289,7 +1318,7 @@ describe('student question experience', () => {
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
       '--listening-pane-width': '40%',
-      '--question-pane-width': 'calc(60% - var(--split-divider-width))',
+      '--question-pane-width': 'calc(60%)',
       '--split-divider-width': '32px',
     });
     expect(screen.getByTestId('listening-pane-resizer')).toBeInTheDocument();
@@ -1297,6 +1326,7 @@ describe('student question experience', () => {
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
     expect(screen.queryByText(longInstruction.trim())).not.toBeInTheDocument();
     expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('w-11');
+    expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('absolute');
     expect(screen.getByTestId('listening-pane-resizer').querySelector('.w-14')).toBeInTheDocument();
     expect(screen.getByTestId('listening-pane-resizer').querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
     expect(workspace.querySelector('.min-w-\\[48px\\]')).toBeInTheDocument();
@@ -1326,7 +1356,7 @@ describe('student question experience', () => {
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
       '--listening-pane-width': '60%',
-      '--question-pane-width': 'calc(40% - var(--split-divider-width))',
+      '--question-pane-width': 'calc(40%)',
     });
 
     fireEvent.mouseDown(screen.getByTestId('listening-pane-resizer'), { clientX: 580 });
@@ -1334,7 +1364,7 @@ describe('student question experience', () => {
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
       '--listening-pane-width': '6%',
-      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
+      '--question-pane-width': 'calc(94%)',
     });
 
     listeningWorkspaceRect.mockReturnValue({
@@ -1352,9 +1382,10 @@ describe('student question experience', () => {
     fireEvent.mouseMove(document, { clientX: 1800 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--listening-pane-width': '95%',
-      '--question-pane-width': 'calc(5% - var(--split-divider-width))',
+      '--listening-pane-width': '97%',
+      '--question-pane-width': 'calc(3%)',
     });
+    expect(screen.getByTestId('listening-question-scroll')).toHaveClass('p-2.5');
   });
 
   it('places listening diagram material on the left and answers on the right', () => {
