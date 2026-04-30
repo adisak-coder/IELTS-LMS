@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DiagramLabelingBlock, ExamState, QuestionAnswer } from '../../types';
+import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { QuestionRenderer } from './QuestionRenderer';
 import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
@@ -16,7 +17,11 @@ import { StudentZoomableMedia } from './StudentZoomableMedia';
 interface StudentListeningProps {
   state: ExamState;
   answers: Record<string, QuestionAnswer>;
-  onAnswerChange: (questionId: string, answer: QuestionAnswer) => void;
+  onAnswerChange: (
+    questionId: string,
+    answer: QuestionAnswer,
+    meta?: StudentAnswerMutationMeta,
+  ) => void;
   currentQuestionId: string | null;
   onNavigate: (id: string) => void;
   flags?: Record<string, boolean>;
@@ -511,7 +516,9 @@ export function StudentListening({
                               block={block}
                               number={globalIdx}
                               answer={answers[firstEntry?.answerKey ?? q.id]}
-                              onChange={(val) => onAnswerChange(firstEntry?.answerKey ?? q.id, val)}
+                              onChange={(val, meta) =>
+                                onAnswerChange(firstEntry?.answerKey ?? q.id, val, meta)
+                              }
                               isFlagged={flagId ? Boolean(flags[flagId]) : false}
                               isActive={questionEntries.some((entry) => entry.id === currentQuestionId)}
                               slotIds={questionEntries.map((entry) => entry.id)}
@@ -567,7 +574,9 @@ export function StudentListening({
                           block={block}
                           number={(singleBlockQuestion ? getQuestionStartNumber(allQuestions, singleBlockQuestion.id) : null) ?? blockStartQ}
                           answer={answers[singleBlockQuestion?.answerKey ?? block.id]}
-                          onChange={(val) => onAnswerChange(singleBlockQuestion?.answerKey ?? block.id, val)}
+                          onChange={(val, meta) =>
+                            onAnswerChange(singleBlockQuestion?.answerKey ?? block.id, val, meta)
+                          }
                           isFlagged={singleBlockQuestion ? Boolean(flags[singleBlockQuestion.id]) : false}
                           isActive={blockQuestions.some((entry) => entry.id === currentQuestionId)}
                           slotIds={blockQuestions.map((entry) => entry.id)}

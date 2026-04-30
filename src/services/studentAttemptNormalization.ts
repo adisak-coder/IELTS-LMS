@@ -47,6 +47,10 @@ export function deriveProctorStatus(
 
 export function normalizeStudentAttempt(attempt: StudentAttempt): StudentAttempt {
   const candidateId = deriveCandidateId(attempt);
+  const revision =
+    typeof attempt.revision === 'number' && Number.isFinite(attempt.revision)
+      ? attempt.revision
+      : 0;
   const lastWarningId =
     attempt.lastWarningId ??
     [...(attempt.violations ?? [])]
@@ -56,6 +60,7 @@ export function normalizeStudentAttempt(attempt: StudentAttempt): StudentAttempt
 
   return {
     ...attempt,
+    revision,
     candidateId,
     candidateName: attempt.candidateName ?? `Candidate ${candidateId}`,
     candidateEmail: attempt.candidateEmail ?? `${candidateId}@example.com`,

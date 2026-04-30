@@ -9,7 +9,7 @@ use ielts_backend_application::delivery::{
     DeliveryError, DeliveryService, MutationBatchResponseMode,
 };
 use ielts_backend_domain::attempt::{
-    StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
+    MutationEnvelope, StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
     StudentHeartbeatResponse, StudentLiveSessionContext, StudentMutationBatchRequest,
     StudentMutationBatchResponse, StudentPrecheckRequest, StudentSessionContext,
     StudentSessionQuery, StudentStaticSessionContext, StudentSubmitRequest, StudentSubmitResponse,
@@ -188,6 +188,140 @@ pub struct HeartbeatQuery {
     pub response_mode: Option<HeartbeatResponseMode>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApiMutationBatchRequest {
+    attempt_id: String,
+    mutations: Vec<ApiMutationCommand>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ApiMutationCommand {
+    mutation_id: String,
+    base_revision: i32,
+    #[serde(flatten)]
+    command: ApiMutationCommandPayload,
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(tag = "type", deny_unknown_fields)]
+enum ApiMutationCommandPayload {
+    SetSlot {
+        #[serde(rename = "questionId")]
+        question_id: String,
+        #[serde(rename = "slotIndex")]
+        slot_index: i32,
+        value: String,
+    },
+    ClearSlot {
+        #[serde(rename = "questionId")]
+        question_id: String,
+        #[serde(rename = "slotIndex")]
+        slot_index: i32,
+    },
+    SetScalar {
+        #[serde(rename = "questionId")]
+        question_id: String,
+        value: String,
+    },
+    ClearScalar {
+        #[serde(rename = "questionId")]
+        question_id: String,
+    },
+    SetChoice {
+        #[serde(rename = "questionId")]
+        question_id: String,
+        value: Value,
+    },
+    ClearChoice {
+        #[serde(rename = "questionId")]
+        question_id: String,
+    },
+    SetEssayText {
+        #[serde(rename = "taskId")]
+        task_id: String,
+        value: String,
+    },
+    ClearEssayText {
+        #[serde(rename = "taskId")]
+        task_id: String,
+    },
+}
+
+impl ApiMutationCommandPayload {
+    fn mutation_type(&self) -> &'static str {
+        match self {
+            Self::SetSlot { .. } => "SetSlot",
+            Self::ClearSlot { .. } => "ClearSlot",
+            Self::SetScalar { .. } => "SetScalar",
+            Self::ClearScalar { .. } => "ClearScalar",
+            Self::SetChoice { .. } => "SetChoice",
+            Self::ClearChoice { .. } => "ClearChoice",
+            Self::SetEssayText { .. } => "SetEssayText",
+            Self::ClearEssayText { .. } => "ClearEssayText",
+        }
+    }
+
+    fn payload(&self, base_revision: i32) -> Value {
+        match self {
+            Self::SetSlot {
+                question_id,
+                slot_index,
+                value,
+            } => json!({
+                "baseRevision": base_revision,
+                "questionId": question_id,
+                "slotIndex": slot_index,
+                "value": value
+            }),
+            Self::ClearSlot {
+                question_id,
+                slot_index,
+            } => json!({
+                "baseRevision": base_revision,
+                "questionId": question_id,
+                "slotIndex": slot_index
+            }),
+            Self::SetScalar { question_id, value } => json!({
+                "baseRevision": base_revision,
+                "questionId": question_id,
+                "value": value
+            }),
+            Self::ClearScalar { question_id } => json!({
+                "baseRevision": base_revision,
+                "questionId": question_id
+            }),
+            Self::SetChoice { question_id, value } => json!({
+                "baseRevision": base_revision,
+                "questionId": question_id,
+                "value": value
+            }),
+            Self::ClearChoice { question_id } => json!({
+                "baseRevision": base_revision,
+                "questionId": question_id
+            }),
+            Self::SetEssayText { task_id, value } => json!({
+                "baseRevision": base_revision,
+                "taskId": task_id,
+                "value": value
+            }),
+            Self::ClearEssayText { task_id } => json!({
+                "baseRevision": base_revision,
+                "taskId": task_id
+            }),
+        }
+    }
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ApiSubmitRequest {
+    attempt_id: String,
+    last_seen_revision: i32,
+    submission_id: String,
+}
+
 pub async fn save_precheck(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -334,8 +468,7 @@ pub async fn apply_mutation_batch(
     Path((schedule_id, _batch)): Path<(Uuid, String)>,
     Json(payload): Json<Value>,
 ) -> Result<ApiResponse<StudentMutationBatchResponse>, ApiError> {
-    let response_mode = parse_mutation_batch_response_mode(&payload)?;
-    let mut req: StudentMutationBatchRequest = serde_json::from_value(payload).map_err(|err| {
+    let api_req: ApiMutationBatchRequest = serde_json::from_value(payload).map_err(|err| {
         ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "VALIDATION_ERROR",
@@ -374,8 +507,15 @@ pub async fn apply_mutation_batch(
             "Attempt credential does not match the schedule.",
         ));
     }
+    if api_req.attempt_id != attempt_id {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "Body attemptId does not match the route-authorized attempt.",
+        ));
+    }
 
-    if req.mutations.len() > state.config.max_mutations_per_batch {
+    if api_req.mutations.len() > state.config.max_mutations_per_batch {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,
             "VALIDATION_ERROR",
@@ -386,55 +526,32 @@ pub async fn apply_mutation_batch(
         ));
     }
 
-    let contains_violation = req
-        .mutations
-        .iter()
-        .any(|mutation| mutation.mutation_type.as_str() == "violation");
-
-    for mutation in &req.mutations {
-        match mutation.mutation_type.as_str() {
-            "writing_answer" => {
-                if let Some(value) = mutation.payload.get("value").and_then(Value::as_str) {
-                    if value.chars().count() > state.config.max_writing_answer_chars {
-                        return Err(ApiError::new(
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            "VALIDATION_ERROR",
-                            &format!(
-                                "Writing answers must be at most {} characters.",
-                                state.config.max_writing_answer_chars
-                            ),
-                        ));
-                    }
-                }
-            }
-            "answer" => {
-                if let Some(value) = mutation.payload.get("value").and_then(Value::as_str) {
-                    if value.chars().count() > state.config.max_text_answer_chars {
-                        return Err(ApiError::new(
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            "VALIDATION_ERROR",
-                            &format!(
-                                "Text answers must be at most {} characters.",
-                                state.config.max_text_answer_chars
-                            ),
-                        ));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    req.attempt_id = attempt_id.clone();
-    req.client_session_id = claims_client_session_id;
-    req.student_key = load_attempt_student_key(&state, &attempt_id).await?;
+    let contains_violation = false;
+    let req = StudentMutationBatchRequest {
+        attempt_id: attempt_id.clone(),
+        student_key: load_attempt_student_key(&state, &attempt_id).await?,
+        client_session_id: claims_client_session_id,
+        mutations: api_req
+            .mutations
+            .iter()
+            .enumerate()
+            .map(|(index, mutation)| MutationEnvelope {
+                id: mutation.mutation_id.clone(),
+                seq: (index + 1) as i64,
+                timestamp: Utc::now(),
+                mutation_type: mutation.command.mutation_type().to_owned(),
+                base_revision: Some(mutation.base_revision),
+                payload: mutation.command.payload(mutation.base_revision),
+            })
+            .collect(),
+    };
     let service = delivery_service(&state);
     let started = Instant::now();
     let mut result = service
         .apply_mutation_batch(
             schedule_id,
             req,
-            response_mode,
+            MutationBatchResponseMode::Full,
             extract_idempotency_key(&headers)?,
         )
         .await?;
@@ -742,10 +859,18 @@ pub async fn submit_student_session(
     principal: AttemptPrincipal,
     headers: HeaderMap,
     Path(schedule_id): Path<Uuid>,
-    Json(mut req): Json<StudentSubmitRequest>,
+    Json(payload): Json<Value>,
 ) -> Result<ApiResponse<StudentSubmitResponse>, ApiError> {
+    let api_req: ApiSubmitRequest = serde_json::from_value(payload).map_err(|err| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!("Invalid submit payload: {err}"),
+        )
+    })?;
     let attempt_id = principal.authorization.claims.attempt_id.clone();
     let claims_schedule_id = principal.authorization.claims.schedule_id.clone();
+    let claims_client_session_id = principal.authorization.claims.client_session_id.clone();
 
     // Apply strict per-attempt rate limiting for submit (idempotency enforcement)
     let key = RateLimitKey::Attempt(attempt_id.clone());
@@ -774,12 +899,28 @@ pub async fn submit_student_session(
             "Attempt credential does not match the schedule.",
         ));
     }
-    req.attempt_id = attempt_id.clone();
-    req.student_key = load_attempt_student_key(&state, &attempt_id).await?;
+    if api_req.attempt_id != attempt_id {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "Body attemptId does not match the route-authorized attempt.",
+        ));
+    }
+    let idempotency_key = require_idempotency_key(&headers, "submit")?;
+    let req = StudentSubmitRequest {
+        attempt_id: attempt_id.clone(),
+        student_key: load_attempt_student_key(&state, &attempt_id).await?,
+        last_seen_revision: Some(api_req.last_seen_revision),
+        submission_id: Some(api_req.submission_id),
+        client_session_id: Some(claims_client_session_id),
+        answers: None,
+        writing_answers: None,
+        flags: None,
+    };
     let service = delivery_service(&state);
     let started = Instant::now();
     let mut submission = service
-        .submit_attempt(schedule_id, req, extract_idempotency_key(&headers)?)
+        .submit_attempt(schedule_id, req, Some(idempotency_key))
         .await?;
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
     submission.refreshed_attempt_credential = auth_service
@@ -800,11 +941,34 @@ pub async fn submit_student_session(
 impl From<DeliveryError> for ApiError {
     fn from(err: DeliveryError) -> Self {
         match err {
-            DeliveryError::Conflict { message, reason } => {
+            DeliveryError::Conflict {
+                message,
+                reason,
+                latest_revision,
+                server_accepted_through_seq,
+                active_session_id,
+            } => {
                 let api = ApiError::new(StatusCode::CONFLICT, "CONFLICT", &message);
-                match reason {
-                    Some(reason) => api.with_details(json!({ "reason": reason.as_str() })),
-                    None => api,
+                let mut details = serde_json::Map::new();
+                if let Some(reason) = reason {
+                    details.insert("reason".to_owned(), json!(reason.as_str()));
+                }
+                if let Some(latest_revision) = latest_revision {
+                    details.insert("latestRevision".to_owned(), json!(latest_revision));
+                }
+                if let Some(server_accepted_through_seq) = server_accepted_through_seq {
+                    details.insert(
+                        "serverAcceptedThroughSeq".to_owned(),
+                        json!(server_accepted_through_seq),
+                    );
+                }
+                if let Some(active_session_id) = active_session_id {
+                    details.insert("activeSessionId".to_owned(), json!(active_session_id));
+                }
+                if details.is_empty() {
+                    api
+                } else {
+                    api.with_details(Value::Object(details))
                 }
             }
             DeliveryError::NotFound => {
@@ -846,6 +1010,16 @@ fn extract_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiErr
     }
 
     Ok(Some(trimmed.to_owned()))
+}
+
+fn require_idempotency_key(headers: &HeaderMap, operation: &str) -> Result<String, ApiError> {
+    extract_idempotency_key(headers)?.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            &format!("Idempotency-Key header is required for {operation} requests."),
+        )
+    })
 }
 
 async fn authorize_student(
@@ -937,5 +1111,115 @@ fn map_auth_error(error: ielts_backend_application::auth::AuthError) -> ApiError
             "VALIDATION_ERROR",
             &message,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mutation_batch_rejects_unknown_top_level_fields() {
+        let payload = json!({
+            "attemptId": "attempt-1",
+            "mutations": [],
+            "answers": { "q1": "A" }
+        });
+
+        let parsed = serde_json::from_value::<ApiMutationBatchRequest>(payload);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn mutation_batch_rejects_unknown_command_type() {
+        let payload = json!({
+            "attemptId": "attempt-1",
+            "mutations": [{
+                "mutationId": "m-1",
+                "baseRevision": 0,
+                "type": "ReplaceAnswer",
+                "questionId": "q1",
+                "value": "A"
+            }]
+        });
+
+        let parsed = serde_json::from_value::<ApiMutationBatchRequest>(payload);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn mutation_batch_rejects_unknown_command_fields() {
+        let payload = json!({
+            "attemptId": "attempt-1",
+            "mutations": [{
+                "mutationId": "m-1",
+                "baseRevision": 0,
+                "type": "SetScalar",
+                "questionId": "q1",
+                "value": "A",
+                "answers": ["A", "B"]
+            }]
+        });
+
+        let parsed = serde_json::from_value::<ApiMutationBatchRequest>(payload);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn mutation_batch_accepts_allowlisted_command_and_preserves_base_revision() {
+        let payload = json!({
+            "attemptId": "attempt-1",
+            "mutations": [{
+                "mutationId": "m-1",
+                "baseRevision": 7,
+                "type": "SetSlot",
+                "questionId": "q1",
+                "slotIndex": 2,
+                "value": "wolf"
+            }]
+        });
+
+        let parsed = serde_json::from_value::<ApiMutationBatchRequest>(payload).unwrap();
+        assert_eq!(parsed.mutations.len(), 1);
+        let command = &parsed.mutations[0];
+        assert_eq!(command.base_revision, 7);
+        assert_eq!(command.command.mutation_type(), "SetSlot");
+        assert_eq!(
+            command.command.payload(command.base_revision),
+            json!({
+                "baseRevision": 7,
+                "questionId": "q1",
+                "slotIndex": 2,
+                "value": "wolf"
+            })
+        );
+    }
+
+    #[test]
+    fn submit_request_rejects_snapshot_fields() {
+        let payload = json!({
+            "attemptId": "attempt-1",
+            "lastSeenRevision": 11,
+            "submissionId": "submit-1",
+            "answers": {"q1": "A"}
+        });
+
+        let parsed = serde_json::from_value::<ApiSubmitRequest>(payload);
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn require_idempotency_key_rejects_missing_header() {
+        let headers = HeaderMap::new();
+        let result = require_idempotency_key(&headers, "submit");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn require_idempotency_key_accepts_present_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert("Idempotency-Key", "submit-1".parse().unwrap());
+        let result = require_idempotency_key(&headers, "submit");
+        assert_eq!(result.unwrap(), "submit-1");
     }
 }

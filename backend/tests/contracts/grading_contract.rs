@@ -553,6 +553,9 @@ async fn bootstrap_and_submit(
                 answers: None,
                 writing_answers: None,
                 flags: None,
+                last_seen_revision: Some(0),
+                submission_id: Some(format!("submission-{candidate_id}")),
+                client_session_id: None,
             },
             None,
         )

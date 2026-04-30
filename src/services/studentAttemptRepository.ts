@@ -89,6 +89,7 @@ interface BackendStudentAttempt {
   scheduleId: string;
   studentKey: string;
   examId: string;
+  revision?: number | null | undefined;
   publishedVersionId?: string | null | undefined;
   examTitle: string;
   candidateId: string;
@@ -579,7 +580,18 @@ function mutationModuleKey(mutation: StudentAttemptMutation): ModuleType | null 
 function mutationSupersessionKey(mutation: StudentAttemptMutation): string | null {
   if (mutation.type === 'answer' || mutation.type === 'flag') {
     const questionId = mutation.payload['questionId'];
-    return typeof questionId === 'string' ? `${mutation.type}:${questionId}` : null;
+    if (typeof questionId !== 'string') {
+      return null;
+    }
+
+    if (mutation.type === 'answer') {
+      const slotIndex = mutation.payload['slotIndex'];
+      if (typeof slotIndex === 'number' && Number.isInteger(slotIndex) && slotIndex >= 0) {
+        return `answer:${questionId}:slot:${slotIndex}`;
+      }
+    }
+
+    return `${mutation.type}:${questionId}`;
   }
 
   if (mutation.type === 'writing_answer') {
@@ -831,6 +843,194 @@ function backendConflictReason(error: unknown): string | null {
   return null;
 }
 
+function backendConflictLatestRevision(error: unknown): number | null {
+  if (error instanceof ApiClientError) {
+    const latestRevision = error.backendDetails?.['latestRevision'];
+    if (typeof latestRevision === 'number' && Number.isFinite(latestRevision)) {
+      return latestRevision;
+    }
+  }
+
+  if (typeof error === 'object' && error !== null && 'backendDetails' in error) {
+    const details = (error as { backendDetails?: unknown }).backendDetails;
+    if (details && typeof details === 'object' && 'latestRevision' in (details as Record<string, unknown>)) {
+      const latestRevision = (details as Record<string, unknown>)['latestRevision'];
+      if (typeof latestRevision === 'number' && Number.isFinite(latestRevision)) {
+        return latestRevision;
+      }
+    }
+  }
+
+  return null;
+}
+
+type OperationCommandPayload =
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'SetSlot';
+      questionId: string;
+      slotIndex: number;
+      value: string;
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'ClearSlot';
+      questionId: string;
+      slotIndex: number;
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'SetScalar';
+      questionId: string;
+      value: string;
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'ClearScalar';
+      questionId: string;
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'SetChoice';
+      questionId: string;
+      value: string | string[];
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'ClearChoice';
+      questionId: string;
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'SetEssayText';
+      taskId: string;
+      value: string;
+    }
+  | {
+      mutationId: string;
+      baseRevision: number;
+      type: 'ClearEssayText';
+      taskId: string;
+    };
+
+function toOperationCommand(
+  mutation: StudentAttemptMutation,
+  baseRevision: number,
+): OperationCommandPayload | null {
+  if (mutation.type === 'answer') {
+    const questionId = mutation.payload['questionId'];
+    if (typeof questionId !== 'string' || !questionId.trim()) {
+      return null;
+    }
+
+    const slotIndex = mutation.payload['slotIndex'];
+    const rawValue = mutation.payload['value'];
+    if (typeof slotIndex === 'number' && Number.isInteger(slotIndex) && slotIndex >= 0) {
+      const slotValue =
+        Array.isArray(rawValue) && slotIndex < rawValue.length
+          ? rawValue[slotIndex]
+          : rawValue;
+      if (typeof slotValue === 'string' && slotValue.trim()) {
+        return {
+          mutationId: mutation.id,
+          baseRevision,
+          type: 'SetSlot',
+          questionId,
+          slotIndex,
+          value: slotValue,
+        };
+      }
+      return {
+        mutationId: mutation.id,
+        baseRevision,
+        type: 'ClearSlot',
+        questionId,
+        slotIndex,
+      };
+    }
+
+    if (Array.isArray(rawValue)) {
+      const values = rawValue.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+      if (values.length === 0) {
+        return {
+          mutationId: mutation.id,
+          baseRevision,
+          type: 'ClearChoice',
+          questionId,
+        };
+      }
+      return {
+        mutationId: mutation.id,
+        baseRevision,
+        type: 'SetChoice',
+        questionId,
+        value: values,
+      };
+    }
+
+    if (typeof rawValue === 'string') {
+      if (rawValue.trim().length === 0) {
+        return {
+          mutationId: mutation.id,
+          baseRevision,
+          type: 'ClearScalar',
+          questionId,
+        };
+      }
+      return {
+        mutationId: mutation.id,
+        baseRevision,
+        type: 'SetScalar',
+        questionId,
+        value: rawValue,
+      };
+    }
+
+    if (rawValue === null || rawValue === undefined) {
+      return {
+        mutationId: mutation.id,
+        baseRevision,
+        type: 'ClearScalar',
+        questionId,
+      };
+    }
+
+    return null;
+  }
+
+  if (mutation.type === 'writing_answer') {
+    const taskId = mutation.payload['taskId'];
+    const value = mutation.payload['value'];
+    if (typeof taskId !== 'string' || !taskId.trim()) {
+      return null;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      return {
+        mutationId: mutation.id,
+        baseRevision,
+        type: 'SetEssayText',
+        taskId,
+        value,
+      };
+    }
+    return {
+      mutationId: mutation.id,
+      baseRevision,
+      type: 'ClearEssayText',
+      taskId,
+    };
+  }
+
+  return null;
+}
+
 function getClientSessionStorageKey(scheduleId: string, studentKey: string): string {
   return `${STORAGE_KEY_CLIENT_SESSION_PREFIX}${scheduleId}:${studentKey}`;
 }
@@ -959,6 +1159,7 @@ export function mapBackendStudentAttempt(payload: BackendStudentAttempt): Studen
     scheduleId: payload.scheduleId,
     studentKey: payload.studentKey,
     examId: payload.examId,
+    revision: payload.revision ?? 0,
     publishedVersionId: payload.publishedVersionId ?? null,
     examTitle: payload.examTitle,
     candidateId: payload.candidateId,
@@ -1153,6 +1354,7 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
       scheduleId: seed.scheduleId,
       studentKey: seed.studentKey,
       examId: seed.examId,
+      revision: 0,
       examTitle: seed.examTitle,
       candidateId: seed.candidateId,
       candidateName: seed.candidateName,
@@ -1364,31 +1566,41 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
   }): Promise<FlushQueueResult> {
     let currentAttempt = args.attempt;
     let nextSeq = args.startSeq;
+    let nextRevision = Number(currentAttempt.revision ?? 0);
     let remainingMutations = [...args.mutations];
 
     while (remainingMutations.length > 0) {
       const chunk = remainingMutations.slice(0, MUTATION_BATCH_CHUNK_SIZE);
+      let chunkBaseRevision = nextRevision;
+      const mappedCommands = chunk
+        .map((mutation) => {
+          const mapped = toOperationCommand(mutation, chunkBaseRevision);
+          if (mapped) {
+            chunkBaseRevision += 1;
+          }
+          return mapped;
+        })
+        .filter((command): command is OperationCommandPayload => command !== null);
+
+      if (mappedCommands.length === 0) {
+        remainingMutations = remainingMutations.slice(chunk.length);
+        await this.cache.savePendingMutations(currentAttempt.id, remainingMutations);
+        continue;
+      }
+
       try {
         const response = await this.postWithAttemptAuth<BackendMutationBatchResponse>(
           currentAttempt,
           `/v1/student/sessions/${currentAttempt.scheduleId}/mutations:batch`,
           {
             attemptId: currentAttempt.id,
-            studentKey: currentAttempt.studentKey,
-            clientSessionId: args.clientSessionId,
-            responseMode: 'ack',
-            mutations: chunk.map((mutation, index) => ({
-              id: mutation.id,
-              seq: nextSeq + index + 1,
-              timestamp: mutation.timestamp,
-              mutationType: mutation.type,
-              payload: mutation.payload,
-            })),
+            mutations: mappedCommands,
           },
           { retries: 0 },
         );
 
         nextSeq = response.serverAcceptedThroughSeq;
+        nextRevision = Number(response.revision ?? chunkBaseRevision);
         storeMutationSequenceWatermark(
           currentAttempt.id,
           args.clientSessionId,
@@ -1401,7 +1613,10 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
         const responseAttempt = response.attempt
           ? mapBackendStudentAttempt(response.attempt)
-          : currentAttempt;
+          : {
+              ...currentAttempt,
+              revision: nextRevision,
+            };
         currentAttempt = mergeStudentAttemptRecovery(responseAttempt, {
           lastDroppedMutations: currentAttempt.recovery.lastDroppedMutations,
           lastLocalMutationAt: currentAttempt.recovery.lastLocalMutationAt,
@@ -1485,34 +1700,53 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
     currentAttempt = first.attempt;
     const statusCode = (first.error as { statusCode?: number }).statusCode;
-    const message = first.error instanceof Error ? first.error.message : '';
     const reason = statusCode === 409 ? backendConflictReason(first.error) : null;
-    const isSequenceMismatch =
-      statusCode === 409 && message.toLowerCase().includes('mutation sequence must continue');
+    const latestRevision = statusCode === 409 ? backendConflictLatestRevision(first.error) : null;
 
-    if (isSequenceMismatch) {
-      // Treat sequence mismatch as "server already accepted these mutations" and resync.
-      await this.cache.clearPendingMutations(currentAttempt.id);
-      mutationSequenceWatermarks.delete(watermarkKey);
-      try {
-        getBrowserStorage('sessionStorage')?.removeItem(
-          getMutationWatermarkStorageKey(currentAttempt.id, clientSessionId),
-        );
-      } catch {
-        // ignore
-      }
-
+    if (statusCode === 409 && reason === 'BASE_REVISION_MISMATCH') {
       const session = await backendGet<BackendStudentSessionContext>(
         `/v1/student/sessions/${currentAttempt.scheduleId}`,
         { retries: 0 },
       );
-      if (session.attempt) {
-        const refreshedAttempt = mapBackendStudentAttempt(session.attempt);
-        storeAttemptCredential(refreshedAttempt, session.attemptCredential);
-        primeMutationSequenceWatermark(refreshedAttempt);
-        await this.cache.saveAttempt(refreshedAttempt);
+      if (!session.attempt) {
+        throw first.error;
       }
-      return;
+      const refreshedAttempt = mapBackendStudentAttempt(session.attempt);
+      storeAttemptCredential(refreshedAttempt, session.attemptCredential);
+      primeMutationSequenceWatermark(refreshedAttempt);
+      await this.cache.saveAttempt(refreshedAttempt);
+
+      const rebasedMutations = first.remainingMutations.map((mutation) => ({
+        ...mutation,
+        id: generateId('mutation'),
+      }));
+      await this.cache.savePendingMutations(refreshedAttempt.id, rebasedMutations);
+
+      const rebasedAttempt = mergeStudentAttemptRecovery(refreshedAttempt, {
+        pendingMutationCount: rebasedMutations.length,
+        syncState: rebasedMutations.length > 0 ? 'saving' : 'saved',
+      });
+      await this.cache.saveAttempt(rebasedAttempt);
+
+      const second = await this.flushMutationQueue({
+        attempt: rebasedAttempt,
+        clientSessionId,
+        watermarkKey,
+        startSeq: latestRevision ?? first.nextSeq,
+        mutations: rebasedMutations,
+      });
+      if (second.ok) {
+        return;
+      }
+      throw second.error;
+    }
+
+    if (statusCode === 409 && reason === 'ACTIVE_SESSION_SUPERSEDED') {
+      const staleAttempt = mergeStudentAttemptRecovery(currentAttempt, {
+        syncState: 'error',
+      });
+      await this.cache.saveAttempt(staleAttempt);
+      throw first.error;
     }
 
     const shouldAttemptPrune =
@@ -1602,19 +1836,18 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       throw new Error('Missing attempt credential for student session.');
     }
 
+    const submissionId = `student-submit-${attempt.id}`;
     const response = await this.postWithAttemptAuth<BackendSubmitResponse>(
       attempt,
       `/v1/student/sessions/${attempt.scheduleId}/submit`,
       {
         attemptId: attempt.id,
-        studentKey: attempt.studentKey,
-        answers: attempt.answers,
-        writingAnswers: attempt.writingAnswers,
-        flags: attempt.flags,
+        lastSeenRevision: Number(attempt.revision ?? 0),
+        submissionId,
       },
       {
         headers: {
-          'Idempotency-Key': `student-submit-${attempt.id}`,
+          'Idempotency-Key': submissionId,
         },
         timeout: 60_000,
         retries: 0,

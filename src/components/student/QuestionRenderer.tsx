@@ -23,6 +23,7 @@ import {
   TFNGBlock,
   TFNGQuestion,
 } from '../../types';
+import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { ProtectedInput } from './ProtectedInput';
 import { FormattedText } from './FormattedText';
 import { stripBoldMarkdown } from '../../utils/boldMarkdown';
@@ -43,7 +44,7 @@ interface QuestionRendererProps {
   block: QuestionBlock;
   number: number;
   answer: QuestionAnswer;
-  onChange: (val: QuestionAnswer) => void;
+  onChange: (val: QuestionAnswer, meta?: StudentAnswerMutationMeta) => void;
   isFlagged?: boolean | undefined;
   isActive?: boolean | undefined;
   slotIds?: string[] | undefined;
@@ -123,7 +124,11 @@ export function QuestionRenderer({
     const next = Array.from({ length: total }, (_, candidateIndex) =>
       candidateIndex === index ? value : (stringArrayAnswer[candidateIndex] ?? ''),
     );
-    onChange(next);
+    onChange(next, {
+      slotIndex: index,
+      slotId: getSlotId(index, `${block.id}:${index}`),
+      slotCount: total,
+    });
   };
 
   const renderTextField = (

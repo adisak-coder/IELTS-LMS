@@ -24,6 +24,7 @@ import type {
   AttemptSyncState,
   HeartbeatEventType,
   StudentAnswerValue,
+  StudentAnswerMutationMeta,
   StudentAttempt,
   StudentAttemptMutation,
   StudentAttemptMutationType,
@@ -41,7 +42,11 @@ interface StudentAttemptState {
 }
 
 interface StudentAttemptActions {
-  persistAnswer: (questionId: string, answer: StudentAnswerValue) => void;
+  persistAnswer: (
+    questionId: string,
+    answer: StudentAnswerValue,
+    meta?: StudentAnswerMutationMeta,
+  ) => void;
   persistWritingAnswer: (taskId: string, text: string) => void;
   persistFlag: (questionId: string, flagged: boolean) => void;
   persistViolation: (violation: Violation) => void;
@@ -94,7 +99,16 @@ function getMutationCoalesceKey(mutation: StudentAttemptMutation): string | null
   switch (mutation.type) {
     case 'answer': {
       const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
-      return typeof questionId === 'string' && questionId.trim() ? `answer:${questionId}` : null;
+      if (!(typeof questionId === 'string' && questionId.trim())) {
+        return null;
+      }
+
+      const slotIndex = (mutation.payload as { slotIndex?: unknown } | undefined)?.slotIndex;
+      if (typeof slotIndex === 'number' && Number.isInteger(slotIndex) && slotIndex >= 0) {
+        return `answer:${questionId}:slot:${slotIndex}`;
+      }
+
+      return `answer:${questionId}`;
     }
     case 'writing_answer': {
       const taskId = (mutation.payload as { taskId?: unknown } | undefined)?.taskId;
@@ -663,7 +677,22 @@ export function StudentAttemptProvider({
     };
   }, []);
 
-  const persistAnswer = useCallback((questionId: string, answer: StudentAnswerValue) => {
+  const persistAnswer = useCallback((
+    questionId: string,
+    answer: StudentAnswerValue,
+    meta?: StudentAnswerMutationMeta,
+  ) => {
+    const payload: Record<string, unknown> = { questionId, value: answer };
+    if (typeof meta?.slotIndex === 'number' && Number.isInteger(meta.slotIndex) && meta.slotIndex >= 0) {
+      payload['slotIndex'] = meta.slotIndex;
+    }
+    if (typeof meta?.slotId === 'string' && meta.slotId.trim()) {
+      payload['slotId'] = meta.slotId;
+    }
+    if (typeof meta?.slotCount === 'number' && Number.isInteger(meta.slotCount) && meta.slotCount > 0) {
+      payload['slotCount'] = meta.slotCount;
+    }
+
     void applyPatch(
       {
         answers: {
@@ -672,7 +701,7 @@ export function StudentAttemptProvider({
       },
       'answer',
       400,
-      { questionId, value: answer },
+      payload,
     );
   }, [applyPatch]);
 

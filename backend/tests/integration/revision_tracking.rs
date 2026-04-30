@@ -25,6 +25,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0005_scheduling_and_access.sql",
     "0006_delivery.sql",
     "0010_auth_security.sql",
+    "0015_operation_write_hardening.sql",
 ];
 
 #[tokio::test]
@@ -67,6 +68,7 @@ async fn revision_increments_and_mutations_record_applied_revision() {
                         seq: 1,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
                         mutation_type: "answer".to_owned(),
+                        base_revision: None,
                         payload: json!({"questionId": "q1", "value": "A"}),
                     },
                     MutationEnvelope {
@@ -74,6 +76,7 @@ async fn revision_increments_and_mutations_record_applied_revision() {
                         seq: 2,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 5).unwrap(),
                         mutation_type: "writing_answer".to_owned(),
+                        base_revision: None,
                         payload: json!({"taskId": "task-1", "value": "Draft 1"}),
                     },
                 ],
@@ -111,6 +114,7 @@ async fn revision_increments_and_mutations_record_applied_revision() {
                     seq: 3,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
                     mutation_type: "answer".to_owned(),
+                    base_revision: None,
                     payload: json!({"questionId": "q2", "value": "B"}),
                 }],
             },

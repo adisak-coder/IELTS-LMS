@@ -15,6 +15,7 @@ import type { StudentAttempt, StudentAttemptMutation } from '../../types/student
 import {
   compactSubmittedAttempt,
   pruneStudentAttemptCache,
+  studentLocalCachePolicy,
   studentAttemptRepository,
 } from '../studentAttemptRepository';
 import { backendPost } from '../backendBridge';
@@ -261,11 +262,14 @@ describe('studentAttemptRepository', () => {
     expect(post).toHaveBeenCalledWith(
       '/v1/student/sessions/schedule-1/mutations:batch',
       expect.objectContaining({
-        responseMode: 'ack',
+        attemptId: attempt.id,
         mutations: [
           expect.objectContaining({
-            id: 'mutation-1',
-            seq: 1,
+            mutationId: 'mutation-1',
+            baseRevision: 0,
+            type: 'SetScalar',
+            questionId: 'q1',
+            value: 'A',
           }),
         ],
       }),
@@ -332,6 +336,70 @@ describe('studentAttemptRepository', () => {
 
     const callSizes = post.mock.calls.map((call) => (call[1] as { mutations: unknown[] }).mutations.length);
     expect(callSizes).toEqual([100, 100, 5]);
+  });
+
+  it('retains distinct slot-index answer mutations when pending mutations are compacted', async () => {
+    const attempt = makeAttempt();
+    await studentAttemptRepository.saveAttempt(attempt);
+
+    const max = studentLocalCachePolicy.maxPendingMutationsPerAttempt;
+    const baselineMutations: StudentAttemptMutation[] = Array.from(
+      { length: max },
+      (_value, index) => ({
+        id: `m-${index}`,
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: new Date(2026, 0, 10, 9, 0, index).toISOString(),
+        type: 'answer',
+        payload: { questionId: `q-${index}`, value: 'A' },
+      }),
+    );
+    const slotMutations: StudentAttemptMutation[] = [
+      {
+        id: 'slot-0',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: new Date(2026, 0, 10, 10, 0, 1).toISOString(),
+        type: 'answer',
+        payload: {
+          questionId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+          value: ['239', 'MODERN', 'LAMP', '', '', '', '', '', '', ''],
+          slotIndex: 2,
+        },
+      },
+      {
+        id: 'slot-1',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: new Date(2026, 0, 10, 10, 0, 2).toISOString(),
+        type: 'answer',
+        payload: {
+          questionId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+          value: ['239', 'MODERN', 'LAMP', 'AARON', '', '', '', '', '', ''],
+          slotIndex: 3,
+        },
+      },
+    ];
+
+    await studentAttemptRepository.savePendingMutations(attempt.id, [
+      ...baselineMutations,
+      ...slotMutations,
+    ]);
+
+    const stored = await studentAttemptRepository.getPendingMutations(attempt.id);
+    const storedSlotMutations = stored.filter(
+      (mutation) =>
+        mutation.type === 'answer' &&
+        mutation.payload['questionId'] === 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+    );
+
+    expect(stored.length).toBe(max);
+    expect(storedSlotMutations).toHaveLength(2);
+    expect(
+      storedSlotMutations
+        .map((mutation) => mutation.payload['slotIndex'])
+        .sort((left, right) => Number(left) - Number(right)),
+    ).toEqual([2, 3]);
   });
 
   it('compacts a submitted attempt to receipt metadata when no local queues remain', async () => {

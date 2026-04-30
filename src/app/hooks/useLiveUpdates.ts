@@ -142,13 +142,16 @@ export function useLiveUpdates(options: {
         return;
       }
 
-      lastEventRef.current = {
+      const nextEvent: LiveUpdateEvent = {
         kind: frame.kind,
         id: frame.id,
         revision: Number(frame.revision),
         event: frame.event,
-        scheduleId: frame.scheduleId,
       };
+      if (typeof frame.scheduleId === 'string') {
+        nextEvent.scheduleId = frame.scheduleId;
+      }
+      lastEventRef.current = nextEvent;
       flushDebounced();
     };
 

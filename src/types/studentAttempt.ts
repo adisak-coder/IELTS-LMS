@@ -7,6 +7,12 @@ export type StudentAnswerValue =
   | null // For cleared answers
   | undefined; // For unassigned answers
 
+export interface StudentAnswerMutationMeta {
+  slotIndex?: number | undefined;
+  slotId?: string | undefined;
+  slotCount?: number | undefined;
+}
+
 export type AttemptSyncState =
   | 'idle'
   | 'saving'
@@ -52,6 +58,7 @@ export interface StudentAttempt {
   scheduleId: string;
   studentKey: string;
   examId: string;
+  revision?: number | null;
   publishedVersionId?: string | null;
   examTitle: string;
   candidateId: string;

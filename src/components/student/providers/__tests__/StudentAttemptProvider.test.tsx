@@ -6,7 +6,10 @@ import * as studentAttemptRepoModule from '../../../../services/studentAttemptRe
 import { studentAttemptRepository } from '../../../../services/studentAttemptRepository';
 import type { ExamState } from '../../../../types';
 import type { ExamSessionRuntime } from '../../../../types/domain';
-import type { StudentAttempt, StudentAttemptMutation } from '../../../../types/studentAttempt';
+import type {
+  StudentAttempt,
+  StudentAttemptMutation,
+} from '../../../../types/studentAttempt';
 import { StudentAttemptProvider, useStudentAttempt } from '../StudentAttemptProvider';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
 
@@ -482,6 +485,45 @@ describe('StudentAttemptProvider', () => {
       taskId: 'task1',
       value: 'second',
     });
+  });
+
+  it('does not coalesce array answer mutations across different slot indexes', async () => {
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      result.current.actions.persistAnswer(
+        'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+        ['239', 'MODERN', 'LAMP', '', '', '', '', '', '', ''],
+        { slotIndex: 2 },
+      );
+      result.current.actions.persistAnswer(
+        'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+        ['239', 'MODERN', 'LAMP', 'AARON', '', '', '', '', '', ''],
+        { slotIndex: 3 },
+      );
+    });
+
+    await waitFor(() => {
+      expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalled();
+    });
+
+    const pendingMutations = vi
+      .mocked(studentAttemptRepository.savePendingMutations)
+      .mock.calls.at(-1)?.[1];
+
+    expect(pendingMutations).toHaveLength(2);
+    expect(pendingMutations?.map((mutation) => mutation.payload)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          questionId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+          slotIndex: 2,
+        }),
+        expect.objectContaining({
+          questionId: 'blk-af811567-c9aa-4a4d-8775-44b529b499fd',
+          slotIndex: 3,
+        }),
+      ]),
+    );
   });
 
   it('flushes pending mutations before submitting the attempt', async () => {

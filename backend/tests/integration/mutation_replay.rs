@@ -25,6 +25,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0005_scheduling_and_access.sql",
     "0006_delivery.sql",
     "0010_auth_security.sql",
+    "0015_operation_write_hardening.sql",
 ];
 
 #[tokio::test]
@@ -66,6 +67,7 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                         seq: 1,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
                         mutation_type: "answer".to_owned(),
+                        base_revision: None,
                         payload: json!({"questionId": "q1", "value": "A"}),
                     },
                     MutationEnvelope {
@@ -73,6 +75,7 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                         seq: 2,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 5).unwrap(),
                         mutation_type: "writing_answer".to_owned(),
+                        base_revision: None,
                         payload: json!({"taskId": "task-1", "value": "Draft 1"}),
                     },
                 ],
@@ -103,6 +106,7 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                         seq: 3,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
                         mutation_type: "answer".to_owned(),
+                        base_revision: None,
                         payload: json!({"questionId": "q1", "value": "B"}),
                     },
                     MutationEnvelope {
@@ -110,6 +114,7 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                         seq: 4,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 5).unwrap(),
                         mutation_type: "flag".to_owned(),
+                        base_revision: None,
                         payload: json!({"questionId": "q1", "value": true}),
                     },
                 ],
@@ -139,6 +144,7 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                     seq: 4,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 12, 0).unwrap(),
                     mutation_type: "answer".to_owned(),
+                    base_revision: None,
                     payload: json!({"questionId": "q1", "value": "C"}),
                 }],
             },

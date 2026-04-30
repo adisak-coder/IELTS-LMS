@@ -24,6 +24,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0005_scheduling_and_access.sql",
     "0006_delivery.sql",
     "0010_auth_security.sql",
+    "0015_operation_write_hardening.sql",
 ];
 
 #[tokio::test]
@@ -113,6 +114,9 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
                 answers: None,
                 writing_answers: None,
                 flags: None,
+                last_seen_revision: Some(attempt_after_runtime.revision),
+                submission_id: Some("submission-live-blocked".to_owned()),
+                client_session_id: None,
             },
             None,
         )
@@ -148,6 +152,9 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
                 answers: None,
                 writing_answers: None,
                 flags: None,
+                last_seen_revision: Some(attempt_after_runtime.revision),
+                submission_id: Some("submission-after-complete".to_owned()),
+                client_session_id: None,
             },
             None,
         )

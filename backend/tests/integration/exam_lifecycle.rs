@@ -23,6 +23,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0005_scheduling_and_access.sql",
     "0006_delivery.sql",
     "0010_auth_security.sql",
+    "0015_operation_write_hardening.sql",
 ];
 
 #[tokio::test]
@@ -114,6 +115,9 @@ async fn phase_progression_precheck_lobby_exam_post_exam() {
                 answers: None,
                 writing_answers: None,
                 flags: None,
+                last_seen_revision: Some(attempt_after_runtime.revision),
+                submission_id: Some("submission-lifecycle".to_owned()),
+                client_session_id: None,
             },
             None,
         )

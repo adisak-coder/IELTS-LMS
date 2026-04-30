@@ -295,10 +295,8 @@ describe('studentAttemptRepository backend mode', () => {
     );
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
       attemptId: attempt.id,
-      studentKey: 'student-sched-1-alice',
-      answers: { q1: 'A' },
-      writingAnswers: { task1: '<p>Draft</p>' },
-      flags: { q1: true },
+      lastSeenRevision: 1,
+      submissionId: `student-submit-${attempt.id}`,
     });
   });
 
@@ -362,13 +360,13 @@ describe('studentAttemptRepository backend mode', () => {
     expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual(
       expect.objectContaining({
         attemptId: attempt.id,
-        studentKey: 'student-sched-1-alice',
         mutations: [
           expect.objectContaining({
-            id: 'mutation-1',
-            mutationType: 'answer',
-            payload: { questionId: 'q1', value: 'A' },
-            seq: 1,
+            mutationId: 'mutation-1',
+            type: 'SetScalar',
+            questionId: 'q1',
+            value: 'A',
+            baseRevision: 1,
           }),
         ],
       }),
@@ -576,7 +574,11 @@ describe('studentAttemptRepository backend mode', () => {
 
     const secondBody = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
     expect(secondBody.mutations).toHaveLength(1);
-    expect(secondBody.mutations[0].payload).toMatchObject({ module: 'reading' });
+    expect(secondBody.mutations[0]).toMatchObject({
+      type: 'SetScalar',
+      questionId: 'q1',
+      value: 'A',
+    });
 
     const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
     const cached = cachedAttempts.find((candidate) => candidate.id === attempt.id) ?? null;
@@ -743,8 +745,7 @@ describe('studentAttemptRepository backend mode', () => {
     ]);
     await studentAttemptRepository.saveAttempt(attempt);
 
-    expect(lastMutationBatchBody.clientSessionId).toBe(localClientSessionId);
-    expect(lastMutationBatchBody.mutations[0].seq).toBe(6);
+    expect(lastMutationBatchBody.mutations[0].baseRevision).toBe(1);
   });
 
   it('resumes mutation sequences from stored browser watermarks after a module reload', async () => {
@@ -855,7 +856,7 @@ describe('studentAttemptRepository backend mode', () => {
     ]);
     await studentAttemptRepository.saveAttempt(attempt);
 
-    expect(firstMutationBody.mutations[0].seq).toBe(6);
+    expect(firstMutationBody.mutations[0].baseRevision).toBe(1);
     expect(sessionStorage.getItem(
       `ielts-student-mutation-watermark:v1:${attempt.id}:${localClientSessionId}`,
     )).toBe('6');
@@ -876,8 +877,7 @@ describe('studentAttemptRepository backend mode', () => {
     ]);
     await reloadedRepo.saveAttempt(attempt);
 
-    expect(secondMutationBody.clientSessionId).toBe(localClientSessionId);
-    expect(secondMutationBody.mutations[0].seq).toBe(7);
+    expect(secondMutationBody.mutations[0].baseRevision).toBe(1);
   });
 
   it('starts mutation sequences from the backend recovery watermark', async () => {
@@ -944,7 +944,7 @@ describe('studentAttemptRepository backend mode', () => {
     });
 
     const body = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
-    expect(body.mutations[0]?.seq).toBe(8);
+    expect(body.mutations[0]?.baseRevision).toBe(1);
   });
 
   it('sends the server-issued attempt bearer token on mutation and heartbeat calls, then rotates it from refresh responses', async () => {

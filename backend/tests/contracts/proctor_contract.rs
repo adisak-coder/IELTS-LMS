@@ -48,6 +48,7 @@ const PROCTOR_MIGRATIONS: &[&str] = &[
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
     "0014_student_attempt_presence.sql",
+    "0015_operation_write_hardening.sql",
 ];
 
 #[tokio::test]

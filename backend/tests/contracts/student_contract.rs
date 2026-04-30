@@ -38,6 +38,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
     "0014_student_attempt_presence.sql",
+    "0015_operation_write_hardening.sql",
 ];
 
 #[tokio::test]
@@ -226,6 +227,7 @@ async fn mutation_batch_persists_answers_and_returns_the_server_watermark() {
                                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                                 mutation_type: "answer".to_owned(),
                                 payload: json!({"questionId": "q1", "value": "A"}),
+                                base_revision: None,
                             },
                             ielts_backend_domain::attempt::MutationEnvelope {
                                 id: "mutation-2".to_owned(),
@@ -233,6 +235,7 @@ async fn mutation_batch_persists_answers_and_returns_the_server_watermark() {
                                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
                                 mutation_type: "flag".to_owned(),
                                 payload: json!({"questionId": "q1", "value": true}),
+                                base_revision: None,
                             },
                         ],
                     })
@@ -384,6 +387,7 @@ async fn mutation_batch_allows_independent_client_sessions_to_persist_reading_an
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -415,6 +419,7 @@ async fn mutation_batch_allows_independent_client_sessions_to_persist_reading_an
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q2", "value": "B"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -471,6 +476,7 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                 mutation_type: "answer".to_owned(),
                 payload: json!({"questionId": "q1", "value": "A"}),
+                base_revision: None,
             },
             ielts_backend_domain::attempt::MutationEnvelope {
                 id: "mutation-2".to_owned(),
@@ -478,6 +484,7 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
                 mutation_type: "flag".to_owned(),
                 payload: json!({"questionId": "q1", "value": true}),
+                base_revision: None,
             },
         ],
     };
@@ -544,6 +551,7 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 10).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q2", "value": "B"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -948,6 +956,9 @@ async fn submit_finalizes_the_attempt_idempotently() {
                         answers: None,
                         writing_answers: None,
                         flags: None,
+                        last_seen_revision: Some(0),
+                        submission_id: Some("submission-idempotent-1".to_owned()),
+                        client_session_id: None,
                     })
                     .unwrap(),
                 ))
@@ -979,6 +990,9 @@ async fn submit_finalizes_the_attempt_idempotently() {
                         answers: None,
                         writing_answers: None,
                         flags: None,
+                        last_seen_revision: Some(1),
+                        submission_id: Some("submission-idempotent-1".to_owned()),
+                        client_session_id: None,
                     })
                     .unwrap(),
                 ))
@@ -1029,6 +1043,9 @@ async fn submit_replays_cached_response_for_the_same_idempotency_key() {
                         answers: None,
                         writing_answers: None,
                         flags: None,
+                        last_seen_revision: Some(0),
+                        submission_id: Some("submission-replay-1".to_owned()),
+                        client_session_id: None,
                     })
                     .unwrap(),
                 ))
@@ -1081,6 +1098,9 @@ async fn submit_replays_cached_response_for_the_same_idempotency_key() {
                         answers: None,
                         writing_answers: None,
                         flags: None,
+                        last_seen_revision: Some(0),
+                        submission_id: Some("submission-replay-1".to_owned()),
+                        client_session_id: None,
                     })
                     .unwrap(),
                 ))
@@ -1161,6 +1181,7 @@ async fn bootstrap_hydrates_existing_attempt_after_crash_reconnect() {
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1220,6 +1241,7 @@ async fn mutation_batch_persists_writing_answers_separately_and_tracks_current_q
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "writing_answer".to_owned(),
                             payload: json!({"taskId": "task1", "value": "Draft 1"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1284,6 +1306,7 @@ async fn mutation_batch_rejects_objective_mutations_outside_the_current_section(
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1343,6 +1366,7 @@ async fn mutation_batch_surfaces_section_mismatch_with_reason() {
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "writing_answer".to_owned(),
                             payload: json!({"taskId": "stale", "value": "hello"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1408,6 +1432,7 @@ async fn mutation_batch_rejects_objective_mutations_when_proctor_paused_attempt(
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1472,6 +1497,7 @@ async fn mutation_batch_rejects_objective_mutations_when_runtime_paused() {
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1536,6 +1562,7 @@ async fn violation_snapshot_is_append_only_and_client_cannot_erase_entries() {
                                     "type": "TEST_VIOLATION"
                                 }]
                             }),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1568,6 +1595,7 @@ async fn violation_snapshot_is_append_only_and_client_cannot_erase_entries() {
                             payload: json!({
                                 "violations": []
                             }),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1636,6 +1664,7 @@ async fn position_mutation_is_telemetry_only_and_does_not_change_authoritative_s
                                 "currentModule": "writing",
                                 "currentQuestionId": "task1"
                             }),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),
@@ -1688,6 +1717,7 @@ async fn oversized_mutation_batch_is_rejected_fast() {
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
             mutation_type: "violation".to_owned(),
             payload: json!({"violations": []}),
+            base_revision: None,
         })
         .collect();
 
@@ -1762,6 +1792,7 @@ async fn attempt_token_rejects_schedule_mismatch() {
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
                             mutation_type: "answer".to_owned(),
                             payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
                         }],
                     })
                     .unwrap(),

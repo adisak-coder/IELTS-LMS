@@ -28,6 +28,9 @@ pub enum DeliveryConflictReason {
     SectionMismatch,
     AttemptProctorBlocked,
     AttemptSubmitted,
+    BaseRevisionMismatch,
+    ActiveSessionSuperseded,
+    AttemptExpired,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -50,6 +53,9 @@ impl DeliveryConflictReason {
             DeliveryConflictReason::SectionMismatch => "SECTION_MISMATCH",
             DeliveryConflictReason::AttemptProctorBlocked => "ATTEMPT_PROCTOR_BLOCKED",
             DeliveryConflictReason::AttemptSubmitted => "ATTEMPT_SUBMITTED",
+            DeliveryConflictReason::BaseRevisionMismatch => "BASE_REVISION_MISMATCH",
+            DeliveryConflictReason::ActiveSessionSuperseded => "ACTIVE_SESSION_SUPERSEDED",
+            DeliveryConflictReason::AttemptExpired => "ATTEMPT_EXPIRED",
         }
     }
 }
@@ -62,6 +68,9 @@ pub enum DeliveryError {
     Conflict {
         message: String,
         reason: Option<DeliveryConflictReason>,
+        latest_revision: Option<i32>,
+        server_accepted_through_seq: Option<i64>,
+        active_session_id: Option<String>,
     },
     #[error("Not found")]
     NotFound,
@@ -76,6 +85,9 @@ impl DeliveryError {
         DeliveryError::Conflict {
             message: message.into(),
             reason: None,
+            latest_revision: None,
+            server_accepted_through_seq: None,
+            active_session_id: None,
         }
     }
 
@@ -86,6 +98,25 @@ impl DeliveryError {
         DeliveryError::Conflict {
             message: message.into(),
             reason: Some(reason),
+            latest_revision: None,
+            server_accepted_through_seq: None,
+            active_session_id: None,
+        }
+    }
+
+    pub(crate) fn conflict_with_context(
+        reason: DeliveryConflictReason,
+        message: impl Into<String>,
+        latest_revision: Option<i32>,
+        server_accepted_through_seq: Option<i64>,
+        active_session_id: Option<String>,
+    ) -> Self {
+        DeliveryError::Conflict {
+            message: message.into(),
+            reason: Some(reason),
+            latest_revision,
+            server_accepted_through_seq,
+            active_session_id,
         }
     }
 
@@ -328,36 +359,18 @@ impl DeliveryService {
             attempt.submitted_at.is_some(),
         );
         let client_session_id_value = Value::String(req.client_session_id.to_string());
-
-        let needs_client_session_id_in_integrity = attempt
-            .integrity
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .is_none();
-        let next_integrity = if needs_client_session_id_in_integrity {
-            let mut integrity = ensure_object(attempt.integrity.clone());
-            integrity.insert(
-                "clientSessionId".to_owned(),
-                client_session_id_value.clone(),
-            );
-            Value::Object(integrity)
-        } else {
-            attempt.integrity.clone()
-        };
-
-        let needs_client_session_id_in_recovery = attempt
-            .recovery
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .is_none();
-        let next_recovery = if needs_client_session_id_in_recovery {
-            merge_recovery(
-                attempt.recovery.clone(),
-                json!({ "clientSessionId": req.client_session_id }),
-            )
-        } else {
-            attempt.recovery.clone()
-        };
+        let mut integrity = ensure_object(attempt.integrity.clone());
+        integrity.insert(
+            "clientSessionId".to_owned(),
+            client_session_id_value.clone(),
+        );
+        let next_integrity = Value::Object(integrity);
+        let next_recovery = merge_recovery(
+            attempt.recovery.clone(),
+            json!({ "clientSessionId": req.client_session_id }),
+        );
+        let needs_client_session_id_in_integrity = next_integrity != attempt.integrity;
+        let needs_client_session_id_in_recovery = next_recovery != attempt.recovery;
 
         let attempt = if attempt.phase != phase
             || needs_client_session_id_in_integrity
@@ -408,8 +421,16 @@ impl DeliveryService {
                 "Mutation batch must contain at least one mutation.".to_owned(),
             ));
         }
+        validate_unique_mutation_ids(&req.mutations)?;
 
-        validate_batch_sequences(&req.mutations)?;
+        let operation_mode = req
+            .mutations
+            .iter()
+            .all(|mutation| is_operation_command_type(&mutation.mutation_type));
+
+        if !operation_mode {
+            validate_batch_sequences(&req.mutations)?;
+        }
 
         let repository = self.idempotency_repository();
         let route_key = mutation_batch_route_key(schedule_id);
@@ -457,10 +478,46 @@ impl DeliveryService {
             return Ok(response);
         }
         if attempt.submitted_at.is_some() {
-            return Err(DeliveryError::conflict_reason(
+            return Err(DeliveryError::conflict_with_context(
                 DeliveryConflictReason::AttemptSubmitted,
                 "Submitted attempts can no longer accept mutations.".to_owned(),
+                Some(attempt.revision),
+                attempt
+                    .recovery
+                    .get("serverAcceptedThroughSeq")
+                    .and_then(Value::as_i64),
+                attempt
+                    .recovery
+                    .get("clientSessionId")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned),
             ));
+        }
+
+        let active_session_id = attempt
+            .recovery
+            .get("clientSessionId")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                attempt
+                    .integrity
+                    .get("clientSessionId")
+                    .and_then(Value::as_str)
+            })
+            .map(ToOwned::to_owned);
+        if let Some(active_session_id) = active_session_id.as_deref() {
+            if !active_session_id.is_empty() && active_session_id != req.client_session_id {
+                return Err(DeliveryError::conflict_with_context(
+                    DeliveryConflictReason::ActiveSessionSuperseded,
+                    "This session is no longer active for writing.".to_owned(),
+                    Some(attempt.revision),
+                    attempt
+                        .recovery
+                        .get("serverAcceptedThroughSeq")
+                        .and_then(Value::as_i64),
+                    Some(active_session_id.to_owned()),
+                ));
+            }
         }
 
         let schedule_status: Option<String> =
@@ -473,6 +530,25 @@ impl DeliveryService {
                 DeliveryConflictReason::ObjectiveLocked,
                 "Cancelled schedules can no longer accept mutations.".to_owned(),
             ));
+        }
+        let schedule_end_at: Option<DateTime<Utc>> =
+            sqlx::query_scalar("SELECT end_time FROM exam_schedules WHERE id = ?")
+                .bind(schedule_id.to_string())
+                .fetch_optional(tx.as_mut())
+                .await?;
+        if let Some(schedule_end_at) = schedule_end_at {
+            if Utc::now() > schedule_end_at {
+                return Err(DeliveryError::conflict_with_context(
+                    DeliveryConflictReason::AttemptExpired,
+                    "Attempt deadline has passed; no new mutations are accepted.".to_owned(),
+                    Some(attempt.revision),
+                    attempt
+                        .recovery
+                        .get("serverAcceptedThroughSeq")
+                        .and_then(Value::as_i64),
+                    active_session_id.clone(),
+                ));
+            }
         }
 
         let runtime_gate = sqlx::query_as::<_, RuntimeGateRow>(
@@ -497,6 +573,234 @@ impl DeliveryService {
             .await?;
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
+
+        if operation_mode {
+            let persisted_max_seq: i64 = sqlx::query_scalar(
+                "SELECT COALESCE(MAX(mutation_seq), 0) FROM student_attempt_mutations WHERE attempt_id = ? AND client_session_id = ?",
+            )
+            .bind(&req.attempt_id)
+            .bind(&req.client_session_id)
+            .fetch_one(tx.as_mut())
+            .await?;
+
+            let mutation_ids: Vec<String> = req
+                .mutations
+                .iter()
+                .map(|mutation| mutation.id.clone())
+                .collect();
+            let existing_mutations = if mutation_ids.is_empty() {
+                Vec::new()
+            } else {
+                let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
+                    "SELECT client_mutation_id, mutation_type, payload, applied_revision FROM student_attempt_mutations WHERE attempt_id = ",
+                );
+                query_builder.push_bind(&req.attempt_id);
+                query_builder.push(" AND client_mutation_id IN (");
+                {
+                    let mut separated = query_builder.separated(", ");
+                    for mutation_id in &mutation_ids {
+                        separated.push_bind(mutation_id);
+                    }
+                }
+                query_builder.push(")");
+                query_builder
+                    .build_query_as::<ExistingMutationRow>()
+                    .fetch_all(tx.as_mut())
+                    .await?
+            };
+            let mut existing_by_id: HashMap<String, ExistingMutationRow> = HashMap::new();
+            for row in existing_mutations {
+                existing_by_id.insert(row.client_mutation_id.clone(), row);
+            }
+
+            let mut answers = attempt.answers.clone();
+            let mut writing_answers = attempt.writing_answers.clone();
+            let mut flags = attempt.flags.clone();
+            let mut current_question_id = attempt.current_question_id.clone();
+            let mut recovery = attempt.recovery.clone();
+            let mut working_revision = attempt.revision;
+            let mut newly_applied: Vec<AppliedOperationMutation> = Vec::new();
+
+            for mutation in &req.mutations {
+                let operation = parse_operation_mutation(
+                    mutation,
+                    &answer_schema,
+                    &writing_task_ids,
+                    objective_mutation_gate,
+                    active_section_key,
+                )?;
+                let canonical_payload = operation.canonical_payload();
+
+                if let Some(existing) = existing_by_id.get(&mutation.id) {
+                    if existing.mutation_type != mutation.mutation_type
+                        || existing.payload != canonical_payload
+                    {
+                        return Err(DeliveryError::Validation(
+                            "mutationId was reused with different command content.".to_owned(),
+                        ));
+                    }
+                    continue;
+                }
+
+                if operation.base_revision != working_revision {
+                    return Err(DeliveryError::conflict_with_context(
+                        DeliveryConflictReason::BaseRevisionMismatch,
+                        "baseRevision does not match the latest server revision.".to_owned(),
+                        Some(working_revision),
+                        attempt
+                            .recovery
+                            .get("serverAcceptedThroughSeq")
+                            .and_then(Value::as_i64),
+                        active_session_id.clone(),
+                    ));
+                }
+
+                apply_operation_mutation(
+                    &operation,
+                    &answer_schema,
+                    &writing_task_ids,
+                    &mut answers,
+                    &mut writing_answers,
+                    &mut current_question_id,
+                )?;
+
+                working_revision += 1;
+                newly_applied.push(AppliedOperationMutation {
+                    mutation_id: mutation.id.clone(),
+                    mutation_type: mutation.mutation_type.clone(),
+                    payload: canonical_payload,
+                    client_timestamp: mutation.timestamp,
+                    applied_revision: working_revision,
+                    slot_effect: operation.slot_effect(),
+                });
+            }
+
+            let applied_mutation_count = newly_applied.len();
+            let server_accepted_through_seq = persisted_max_seq + applied_mutation_count as i64;
+            let now = Utc::now();
+            recovery = merge_recovery(
+                recovery,
+                json!({
+                    "lastPersistedAt": now,
+                    "pendingMutationCount": 0,
+                    "syncState": "saved",
+                    "serverAcceptedThroughSeq": server_accepted_through_seq,
+                    "clientSessionId": req.client_session_id.clone()
+                }),
+            );
+
+            if applied_mutation_count > 0 {
+                let schedule_id = schedule_id.to_string();
+                let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
+                    r#"
+                    INSERT INTO student_attempt_mutations (
+                        id, attempt_id, schedule_id, client_session_id, mutation_type,
+                        client_mutation_id, mutation_seq, payload, client_timestamp,
+                        server_received_at, applied_revision, applied_at
+                    )
+                    "#,
+                );
+                query_builder.push_values(
+                    newly_applied.iter().enumerate(),
+                    |mut row, (index, mutation)| {
+                        row.push_bind(Uuid::new_v4().to_string())
+                            .push_bind(&req.attempt_id)
+                            .push_bind(&schedule_id)
+                            .push_bind(&req.client_session_id)
+                            .push_bind(&mutation.mutation_type)
+                            .push_bind(&mutation.mutation_id)
+                            .push_bind(persisted_max_seq + index as i64 + 1)
+                            .push_bind(&mutation.payload)
+                            .push_bind(mutation.client_timestamp)
+                            .push("NOW()")
+                            .push_bind(mutation.applied_revision)
+                            .push("NOW()");
+                    },
+                );
+                query_builder.build().execute(tx.as_mut()).await?;
+
+                for mutation in &newly_applied {
+                    if let Some(slot_effect) = mutation.slot_effect.as_ref() {
+                        persist_slot_effect(tx.as_mut(), &req.attempt_id, slot_effect).await?;
+                    }
+                }
+
+                sqlx::query(
+                    r#"
+                    UPDATE student_attempts
+                    SET
+                        answers = ?,
+                        writing_answers = ?,
+                        flags = ?,
+                        current_question_id = ?,
+                        recovery = ?,
+                        updated_at = NOW(),
+                        revision = ?
+                    WHERE id = ?
+                    "#,
+                )
+                .bind(&answers)
+                .bind(&writing_answers)
+                .bind(&flags)
+                .bind(current_question_id)
+                .bind(recovery)
+                .bind(working_revision)
+                .bind(&req.attempt_id)
+                .execute(tx.as_mut())
+                .await?;
+            }
+
+            attempt =
+                sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
+                    .bind(&req.attempt_id)
+                    .fetch_one(tx.as_mut())
+                    .await?;
+
+            sqlx::query(
+                r#"
+                INSERT INTO session_audit_logs (
+                    id, schedule_id, actor, action_type, target_student_id, payload, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
+                "#,
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(schedule_id.to_string())
+            .bind(&attempt.candidate_name)
+            .bind("STUDENT_MUTATION_BATCH")
+            .bind(&attempt.id)
+            .bind(json!({
+                "count": req.mutations.len(),
+                "appliedCount": applied_mutation_count,
+                "types": req.mutations.iter().map(|mutation| mutation.mutation_type.clone()).collect::<Vec<_>>(),
+                "revision": attempt.revision,
+                "clientSessionId": req.client_session_id
+            }))
+            .execute(tx.as_mut())
+            .await?;
+
+            let response = StudentMutationBatchResponse {
+                revision: attempt.revision,
+                attempt: response_mode.includes_attempt().then_some(attempt),
+                applied_mutation_count,
+                server_accepted_through_seq,
+                refreshed_attempt_credential: None,
+            };
+
+            self.store_idempotent_response(
+                tx.as_mut(),
+                &repository,
+                &req.student_key,
+                &route_key,
+                idempotency_key.as_deref(),
+                request_hash.as_deref(),
+                &response,
+            )
+            .await?;
+
+            tx.commit().await?;
+            return Ok(response);
+        }
 
         let persisted_max_seq: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(mutation_seq), 0) FROM student_attempt_mutations WHERE attempt_id = ? AND client_session_id = ?",
@@ -957,6 +1261,79 @@ impl DeliveryService {
             ));
         }
 
+        let active_session_id = attempt
+            .recovery
+            .get("clientSessionId")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                attempt
+                    .integrity
+                    .get("clientSessionId")
+                    .and_then(Value::as_str)
+            })
+            .map(ToOwned::to_owned);
+        if let (Some(request_session_id), Some(active_session_id)) = (
+            req.client_session_id.as_deref(),
+            active_session_id.as_deref(),
+        ) {
+            if !active_session_id.is_empty() && request_session_id != active_session_id {
+                return Err(DeliveryError::conflict_with_context(
+                    DeliveryConflictReason::ActiveSessionSuperseded,
+                    "This session is no longer active for submission.".to_owned(),
+                    Some(attempt.revision),
+                    attempt
+                        .recovery
+                        .get("serverAcceptedThroughSeq")
+                        .and_then(Value::as_i64),
+                    Some(active_session_id.to_owned()),
+                ));
+            }
+        }
+
+        let Some(submission_id) = req.submission_id.as_ref() else {
+            return Err(DeliveryError::Validation(
+                "submissionId is required.".to_owned(),
+            ));
+        };
+        if submission_id.trim().is_empty() {
+            return Err(DeliveryError::Validation(
+                "submissionId cannot be empty.".to_owned(),
+            ));
+        }
+        if let Some(submitted_at) = attempt.submitted_at {
+            let response = build_submit_response(attempt, submitted_at);
+            self.store_idempotent_response(
+                tx.as_mut(),
+                &repository,
+                &req.student_key,
+                &route_key,
+                idempotency_key.as_deref(),
+                request_hash.as_deref(),
+                &response,
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(response);
+        }
+
+        let Some(last_seen_revision) = req.last_seen_revision else {
+            return Err(DeliveryError::Validation(
+                "lastSeenRevision is required.".to_owned(),
+            ));
+        };
+        if last_seen_revision != attempt.revision {
+            return Err(DeliveryError::conflict_with_context(
+                DeliveryConflictReason::BaseRevisionMismatch,
+                "Submit rejected because lastSeenRevision is stale.".to_owned(),
+                Some(attempt.revision),
+                attempt
+                    .recovery
+                    .get("serverAcceptedThroughSeq")
+                    .and_then(Value::as_i64),
+                active_session_id.clone(),
+            ));
+        }
+
         let schedule_status: Option<String> =
             sqlx::query_scalar("SELECT status FROM exam_schedules WHERE id = ?")
                 .bind(schedule_id.to_string())
@@ -993,22 +1370,6 @@ impl DeliveryService {
             }
         }
 
-        if let Some(submitted_at) = attempt.submitted_at {
-            let response = build_submit_response(attempt, submitted_at);
-            self.store_idempotent_response(
-                tx.as_mut(),
-                &repository,
-                &req.student_key,
-                &route_key,
-                idempotency_key.as_deref(),
-                request_hash.as_deref(),
-                &response,
-            )
-            .await?;
-            tx.commit().await?;
-            return Ok(response);
-        }
-
         let version = self
             .load_version(attempt.published_version_id.clone())
             .await?;
@@ -1020,20 +1381,13 @@ impl DeliveryService {
             .unwrap_or("confirm");
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
-        let final_answers = match req.answers.as_ref() {
-            Some(snapshot) => validate_final_answers_snapshot(Some(snapshot), &answer_schema)?,
-            None => attempt.answers.clone(),
-        };
-        let final_writing_answers = match req.writing_answers.as_ref() {
-            Some(snapshot) => {
-                validate_final_writing_answers_snapshot(Some(snapshot), &writing_task_ids)?
-            }
-            None => attempt.writing_answers.clone(),
-        };
-        let final_flags = match req.flags.as_ref() {
-            Some(snapshot) => validate_final_flags_snapshot(Some(snapshot), &answer_schema)?,
-            None => attempt.flags.clone(),
-        };
+        // Submit uses current server-side state only. Client snapshots are never authoritative.
+        let final_answers = attempt.answers.clone();
+        let final_writing_answers = validate_final_writing_answers_snapshot(
+            Some(&attempt.writing_answers),
+            &writing_task_ids,
+        )?;
+        let final_flags = validate_final_flags_snapshot(Some(&attempt.flags), &answer_schema)?;
         let completion = compute_answer_completion(&answer_schema, &final_answers);
         let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
 
@@ -1049,7 +1403,7 @@ impl DeliveryService {
         }
 
         let now = Utc::now();
-        let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+        let submission_id = submission_id.clone();
         let final_submission = json!({
             "submissionId": submission_id,
             "submittedAt": now,
@@ -1558,6 +1912,20 @@ fn mutation_batch_route_key(schedule_id: Uuid) -> String {
     format!("POST:/api/v1/student/sessions/{schedule_id}/mutations:batch")
 }
 
+fn is_operation_command_type(mutation_type: &str) -> bool {
+    matches!(
+        mutation_type,
+        "SetSlot"
+            | "ClearSlot"
+            | "SetScalar"
+            | "ClearScalar"
+            | "SetChoice"
+            | "ClearChoice"
+            | "SetEssayText"
+            | "ClearEssayText"
+    )
+}
+
 fn should_persist_mutation_row(
     response_mode: MutationBatchResponseMode,
     mutation_type: &str,
@@ -1716,6 +2084,18 @@ fn validate_batch_sequences(mutations: &[MutationEnvelope]) -> Result<(), Delive
         if !seen.insert(mutation.seq) {
             return Err(DeliveryError::Validation(
                 "Mutation batch contains duplicate sequence values.".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_unique_mutation_ids(mutations: &[MutationEnvelope]) -> Result<(), DeliveryError> {
+    let mut seen = HashSet::new();
+    for mutation in mutations {
+        if !seen.insert(mutation.id.as_str()) {
+            return Err(DeliveryError::Validation(
+                "Mutation batch contains duplicate mutationId values.".to_owned(),
             ));
         }
     }
@@ -2424,6 +2804,713 @@ fn validate_final_flags_snapshot(
     Ok(Value::Object(items.clone()))
 }
 
+#[derive(Debug, Clone, sqlx::FromRow)]
+struct ExistingMutationRow {
+    client_mutation_id: String,
+    mutation_type: String,
+    payload: Value,
+    applied_revision: Option<i32>,
+}
+
+#[derive(Debug, Clone)]
+struct AppliedOperationMutation {
+    mutation_id: String,
+    mutation_type: String,
+    payload: Value,
+    client_timestamp: DateTime<Utc>,
+    applied_revision: i32,
+    slot_effect: Option<SlotEffect>,
+}
+
+#[derive(Debug, Clone)]
+enum SlotEffect {
+    Upsert {
+        question_id: String,
+        slot_index: i32,
+        value: String,
+    },
+    DeleteOne {
+        question_id: String,
+        slot_index: i32,
+    },
+    DeleteAll {
+        question_id: String,
+    },
+    ReplaceAll {
+        question_id: String,
+        values: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum OperationMutationCommand {
+    SetSlot {
+        question_id: String,
+        slot_index: usize,
+        value: String,
+    },
+    ClearSlot {
+        question_id: String,
+        slot_index: usize,
+    },
+    SetScalar {
+        question_id: String,
+        value: String,
+    },
+    ClearScalar {
+        question_id: String,
+    },
+    SetChoice {
+        question_id: String,
+        value: Value,
+    },
+    ClearChoice {
+        question_id: String,
+    },
+    SetEssayText {
+        task_id: String,
+        value: String,
+    },
+    ClearEssayText {
+        task_id: String,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct ParsedOperationMutation {
+    base_revision: i32,
+    command: OperationMutationCommand,
+}
+
+impl ParsedOperationMutation {
+    fn canonical_payload(&self) -> Value {
+        match &self.command {
+            OperationMutationCommand::SetSlot {
+                question_id,
+                slot_index,
+                value,
+            } => json!({
+                "baseRevision": self.base_revision,
+                "questionId": question_id,
+                "slotIndex": slot_index,
+                "value": value
+            }),
+            OperationMutationCommand::ClearSlot {
+                question_id,
+                slot_index,
+            } => json!({
+                "baseRevision": self.base_revision,
+                "questionId": question_id,
+                "slotIndex": slot_index
+            }),
+            OperationMutationCommand::SetScalar { question_id, value } => json!({
+                "baseRevision": self.base_revision,
+                "questionId": question_id,
+                "value": value
+            }),
+            OperationMutationCommand::ClearScalar { question_id } => json!({
+                "baseRevision": self.base_revision,
+                "questionId": question_id
+            }),
+            OperationMutationCommand::SetChoice { question_id, value } => json!({
+                "baseRevision": self.base_revision,
+                "questionId": question_id,
+                "value": value
+            }),
+            OperationMutationCommand::ClearChoice { question_id } => json!({
+                "baseRevision": self.base_revision,
+                "questionId": question_id
+            }),
+            OperationMutationCommand::SetEssayText { task_id, value } => json!({
+                "baseRevision": self.base_revision,
+                "taskId": task_id,
+                "value": value
+            }),
+            OperationMutationCommand::ClearEssayText { task_id } => json!({
+                "baseRevision": self.base_revision,
+                "taskId": task_id
+            }),
+        }
+    }
+
+    fn slot_effect(&self) -> Option<SlotEffect> {
+        match &self.command {
+            OperationMutationCommand::SetSlot {
+                question_id,
+                slot_index,
+                value,
+            } => Some(SlotEffect::Upsert {
+                question_id: question_id.clone(),
+                slot_index: *slot_index as i32,
+                value: value.clone(),
+            }),
+            OperationMutationCommand::ClearSlot {
+                question_id,
+                slot_index,
+            } => Some(SlotEffect::DeleteOne {
+                question_id: question_id.clone(),
+                slot_index: *slot_index as i32,
+            }),
+            OperationMutationCommand::SetScalar { question_id, value } => {
+                Some(SlotEffect::Upsert {
+                    question_id: question_id.clone(),
+                    slot_index: 0,
+                    value: value.clone(),
+                })
+            }
+            OperationMutationCommand::ClearScalar { question_id } => Some(SlotEffect::DeleteAll {
+                question_id: question_id.clone(),
+            }),
+            OperationMutationCommand::SetChoice { question_id, value } => {
+                if let Some(choice) = value.as_str() {
+                    return Some(SlotEffect::Upsert {
+                        question_id: question_id.clone(),
+                        slot_index: 0,
+                        value: choice.to_owned(),
+                    });
+                }
+                let values = value
+                    .as_array()
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                Some(SlotEffect::ReplaceAll {
+                    question_id: question_id.clone(),
+                    values,
+                })
+            }
+            OperationMutationCommand::ClearChoice { question_id } => Some(SlotEffect::DeleteAll {
+                question_id: question_id.clone(),
+            }),
+            OperationMutationCommand::SetEssayText { .. }
+            | OperationMutationCommand::ClearEssayText { .. } => None,
+        }
+    }
+}
+
+fn parse_operation_mutation(
+    mutation: &MutationEnvelope,
+    answer_schema: &AnswerSchema,
+    writing_task_ids: &HashSet<String>,
+    objective_mutation_gate: ObjectiveMutationGate,
+    active_section_key: Option<&str>,
+) -> Result<ParsedOperationMutation, DeliveryError> {
+    let base_revision = mutation
+        .payload
+        .get("baseRevision")
+        .and_then(Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+        .ok_or_else(|| {
+            DeliveryError::Validation("Mutation payload is missing `baseRevision`.".to_owned())
+        })?;
+
+    let parsed = match mutation.mutation_type.as_str() {
+        "SetSlot" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept slot mutations.".to_owned(),
+                ));
+            }
+            let question_id = required_string(&mutation.payload, "questionId")?;
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let slot_index_raw = mutation
+                .payload
+                .get("slotIndex")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    DeliveryError::Validation("Mutation payload is missing `slotIndex`.".to_owned())
+                })?;
+            let slot_index = usize::try_from(slot_index_raw).map_err(|_| {
+                DeliveryError::Validation("`slotIndex` must be a non-negative integer.".to_owned())
+            })?;
+            let value = required_string(&mutation.payload, "value")?;
+            if value.trim().is_empty() {
+                return Err(DeliveryError::Validation(
+                    "SetSlot rejects empty values. Use ClearSlot instead.".to_owned(),
+                ));
+            }
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::SetSlot {
+                    question_id,
+                    slot_index,
+                    value,
+                },
+            }
+        }
+        "ClearSlot" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept slot mutations.".to_owned(),
+                ));
+            }
+            let question_id = required_string(&mutation.payload, "questionId")?;
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let slot_index_raw = mutation
+                .payload
+                .get("slotIndex")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| {
+                    DeliveryError::Validation("Mutation payload is missing `slotIndex`.".to_owned())
+                })?;
+            let slot_index = usize::try_from(slot_index_raw).map_err(|_| {
+                DeliveryError::Validation("`slotIndex` must be a non-negative integer.".to_owned())
+            })?;
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::ClearSlot {
+                    question_id,
+                    slot_index,
+                },
+            }
+        }
+        "SetScalar" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept scalar mutations.".to_owned(),
+                ));
+            }
+            let question_id = required_string(&mutation.payload, "questionId")?;
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let value = required_string(&mutation.payload, "value")?;
+            if value.trim().is_empty() {
+                return Err(DeliveryError::Validation(
+                    "SetScalar rejects empty values. Use ClearScalar instead.".to_owned(),
+                ));
+            }
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::SetScalar { question_id, value },
+            }
+        }
+        "ClearScalar" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept scalar mutations.".to_owned(),
+                ));
+            }
+            let question_id = required_string(&mutation.payload, "questionId")?;
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::ClearScalar { question_id },
+            }
+        }
+        "SetChoice" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept choice mutations.".to_owned(),
+                ));
+            }
+            let question_id = required_string(&mutation.payload, "questionId")?;
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let value = mutation.payload.get("value").cloned().ok_or_else(|| {
+                DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
+            })?;
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::SetChoice { question_id, value },
+            }
+        }
+        "ClearChoice" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept choice mutations.".to_owned(),
+                ));
+            }
+            let question_id = required_string(&mutation.payload, "questionId")?;
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::ClearChoice { question_id },
+            }
+        }
+        "SetEssayText" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept writing mutations.".to_owned(),
+                ));
+            }
+            if active_section_key.is_some_and(|value| value != "writing") {
+                return Err(DeliveryError::conflict_reason(
+                    DeliveryConflictReason::SectionMismatch,
+                    "This session can no longer accept writing mutations for the current section."
+                        .to_owned(),
+                ));
+            }
+            let task_id = required_string(&mutation.payload, "taskId")?;
+            if !writing_task_ids.contains(&task_id) {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `taskId`.".to_owned(),
+                ));
+            }
+            let value = required_string(&mutation.payload, "value")?;
+            if value.trim().is_empty() {
+                return Err(DeliveryError::Validation(
+                    "SetEssayText rejects empty values. Use ClearEssayText instead.".to_owned(),
+                ));
+            }
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::SetEssayText { task_id, value },
+            }
+        }
+        "ClearEssayText" => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "This session can no longer accept writing mutations.".to_owned(),
+                ));
+            }
+            if active_section_key.is_some_and(|value| value != "writing") {
+                return Err(DeliveryError::conflict_reason(
+                    DeliveryConflictReason::SectionMismatch,
+                    "This session can no longer accept writing mutations for the current section."
+                        .to_owned(),
+                ));
+            }
+            let task_id = required_string(&mutation.payload, "taskId")?;
+            if !writing_task_ids.contains(&task_id) {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `taskId`.".to_owned(),
+                ));
+            }
+            ParsedOperationMutation {
+                base_revision,
+                command: OperationMutationCommand::ClearEssayText { task_id },
+            }
+        }
+        _ => {
+            return Err(DeliveryError::Validation(
+                "Unknown mutation command type.".to_owned(),
+            ))
+        }
+    };
+
+    Ok(parsed)
+}
+
+fn apply_operation_mutation(
+    operation: &ParsedOperationMutation,
+    answer_schema: &AnswerSchema,
+    _writing_task_ids: &HashSet<String>,
+    answers: &mut Value,
+    writing_answers: &mut Value,
+    current_question_id: &mut Option<String>,
+) -> Result<(), DeliveryError> {
+    match &operation.command {
+        OperationMutationCommand::SetSlot {
+            question_id,
+            slot_index,
+            value,
+        } => {
+            let Some(constraint) = answer_schema.constraints.get(question_id) else {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `questionId`.".to_owned(),
+                ));
+            };
+            let max_len = match constraint {
+                AnswerConstraint::ArrayText { max_len }
+                | AnswerConstraint::EnumArray { max_len, .. } => *max_len,
+                _ => {
+                    return Err(DeliveryError::Validation(
+                        "SetSlot is only allowed for slot-based questions.".to_owned(),
+                    ))
+                }
+            };
+            if max_len > 0 && *slot_index >= max_len {
+                return Err(DeliveryError::Validation(
+                    "`slotIndex` is outside the question answer range.".to_owned(),
+                ));
+            }
+            let mut next_answers = ensure_object(std::mem::take(answers));
+            let mut next_value = next_answers
+                .get(question_id)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let target_len = if max_len > 0 {
+                max_len.max(*slot_index + 1)
+            } else {
+                *slot_index + 1
+            };
+            if next_value.len() < target_len {
+                next_value.resize(target_len, Value::Null);
+            }
+            next_value[*slot_index] = Value::String(value.clone());
+            let next_value = Value::Array(next_value);
+            validate_answer_value(constraint, &next_value)?;
+            next_answers.insert(question_id.clone(), next_value);
+            *answers = Value::Object(next_answers);
+            *current_question_id = Some(question_id.clone());
+        }
+        OperationMutationCommand::ClearSlot {
+            question_id,
+            slot_index,
+        } => {
+            let Some(constraint) = answer_schema.constraints.get(question_id) else {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `questionId`.".to_owned(),
+                ));
+            };
+            let max_len = match constraint {
+                AnswerConstraint::ArrayText { max_len }
+                | AnswerConstraint::EnumArray { max_len, .. } => *max_len,
+                _ => {
+                    return Err(DeliveryError::Validation(
+                        "ClearSlot is only allowed for slot-based questions.".to_owned(),
+                    ))
+                }
+            };
+            if max_len > 0 && *slot_index >= max_len {
+                return Err(DeliveryError::Validation(
+                    "`slotIndex` is outside the question answer range.".to_owned(),
+                ));
+            }
+            let mut next_answers = ensure_object(std::mem::take(answers));
+            let mut next_value = next_answers
+                .get(question_id)
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let target_len = if max_len > 0 {
+                max_len.max(*slot_index + 1)
+            } else {
+                *slot_index + 1
+            };
+            if next_value.len() < target_len {
+                next_value.resize(target_len, Value::Null);
+            }
+            next_value[*slot_index] = Value::Null;
+            let next_value = Value::Array(next_value);
+            validate_answer_value(constraint, &next_value)?;
+            next_answers.insert(question_id.clone(), next_value);
+            *answers = Value::Object(next_answers);
+            *current_question_id = Some(question_id.clone());
+        }
+        OperationMutationCommand::SetScalar { question_id, value } => {
+            let Some(constraint) = answer_schema.constraints.get(question_id) else {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `questionId`.".to_owned(),
+                ));
+            };
+            match constraint {
+                AnswerConstraint::Text | AnswerConstraint::Enum(_) => {}
+                _ => {
+                    return Err(DeliveryError::Validation(
+                        "SetScalar is only allowed for scalar questions.".to_owned(),
+                    ))
+                }
+            }
+            let next_value = Value::String(value.clone());
+            validate_answer_value(constraint, &next_value)?;
+            let mut next_answers = ensure_object(std::mem::take(answers));
+            next_answers.insert(question_id.clone(), next_value);
+            *answers = Value::Object(next_answers);
+            *current_question_id = Some(question_id.clone());
+        }
+        OperationMutationCommand::ClearScalar { question_id } => {
+            let Some(constraint) = answer_schema.constraints.get(question_id) else {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `questionId`.".to_owned(),
+                ));
+            };
+            match constraint {
+                AnswerConstraint::Text | AnswerConstraint::Enum(_) => {}
+                _ => {
+                    return Err(DeliveryError::Validation(
+                        "ClearScalar is only allowed for scalar questions.".to_owned(),
+                    ))
+                }
+            }
+            let mut next_answers = ensure_object(std::mem::take(answers));
+            next_answers.insert(question_id.clone(), Value::Null);
+            *answers = Value::Object(next_answers);
+            *current_question_id = Some(question_id.clone());
+        }
+        OperationMutationCommand::SetChoice { question_id, value } => {
+            let Some(constraint) = answer_schema.constraints.get(question_id) else {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `questionId`.".to_owned(),
+                ));
+            };
+            match constraint {
+                AnswerConstraint::Enum(_) | AnswerConstraint::MultiChoice { .. } => {}
+                _ => {
+                    return Err(DeliveryError::Validation(
+                        "SetChoice is only allowed for choice questions.".to_owned(),
+                    ))
+                }
+            }
+            match value {
+                Value::String(text) => {
+                    if text.trim().is_empty() {
+                        return Err(DeliveryError::Validation(
+                            "SetChoice rejects empty values. Use ClearChoice instead.".to_owned(),
+                        ));
+                    }
+                }
+                Value::Array(values) => {
+                    if values.is_empty() {
+                        return Err(DeliveryError::Validation(
+                            "SetChoice rejects empty selections. Use ClearChoice instead."
+                                .to_owned(),
+                        ));
+                    }
+                }
+                _ => {}
+            }
+            validate_answer_value(constraint, value)?;
+            let mut next_answers = ensure_object(std::mem::take(answers));
+            next_answers.insert(question_id.clone(), value.clone());
+            *answers = Value::Object(next_answers);
+            *current_question_id = Some(question_id.clone());
+        }
+        OperationMutationCommand::ClearChoice { question_id } => {
+            let Some(constraint) = answer_schema.constraints.get(question_id) else {
+                return Err(DeliveryError::Validation(
+                    "Mutation references an unknown `questionId`.".to_owned(),
+                ));
+            };
+            match constraint {
+                AnswerConstraint::Enum(_) | AnswerConstraint::MultiChoice { .. } => {}
+                _ => {
+                    return Err(DeliveryError::Validation(
+                        "ClearChoice is only allowed for choice questions.".to_owned(),
+                    ))
+                }
+            }
+            let mut next_answers = ensure_object(std::mem::take(answers));
+            next_answers.insert(question_id.clone(), Value::Null);
+            *answers = Value::Object(next_answers);
+            *current_question_id = Some(question_id.clone());
+        }
+        OperationMutationCommand::SetEssayText { task_id, value } => {
+            let mut next_writing = ensure_object(std::mem::take(writing_answers));
+            next_writing.insert(task_id.clone(), Value::String(value.clone()));
+            *writing_answers = Value::Object(next_writing);
+            *current_question_id = Some(task_id.clone());
+        }
+        OperationMutationCommand::ClearEssayText { task_id } => {
+            let mut next_writing = ensure_object(std::mem::take(writing_answers));
+            next_writing.remove(task_id);
+            *writing_answers = Value::Object(next_writing);
+            *current_question_id = Some(task_id.clone());
+        }
+    }
+
+    Ok(())
+}
+
+async fn persist_slot_effect(
+    connection: &mut MySqlConnection,
+    attempt_id: &str,
+    effect: &SlotEffect,
+) -> Result<(), DeliveryError> {
+    match effect {
+        SlotEffect::Upsert {
+            question_id,
+            slot_index,
+            value,
+        } => {
+            sqlx::query(
+                r#"
+                INSERT INTO student_attempt_answer_slots (
+                    attempt_id, question_id, slot_index, value_text, updated_at
+                )
+                VALUES (?, ?, ?, ?, NOW())
+                ON DUPLICATE KEY UPDATE
+                    value_text = VALUES(value_text),
+                    updated_at = NOW()
+                "#,
+            )
+            .bind(attempt_id)
+            .bind(question_id)
+            .bind(*slot_index)
+            .bind(value)
+            .execute(&mut *connection)
+            .await?;
+        }
+        SlotEffect::DeleteOne {
+            question_id,
+            slot_index,
+        } => {
+            sqlx::query(
+                "DELETE FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ? AND slot_index = ?",
+            )
+            .bind(attempt_id)
+            .bind(question_id)
+            .bind(*slot_index)
+            .execute(&mut *connection)
+            .await?;
+        }
+        SlotEffect::DeleteAll { question_id } => {
+            sqlx::query(
+                "DELETE FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ?",
+            )
+            .bind(attempt_id)
+            .bind(question_id)
+            .execute(&mut *connection)
+            .await?;
+        }
+        SlotEffect::ReplaceAll {
+            question_id,
+            values,
+        } => {
+            sqlx::query(
+                "DELETE FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ?",
+            )
+            .bind(attempt_id)
+            .bind(question_id)
+            .execute(&mut *connection)
+            .await?;
+
+            if !values.is_empty() {
+                let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
+                    "INSERT INTO student_attempt_answer_slots (attempt_id, question_id, slot_index, value_text, updated_at) ",
+                );
+                query_builder.push_values(values.iter().enumerate(), |mut row, (index, value)| {
+                    row.push_bind(attempt_id)
+                        .push_bind(question_id)
+                        .push_bind(index as i32)
+                        .push_bind(value)
+                        .push("NOW()");
+                });
+                query_builder.build().execute(&mut *connection).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 fn apply_mutation(
     mutation: &MutationEnvelope,
     answer_schema: &AnswerSchema,
@@ -2462,9 +3549,80 @@ fn apply_mutation(
                 DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
             })?;
             validate_answer_value(constraint, &value)?;
+            let slot_index = match mutation.payload.get("slotIndex") {
+                None => None,
+                Some(Value::Number(number)) => {
+                    let raw = number.as_u64().ok_or_else(|| {
+                        DeliveryError::Validation(
+                            "`slotIndex` must be a non-negative integer when present.".to_owned(),
+                        )
+                    })?;
+                    Some(usize::try_from(raw).map_err(|_| {
+                        DeliveryError::Validation("`slotIndex` is too large to process.".to_owned())
+                    })?)
+                }
+                Some(_) => {
+                    return Err(DeliveryError::Validation(
+                        "`slotIndex` must be a non-negative integer when present.".to_owned(),
+                    ));
+                }
+            };
+
             let next_answers = ensure_object(std::mem::take(answers));
+            let next_value = match constraint {
+                AnswerConstraint::ArrayText { max_len }
+                | AnswerConstraint::EnumArray { max_len, .. } => {
+                    let slot_index = slot_index.ok_or_else(|| {
+                        DeliveryError::Validation(
+                            "Array-style answer mutations must include `slotIndex`.".to_owned(),
+                        )
+                    })?;
+                    if *max_len > 0 && slot_index >= *max_len {
+                        return Err(DeliveryError::Validation(
+                            "`slotIndex` is outside the question answer range.".to_owned(),
+                        ));
+                    }
+
+                    let incoming_values = value.as_array().ok_or_else(|| {
+                        DeliveryError::Validation(
+                            "Answer value must be an array when `slotIndex` is provided."
+                                .to_owned(),
+                        )
+                    })?;
+                    let Some(slot_value) = incoming_values.get(slot_index) else {
+                        return Err(DeliveryError::Validation(
+                            "Answer value is missing the requested `slotIndex`.".to_owned(),
+                        ));
+                    };
+
+                    let mut merged_values = next_answers
+                        .get(&question_id)
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_else(|| incoming_values.clone());
+                    if slot_index >= merged_values.len() {
+                        let target_len = if *max_len > 0 {
+                            (*max_len).max(slot_index + 1)
+                        } else {
+                            slot_index + 1
+                        };
+                        merged_values.resize(target_len, Value::String(String::new()));
+                    }
+                    merged_values[slot_index] = slot_value.clone();
+                    Value::Array(merged_values)
+                }
+                _ => {
+                    if slot_index.is_some() {
+                        return Err(DeliveryError::Validation(
+                            "`slotIndex` is only supported for array-style answers.".to_owned(),
+                        ));
+                    }
+                    value
+                }
+            };
+            validate_answer_value(constraint, &next_value)?;
             *current_question_id = Some(question_id.clone());
-            *answers = Value::Object(set_value(next_answers, question_id, value));
+            *answers = Value::Object(set_value(next_answers, question_id, next_value));
         }
         "writing_answer" => {
             let task_id = required_string(&mutation.payload, "taskId")?;
@@ -2809,6 +3967,7 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "answer".to_owned(),
+                base_revision: None,
                 payload: json!({"questionId": "q1", "value": "A"}),
             },
             &answer_schema,
@@ -2836,6 +3995,7 @@ mod tests {
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 5).unwrap(),
                 mutation_type: "writing_answer".to_owned(),
+                base_revision: None,
                 payload: json!({"taskId": "task-1", "value": "Draft 1"}),
             },
             &answer_schema,
@@ -2863,6 +4023,7 @@ mod tests {
                 seq: 3,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 10).unwrap(),
                 mutation_type: "flag".to_owned(),
+                base_revision: None,
                 payload: json!({"questionId": "q1", "value": true}),
             },
             &answer_schema,
@@ -2885,12 +4046,155 @@ mod tests {
     }
 
     #[test]
+    fn apply_mutation_merges_array_answer_by_slot_index_without_clearing_other_slots() {
+        let question_id = "blk-af811567-c9aa-4a4d-8775-44b529b499fd".to_owned();
+        let answer_schema = AnswerSchema {
+            constraints: HashMap::from_iter([(
+                question_id.clone(),
+                AnswerConstraint::ArrayText { max_len: 10 },
+            )]),
+            sections: HashMap::from_iter([(question_id.clone(), "listening".to_owned())]),
+        };
+        let writing_task_ids: HashSet<String> = HashSet::new();
+
+        let mut answers = json!({
+            "blk-af811567-c9aa-4a4d-8775-44b529b499fd": [
+                "239",
+                "modern",
+                "lamp",
+                "Aaron",
+                "renting",
+                "electronic ",
+                "insurance",
+                "Space",
+                "app",
+                "Exchange"
+            ]
+        });
+        let mut writing_answers = json!({});
+        let mut flags = json!({});
+        let mut violations_snapshot = json!([]);
+        let mut phase = "exam".to_owned();
+        let mut current_module = "listening".to_owned();
+        let mut current_question_id = None;
+        let mut recovery = json!({});
+
+        apply_mutation(
+            &MutationEnvelope {
+                id: "m-slot-1".to_owned(),
+                seq: 1,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+                mutation_type: "answer".to_owned(),
+                base_revision: None,
+                payload: json!({
+                    "questionId": "blk-af811567-c9aa-4a4d-8775-44b529b499fd",
+                    "value": ["239", "MODERN", "LAMP", "", "", "", "", "", "", ""],
+                    "slotIndex": 2
+                }),
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("listening"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("apply answer slot update");
+
+        assert_eq!(
+            answers["blk-af811567-c9aa-4a4d-8775-44b529b499fd"],
+            json!([
+                "239",
+                "modern",
+                "LAMP",
+                "Aaron",
+                "renting",
+                "electronic ",
+                "insurance",
+                "Space",
+                "app",
+                "Exchange"
+            ]),
+        );
+        assert_eq!(
+            current_question_id.as_deref(),
+            Some("blk-af811567-c9aa-4a4d-8775-44b529b499fd"),
+        );
+    }
+
+    #[test]
+    fn apply_mutation_rejects_array_answer_without_slot_index() {
+        let question_id = "blk-af811567-c9aa-4a4d-8775-44b529b499fd".to_owned();
+        let answer_schema = AnswerSchema {
+            constraints: HashMap::from_iter([(
+                question_id.clone(),
+                AnswerConstraint::ArrayText { max_len: 10 },
+            )]),
+            sections: HashMap::from_iter([(question_id.clone(), "listening".to_owned())]),
+        };
+        let writing_task_ids: HashSet<String> = HashSet::new();
+
+        let mut answers = json!({});
+        let mut writing_answers = json!({});
+        let mut flags = json!({});
+        let mut violations_snapshot = json!([]);
+        let mut phase = "exam".to_owned();
+        let mut current_module = "listening".to_owned();
+        let mut current_question_id = None;
+        let mut recovery = json!({});
+
+        let error = apply_mutation(
+            &MutationEnvelope {
+                id: "m-slot-missing".to_owned(),
+                seq: 1,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+                mutation_type: "answer".to_owned(),
+                base_revision: None,
+                payload: json!({
+                    "questionId": "blk-af811567-c9aa-4a4d-8775-44b529b499fd",
+                    "value": ["239", "MODERN", "LAMP", "", "", "", "", "", "", ""]
+                }),
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("listening"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect_err("array mutation without slotIndex should be rejected");
+
+        match error {
+            DeliveryError::Validation(message) => {
+                assert_eq!(
+                    message,
+                    "Array-style answer mutations must include `slotIndex`."
+                );
+            }
+            other => panic!("expected validation error, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn validate_contiguous_sequences_rejects_gaps() {
         let base = MutationEnvelope {
             id: "m".to_owned(),
             seq: 0,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
             mutation_type: "answer".to_owned(),
+            base_revision: None,
             payload: json!({"questionId": "q1", "value": "A"}),
         };
         let mut a = base.clone();
@@ -2899,6 +4203,31 @@ mod tests {
         b.seq = 4;
         let err = validate_contiguous_sequences(1, &[a, b]).unwrap_err();
         assert!(matches!(err, DeliveryError::Conflict { .. }));
+    }
+
+    #[test]
+    fn validate_unique_mutation_ids_rejects_duplicates() {
+        let first = MutationEnvelope {
+            id: "m-1".to_owned(),
+            seq: 1,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+            mutation_type: "SetScalar".to_owned(),
+            base_revision: None,
+            payload: json!({"baseRevision": 0, "questionId": "q1", "value": "A"}),
+        };
+        let second = MutationEnvelope {
+            id: "m-1".to_owned(),
+            seq: 2,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
+            mutation_type: "SetScalar".to_owned(),
+            base_revision: None,
+            payload: json!({"baseRevision": 1, "questionId": "q1", "value": "B"}),
+        };
+
+        let err = validate_unique_mutation_ids(&[first, second]).unwrap_err();
+        assert!(
+            matches!(err, DeliveryError::Validation(message) if message == "Mutation batch contains duplicate mutationId values.")
+        );
     }
 
     #[test]
@@ -2923,6 +4252,7 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "position".to_owned(),
+                base_revision: None,
                 payload: json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q1"}),
             },
             &answer_schema,
@@ -2976,6 +4306,7 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "position".to_owned(),
+                base_revision: None,
                 payload: json!({
                     "phase": "exam",
                     "currentModule": "reading",
@@ -3003,6 +4334,7 @@ mod tests {
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
                 mutation_type: "flag".to_owned(),
+                base_revision: None,
                 payload: json!({
                     "questionId": "sentence-1:blank-1",
                     "value": true

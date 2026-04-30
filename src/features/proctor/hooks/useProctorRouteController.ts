@@ -249,8 +249,9 @@ export function useProctorRouteController(): ProctorRouteController {
   const summariesQuery = useProctorSessionSummaries(summaryPollIntervalMs);
   const summaries = summariesQuery.data ?? [];
   useEffect(() => {
-    if (!selectedScheduleId && summaries.length > 0) {
-      setSelectedScheduleId(summaries[0].schedule.id);
+    const firstSummary = summaries[0];
+    if (!selectedScheduleId && firstSummary) {
+      setSelectedScheduleId(firstSummary.schedule.id);
     }
   }, [selectedScheduleId, summaries]);
 

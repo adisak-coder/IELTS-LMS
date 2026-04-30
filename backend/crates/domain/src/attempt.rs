@@ -110,6 +110,8 @@ pub struct MutationEnvelope {
     pub seq: i64,
     pub timestamp: DateTime<Utc>,
     pub mutation_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_revision: Option<i32>,
     pub payload: Value,
 }
 
@@ -146,6 +148,12 @@ pub struct StudentAuditLogRequest {
 pub struct StudentSubmitRequest {
     pub attempt_id: String,
     pub student_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_revision: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub submission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

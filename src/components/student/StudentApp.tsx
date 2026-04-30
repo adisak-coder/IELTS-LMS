@@ -26,6 +26,7 @@ import { useStudentRuntime } from './providers/StudentRuntimeProvider';
 import { useStudentUI } from './providers/StudentUIProvider';
 import { isRuntimeStructurallyCompleted, isVerifiedTerminalStudentState } from './providers/verifiedTerminalState';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
+import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 
 function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['blocking']['reason']) {
   switch (reason) {
@@ -651,9 +652,13 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     shouldRenderPostExam,
   ]);
 
-  const handleAnswerChange = (questionId: string, answer: Parameters<typeof runtimeActions.setAnswer>[1]) => {
+  const handleAnswerChange = (
+    questionId: string,
+    answer: Parameters<typeof runtimeActions.setAnswer>[1],
+    meta?: StudentAnswerMutationMeta,
+  ) => {
     runtimeActions.setAnswer(questionId, answer);
-    attemptActions.persistAnswer(questionId, answer);
+    attemptActions.persistAnswer(questionId, answer, meta);
   };
 
   const handleFlagToggle = (questionId: string) => {
