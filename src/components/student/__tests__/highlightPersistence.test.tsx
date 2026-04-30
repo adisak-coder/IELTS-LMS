@@ -9,6 +9,7 @@ describe('student highlight persistence', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   const createSelectionMock = (
@@ -87,7 +88,8 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockRestore();
   });
 
-  it('shows a manual highlight button after touch selection on iPad', async () => {
+  it('auto-highlights after touch selection settles on iPad', async () => {
+    vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
       start: 6,
@@ -107,20 +109,25 @@ describe('student highlight persistence', () => {
     fireEvent.touchEnd(textElement);
 
     expect(container.querySelector('mark')).toBeNull();
+    expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
 
-    const highlightButton = await screen.findByRole('button', { name: /highlight selected text/i });
-    currentTextNode = textElement.firstChild;
-    fireEvent.click(highlightButton);
-
-    await waitFor(() => {
-      expect(container.querySelector('mark')).not.toBeNull();
-      expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
+    await act(async () => {
+      vi.advanceTimersByTime(1999);
     });
+    expect(container.querySelector('mark')).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(container.querySelector('mark')).not.toBeNull();
+    expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
 
     getSelectionSpy.mockRestore();
   });
 
-  it('uses settled selectionchange to show a manual highlight button inside rich text containers', async () => {
+  it('debounces selectionchange before auto-highlighting rich text containers', async () => {
+    vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
       start: 6,
@@ -140,15 +147,23 @@ describe('student highlight persistence', () => {
     fireEvent(document, new Event('selectionchange'));
 
     expect(container.querySelector('mark')).toBeNull();
+    expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
 
-    const highlightButton = await screen.findByRole('button', { name: /highlight selected text/i });
-    currentTextNode = textElement.firstChild;
-    fireEvent.click(highlightButton);
-
-    await waitFor(() => {
-      expect(container.querySelector('mark')).not.toBeNull();
-      expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
     });
+    fireEvent(document, new Event('selectionchange'));
+    await act(async () => {
+      vi.advanceTimersByTime(1999);
+    });
+    expect(container.querySelector('mark')).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+
+    expect(container.querySelector('mark')).not.toBeNull();
+    expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
 
     getSelectionSpy.mockRestore();
   });

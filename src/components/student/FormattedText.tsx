@@ -62,7 +62,7 @@ export function FormattedText({
       setHtml(nextHtml);
     }
   }, [highlightClassName, highlightColor, highlightEnabled, setHtml]);
-  const { applyPendingSelection, hasPendingSelection, scheduleSelectionCheck } = useDeferredSelectionHighlight({
+  const scheduleSelectionHighlight = useDeferredSelectionHighlight({
     enabled: highlightEnabled,
     containerRef,
     applySelection: handleSelection,
@@ -102,22 +102,10 @@ export function FormattedText({
           style={{ WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' }}
           onClick={removeTappedHighlight}
           onMouseUp={highlightEnabled ? handleSelection : undefined}
-          onTouchEnd={highlightEnabled ? scheduleSelectionCheck : undefined}
+          onTouchEnd={highlightEnabled ? scheduleSelectionHighlight : undefined}
           onKeyUp={highlightEnabled ? handleSelection : undefined}
           dangerouslySetInnerHTML={{ __html: html }}
         />
-        {highlightEnabled && hasPendingSelection ? (
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
-            onTouchStart={(event) => event.preventDefault()}
-            onClick={applyPendingSelection}
-            className="fixed bottom-24 right-5 z-[60] rounded-md border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-lg active:bg-blue-700"
-            aria-label="Highlight selected text"
-          >
-            Highlight
-          </button>
-        ) : null}
       </>
     );
   }

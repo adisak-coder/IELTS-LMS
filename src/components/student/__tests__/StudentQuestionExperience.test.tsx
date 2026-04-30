@@ -509,8 +509,7 @@ describe('student question experience', () => {
     expect(screen.getByTestId('reading-pane-resizer')).toHaveClass('w-11');
     expect(screen.getByTestId('reading-pane-resizer').querySelector('.w-14')).toBeInTheDocument();
     expect(screen.getByTestId('reading-pane-resizer').querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
-    expect(workspace.querySelector('.min-w-\\[120px\\]')).toBeInTheDocument();
-    expect(workspace.querySelector('.min-w-\\[180px\\]')).toBeInTheDocument();
+    expect(workspace.querySelector('.min-w-\\[48px\\]')).toBeInTheDocument();
     expect(screen.queryByTestId('reading-split-presets')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /set split to material wider/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /set split to equal/i })).not.toBeInTheDocument();
@@ -541,11 +540,11 @@ describe('student question experience', () => {
     });
 
     fireEvent.mouseDown(screen.getByTestId('reading-pane-resizer'), { clientX: 580 });
-    fireEvent.mouseMove(document, { clientX: 200 });
+    fireEvent.mouseMove(document, { clientX: 0 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--reading-pane-width': '15%',
-      '--question-pane-width': 'calc(85% - var(--split-divider-width))',
+      '--reading-pane-width': '6%',
+      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
     });
 
     readingWorkspaceRect.mockReturnValue({
@@ -560,11 +559,11 @@ describe('student question experience', () => {
       toJSON: () => ({}),
     });
     fireEvent.mouseDown(screen.getByTestId('reading-pane-resizer'), { clientX: 200 });
-    fireEvent.mouseMove(document, { clientX: 1500 });
+    fireEvent.mouseMove(document, { clientX: 1800 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--reading-pane-width': '84%',
-      '--question-pane-width': 'calc(16% - var(--split-divider-width))',
+      '--reading-pane-width': '95%',
+      '--question-pane-width': 'calc(5% - var(--split-divider-width))',
     });
   });
 
@@ -1300,8 +1299,7 @@ describe('student question experience', () => {
     expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('w-11');
     expect(screen.getByTestId('listening-pane-resizer').querySelector('.w-14')).toBeInTheDocument();
     expect(screen.getByTestId('listening-pane-resizer').querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
-    expect(workspace.querySelector('.min-w-\\[120px\\]')).toBeInTheDocument();
-    expect(workspace.querySelector('.min-w-\\[180px\\]')).toBeInTheDocument();
+    expect(workspace.querySelector('.min-w-\\[48px\\]')).toBeInTheDocument();
     expect(screen.queryByTestId('listening-split-presets')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /set split to material wider/i })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /set split to equal/i })).not.toBeInTheDocument();
@@ -1332,11 +1330,11 @@ describe('student question experience', () => {
     });
 
     fireEvent.mouseDown(screen.getByTestId('listening-pane-resizer'), { clientX: 580 });
-    fireEvent.mouseMove(document, { clientX: 200 });
+    fireEvent.mouseMove(document, { clientX: 0 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--listening-pane-width': '15%',
-      '--question-pane-width': 'calc(85% - var(--split-divider-width))',
+      '--listening-pane-width': '6%',
+      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
     });
 
     listeningWorkspaceRect.mockReturnValue({
@@ -1351,11 +1349,11 @@ describe('student question experience', () => {
       toJSON: () => ({}),
     });
     fireEvent.mouseDown(screen.getByTestId('listening-pane-resizer'), { clientX: 200 });
-    fireEvent.mouseMove(document, { clientX: 1500 });
+    fireEvent.mouseMove(document, { clientX: 1800 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--listening-pane-width': '84%',
-      '--question-pane-width': 'calc(16% - var(--split-divider-width))',
+      '--listening-pane-width': '95%',
+      '--question-pane-width': 'calc(5% - var(--split-divider-width))',
     });
   });
 

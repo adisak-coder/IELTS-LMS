@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 
 interface UseDeferredSelectionHighlightOptions {
@@ -7,7 +7,7 @@ interface UseDeferredSelectionHighlightOptions {
   applySelection: () => void;
 }
 
-const TOUCH_SELECTION_SETTLE_MS = 450;
+const TOUCH_SELECTION_SETTLE_MS = 2000;
 
 export function useDeferredSelectionHighlight({
   enabled,
@@ -15,20 +15,8 @@ export function useDeferredSelectionHighlight({
   applySelection,
 }: UseDeferredSelectionHighlightOptions) {
   const selectionTimerRef = useRef<number | null>(null);
-  const [hasPendingSelection, setHasPendingSelection] = useState(false);
 
-  const selectionBelongsToContainer = useCallback(() => {
-    const container = containerRef.current;
-    const selection = window.getSelection();
-    if (!container || !selection || selection.rangeCount === 0 || !selection.toString().trim()) {
-      return false;
-    }
-
-    const range = selection.getRangeAt(0);
-    return container.contains(range.commonAncestorContainer);
-  }, [containerRef]);
-
-  const scheduleSelectionCheck = useCallback(() => {
+  const scheduleSelectionHighlight = useCallback(() => {
     if (!enabled) {
       return;
     }
@@ -38,19 +26,9 @@ export function useDeferredSelectionHighlight({
     }
 
     selectionTimerRef.current = window.setTimeout(() => {
-      setHasPendingSelection(selectionBelongsToContainer());
+      applySelection();
       selectionTimerRef.current = null;
     }, TOUCH_SELECTION_SETTLE_MS);
-  }, [enabled, selectionBelongsToContainer]);
-
-  const applyPendingSelection = useCallback(() => {
-    if (!enabled) {
-      setHasPendingSelection(false);
-      return;
-    }
-
-    applySelection();
-    setHasPendingSelection(false);
   }, [applySelection, enabled]);
 
   useEffect(() => {
@@ -63,15 +41,19 @@ export function useDeferredSelectionHighlight({
 
   useEffect(() => {
     if (!enabled) {
-      setHasPendingSelection(false);
       return;
     }
 
     const handleSelectionChange = () => {
-      if (selectionBelongsToContainer()) {
-        scheduleSelectionCheck();
-      } else {
-        setHasPendingSelection(false);
+      const container = containerRef.current;
+      const selection = window.getSelection();
+      if (!container || !selection || selection.rangeCount === 0 || !selection.toString().trim()) {
+        return;
+      }
+
+      const range = selection.getRangeAt(0);
+      if (container.contains(range.commonAncestorContainer)) {
+        scheduleSelectionHighlight();
       }
     };
 
@@ -80,11 +62,7 @@ export function useDeferredSelectionHighlight({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [enabled, scheduleSelectionCheck, selectionBelongsToContainer]);
+  }, [containerRef, enabled, scheduleSelectionHighlight]);
 
-  return {
-    applyPendingSelection,
-    hasPendingSelection,
-    scheduleSelectionCheck,
-  };
+  return scheduleSelectionHighlight;
 }
