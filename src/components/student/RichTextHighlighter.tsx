@@ -58,13 +58,6 @@ export function RichTextHighlighter({
     if (!container || !selection) {
       return false;
     }
-    const hasSelectionIntent =
-      selection.rangeCount > 0 &&
-      !selection.isCollapsed &&
-      selection.toString().trim().length > 0;
-    if (hasSelectionIntent) {
-      lastMouseSelectionIntentAtRef.current = Date.now();
-    }
 
     const nextHtml = applySelectionHighlight(
       container,
@@ -77,6 +70,8 @@ export function RichTextHighlighter({
       setHtml(nextHtml);
       return true;
     }
+
+    return false;
   }, [enabled, highlightClassName, highlightColor, setHtml]);
   const applySelectionFromSnapshot = useCallback(
     (snapshot: HighlightSelectionSnapshot) => {
@@ -106,16 +101,20 @@ export function RichTextHighlighter({
     },
     [enabled, highlightClassName, highlightColor, setHtml],
   );
-  const { startTouchSelectionSession, scheduleSelectionHighlight } = useDeferredSelectionHighlight({
+  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
+    useDeferredSelectionHighlight({
     enabled,
     containerRef,
     applySelection: handleSelection,
     applySelectionFromSnapshot,
-  });
+    });
 
   const removeTappedHighlight = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
       if (!enabled) {
+        return;
+      }
+      if (isWithinRecentTouchAutoApplyGuard()) {
         return;
       }
 
@@ -134,7 +133,7 @@ export function RichTextHighlighter({
         setHtml(nextHtml);
       }
     },
-    [enabled, setHtml],
+    [enabled, isWithinRecentTouchAutoApplyGuard, setHtml],
   );
 
   return (

@@ -57,13 +57,6 @@ export function FormattedText({
     if (!container || !selection) {
       return false;
     }
-    const hasSelectionIntent =
-      selection.rangeCount > 0 &&
-      !selection.isCollapsed &&
-      selection.toString().trim().length > 0;
-    if (hasSelectionIntent) {
-      lastMouseSelectionIntentAtRef.current = Date.now();
-    }
 
     const nextHtml = applySelectionHighlight(
       container,
@@ -76,6 +69,8 @@ export function FormattedText({
       setHtml(nextHtml);
       return true;
     }
+
+    return false;
   }, [highlightClassName, highlightColor, highlightEnabled, setHtml]);
   const applySelectionFromSnapshot = useCallback(
     (snapshot: HighlightSelectionSnapshot) => {
@@ -105,16 +100,20 @@ export function FormattedText({
     },
     [highlightClassName, highlightColor, highlightEnabled, setHtml],
   );
-  const { startTouchSelectionSession, scheduleSelectionHighlight } = useDeferredSelectionHighlight({
+  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
+    useDeferredSelectionHighlight({
     enabled: highlightEnabled,
     containerRef,
     applySelection: handleSelection,
     applySelectionFromSnapshot,
-  });
+    });
 
   const removeTappedHighlight = useCallback(
     (event: React.MouseEvent<HTMLElement>) => {
       if (!highlightEnabled) {
+        return;
+      }
+      if (isWithinRecentTouchAutoApplyGuard()) {
         return;
       }
 
@@ -133,7 +132,7 @@ export function FormattedText({
         setHtml(nextHtml);
       }
     },
-    [highlightEnabled, setHtml],
+    [highlightEnabled, isWithinRecentTouchAutoApplyGuard, setHtml],
   );
 
   if (highlightEnabled || hasPersistedHtml) {

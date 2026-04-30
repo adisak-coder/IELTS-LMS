@@ -135,13 +135,19 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   }, [highlightNamespace]);
   const studentShellStyle = {
     height: 'var(--student-viewport-height, 100dvh)',
-    zoom: uiState.accessibilitySettings.zoom,
+    zoom: tabletMode ? 1 : uiState.accessibilitySettings.zoom,
     fontSize: studentTypography.rootFontSize,
     lineHeight: studentTypography.lineHeight,
     ['--student-meta-font-size' as string]: studentTypography.metaFontSize,
     ['--student-chip-font-size' as string]: studentTypography.chipFontSize,
     ['--student-control-font-size' as string]: studentTypography.controlFontSize,
     ['--student-preview-font-size' as string]: studentTypography.previewFontSize,
+    ['--student-passage-font-size' as string]: studentTypography.passageFontSize,
+    ['--student-passage-title-font-size' as string]: studentTypography.passageTitleFontSize,
+    ['--student-passage-h1-font-size' as string]: studentTypography.passageH1FontSize,
+    ['--student-passage-h2-font-size' as string]: studentTypography.passageH2FontSize,
+    ['--student-passage-h3-font-size' as string]: studentTypography.passageH3FontSize,
+    ['--student-passage-line-height' as string]: studentTypography.passageLineHeight,
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
@@ -1195,6 +1201,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             flags={runtimeState.flags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
+            contentZoom={uiState.accessibilitySettings.zoom}
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
@@ -1217,6 +1224,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             flags={runtimeState.flags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
+            contentZoom={uiState.accessibilitySettings.zoom}
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
