@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 
 interface UseDeferredSelectionHighlightOptions {
@@ -15,8 +15,20 @@ export function useDeferredSelectionHighlight({
   applySelection,
 }: UseDeferredSelectionHighlightOptions) {
   const selectionTimerRef = useRef<number | null>(null);
+  const [hasPendingSelection, setHasPendingSelection] = useState(false);
 
-  const scheduleSelectionHighlight = useCallback(() => {
+  const selectionBelongsToContainer = useCallback(() => {
+    const container = containerRef.current;
+    const selection = window.getSelection();
+    if (!container || !selection || selection.rangeCount === 0 || !selection.toString().trim()) {
+      return false;
+    }
+
+    const range = selection.getRangeAt(0);
+    return container.contains(range.commonAncestorContainer);
+  }, [containerRef]);
+
+  const scheduleSelectionCheck = useCallback(() => {
     if (!enabled) {
       return;
     }
@@ -26,9 +38,19 @@ export function useDeferredSelectionHighlight({
     }
 
     selectionTimerRef.current = window.setTimeout(() => {
-      applySelection();
+      setHasPendingSelection(selectionBelongsToContainer());
       selectionTimerRef.current = null;
     }, TOUCH_SELECTION_SETTLE_MS);
+  }, [enabled, selectionBelongsToContainer]);
+
+  const applyPendingSelection = useCallback(() => {
+    if (!enabled) {
+      setHasPendingSelection(false);
+      return;
+    }
+
+    applySelection();
+    setHasPendingSelection(false);
   }, [applySelection, enabled]);
 
   useEffect(() => {
@@ -41,19 +63,15 @@ export function useDeferredSelectionHighlight({
 
   useEffect(() => {
     if (!enabled) {
+      setHasPendingSelection(false);
       return;
     }
 
     const handleSelectionChange = () => {
-      const container = containerRef.current;
-      const selection = window.getSelection();
-      if (!container || !selection || selection.rangeCount === 0 || !selection.toString().trim()) {
-        return;
-      }
-
-      const range = selection.getRangeAt(0);
-      if (container.contains(range.commonAncestorContainer)) {
-        scheduleSelectionHighlight();
+      if (selectionBelongsToContainer()) {
+        scheduleSelectionCheck();
+      } else {
+        setHasPendingSelection(false);
       }
     };
 
@@ -62,7 +80,11 @@ export function useDeferredSelectionHighlight({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [containerRef, enabled, scheduleSelectionHighlight]);
+  }, [enabled, scheduleSelectionCheck, selectionBelongsToContainer]);
 
-  return scheduleSelectionHighlight;
+  return {
+    applyPendingSelection,
+    hasPendingSelection,
+    scheduleSelectionCheck,
+  };
 }

@@ -506,7 +506,9 @@ describe('student question experience', () => {
       '--split-divider-width': '32px',
     });
     expect(screen.getByTestId('reading-pane-resizer')).toBeInTheDocument();
-    expect(screen.getByTestId('reading-pane-resizer')).toHaveClass('w-8');
+    expect(screen.getByTestId('reading-pane-resizer')).toHaveClass('w-11');
+    expect(screen.getByTestId('reading-pane-resizer').querySelector('.w-14')).toBeInTheDocument();
+    expect(screen.getByTestId('reading-pane-resizer').querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
     expect(workspace.querySelector('.min-w-\\[120px\\]')).toBeInTheDocument();
     expect(workspace.querySelector('.min-w-\\[180px\\]')).toBeInTheDocument();
     expect(screen.queryByTestId('reading-split-presets')).not.toBeInTheDocument();
@@ -1295,7 +1297,9 @@ describe('student question experience', () => {
     expect(screen.queryByText(/staff instructions/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/use the invigilator audio system/i)).not.toBeInTheDocument();
     expect(screen.queryByText(longInstruction.trim())).not.toBeInTheDocument();
-    expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('w-8');
+    expect(screen.getByTestId('listening-pane-resizer')).toHaveClass('w-11');
+    expect(screen.getByTestId('listening-pane-resizer').querySelector('.w-14')).toBeInTheDocument();
+    expect(screen.getByTestId('listening-pane-resizer').querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
     expect(workspace.querySelector('.min-w-\\[120px\\]')).toBeInTheDocument();
     expect(workspace.querySelector('.min-w-\\[180px\\]')).toBeInTheDocument();
     expect(screen.queryByTestId('listening-split-presets')).not.toBeInTheDocument();

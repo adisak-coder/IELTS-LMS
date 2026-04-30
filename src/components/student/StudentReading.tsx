@@ -227,14 +227,14 @@ export function StudentReading({
         <div 
           onMouseDown={handleDrag}
           onTouchStart={handleDrag}
-          className={`${isTabletMode ? 'flex w-8' : 'hidden w-4 lg:flex'} bg-gray-400 relative items-center justify-center cursor-col-resize flex-shrink-0 touch-none hover:bg-gray-600 transition-colors`}
+          className={`${isTabletMode ? 'flex w-11' : 'hidden w-4 lg:flex'} bg-gray-400 relative items-center justify-center cursor-col-resize flex-shrink-0 touch-none hover:bg-gray-600 transition-colors`}
           role="separator"
           aria-label="Resize reading passage and answer panels"
           aria-orientation="vertical"
           data-testid="reading-pane-resizer"
         >
-          <div className={`${isTabletMode ? 'h-16 w-10' : 'h-10 w-8'} bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none`}>
-            <ArrowLeftRight size={14} className="text-gray-600" />
+          <div className={`${isTabletMode ? 'h-[5.5rem] w-14' : 'h-10 w-8'} bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none`}>
+            <ArrowLeftRight size={isTabletMode ? 22 : 14} className="text-gray-600" />
           </div>
         </div>
 

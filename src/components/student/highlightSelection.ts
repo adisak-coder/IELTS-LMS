@@ -52,6 +52,27 @@ export function applySelectionHighlight(
   return clonedContainer.innerHTML;
 }
 
+export function removeHighlightAtIndex(container: HTMLElement, highlightIndex: number): string | null {
+  if (highlightIndex < 0) {
+    return null;
+  }
+
+  const clonedContainer = container.cloneNode(true) as HTMLElement;
+  const highlightedNodes = clonedContainer.querySelectorAll('mark[data-highlighted="true"]');
+  const highlightedNode = highlightedNodes.item(highlightIndex);
+  if (!highlightedNode || !highlightedNode.parentNode) {
+    return null;
+  }
+
+  const parent = highlightedNode.parentNode;
+  while (highlightedNode.firstChild) {
+    parent.insertBefore(highlightedNode.firstChild, highlightedNode);
+  }
+  parent.removeChild(highlightedNode);
+
+  return clonedContainer.innerHTML;
+}
+
 function createClonedRange(
   sourceContainer: HTMLElement,
   clonedContainer: HTMLElement,

@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo, useRef } from 'react';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
-import { applySelectionHighlight, escapeHtml } from './highlightSelection';
+import { applySelectionHighlight, escapeHtml, removeHighlightAtIndex } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
 import { usePersistedStudentHighlightHtml } from './highlightPersistence';
 import { useDeferredSelectionHighlight } from './useDeferredSelectionHighlight';
@@ -63,11 +63,35 @@ export function RichTextHighlighter({
       setHtml(nextHtml);
     }
   }, [enabled, highlightClassName, highlightColor, setHtml]);
-  const scheduleSelectionHighlight = useDeferredSelectionHighlight({
+  const { applyPendingSelection, hasPendingSelection, scheduleSelectionCheck } = useDeferredSelectionHighlight({
     enabled,
     containerRef,
     applySelection: handleSelection,
   });
+
+  const removeTappedHighlight = useCallback(
+    (event: React.MouseEvent<HTMLElement>) => {
+      if (!enabled) {
+        return;
+      }
+
+      const container = containerRef.current;
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      const highlightedNode = target?.closest('mark[data-highlighted="true"]');
+      if (!container || !highlightedNode || !container.contains(highlightedNode)) {
+        return;
+      }
+
+      const highlightIndex = Array.from(container.querySelectorAll('mark[data-highlighted="true"]')).indexOf(highlightedNode);
+      const nextHtml = removeHighlightAtIndex(container, highlightIndex);
+      if (nextHtml) {
+        event.preventDefault();
+        event.stopPropagation();
+        setHtml(nextHtml);
+      }
+    },
+    [enabled, setHtml],
+  );
 
   return (
     <>
@@ -76,11 +100,24 @@ export function RichTextHighlighter({
         className={className}
         data-student-highlightable="true"
         style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
+        onClick={removeTappedHighlight}
         onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
-        onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionHighlight : undefined}
+        onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionCheck : undefined}
         onKeyUp={enabled ? handleSelection : undefined}
         dangerouslySetInnerHTML={{ __html: html }}
       />
+      {enabled && !showHighlightButton && hasPendingSelection ? (
+        <button
+          type="button"
+          onMouseDown={(event) => event.preventDefault()}
+          onTouchStart={(event) => event.preventDefault()}
+          onClick={applyPendingSelection}
+          className="fixed bottom-24 right-5 z-[60] rounded-md border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-lg active:bg-blue-700"
+          aria-label="Highlight selected text"
+        >
+          Highlight
+        </button>
+      ) : null}
       {enabled && showHighlightButton ? (
         <button
           type="button"

@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FormattedText } from '../FormattedText';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from '../highlightPersistence';
@@ -87,7 +87,7 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockRestore();
   });
 
-  it('applies highlights after touch selection on iPad', async () => {
+  it('shows a manual highlight button after touch selection on iPad', async () => {
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
       start: 6,
@@ -106,6 +106,12 @@ describe('student highlight persistence', () => {
     currentTextNode = textElement.firstChild;
     fireEvent.touchEnd(textElement);
 
+    expect(container.querySelector('mark')).toBeNull();
+
+    const highlightButton = await screen.findByRole('button', { name: /highlight selected text/i });
+    currentTextNode = textElement.firstChild;
+    fireEvent.click(highlightButton);
+
     await waitFor(() => {
       expect(container.querySelector('mark')).not.toBeNull();
       expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
@@ -114,7 +120,7 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockRestore();
   });
 
-  it('uses settled selectionchange as a touch fallback inside rich text containers', async () => {
+  it('uses settled selectionchange to show a manual highlight button inside rich text containers', async () => {
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
       start: 6,
@@ -133,11 +139,42 @@ describe('student highlight persistence', () => {
     currentTextNode = textElement.firstChild;
     fireEvent(document, new Event('selectionchange'));
 
+    expect(container.querySelector('mark')).toBeNull();
+
+    const highlightButton = await screen.findByRole('button', { name: /highlight selected text/i });
+    currentTextNode = textElement.firstChild;
+    fireEvent.click(highlightButton);
+
     await waitFor(() => {
       expect(container.querySelector('mark')).not.toBeNull();
       expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
     });
 
     getSelectionSpy.mockRestore();
+  });
+
+  it('removes one tapped highlight while preserving the rest', async () => {
+    const { container } = render(
+      <RichTextHighlighter
+        content={'Alpha <mark data-highlighted="true" class="bg-yellow-200">beta</mark> gamma <mark data-highlighted="true" class="bg-yellow-200">delta</mark>'}
+        contentType="html"
+        enabled
+      />,
+    );
+
+    expect(container.querySelectorAll('mark[data-highlighted="true"]')).toHaveLength(2);
+
+    const firstHighlight = container.querySelector('mark[data-highlighted="true"]');
+    if (!firstHighlight) {
+      throw new Error('Expected a highlighted phrase');
+    }
+
+    fireEvent.click(firstHighlight);
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('mark[data-highlighted="true"]')).toHaveLength(1);
+      expect(container).toHaveTextContent('Alpha beta gamma delta');
+      expect(container.querySelector('mark[data-highlighted="true"]')).toHaveTextContent('delta');
+    });
   });
 });
