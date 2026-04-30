@@ -522,6 +522,7 @@ export function QuestionRenderer({
             number + index,
             stringArrayAnswer[index] ?? '',
             (nextValue) => updateIndexedAnswer(index, nextValue, diagramBlock.labels.length),
+            `Label ${index + 1}`,
           )}
         </React.Fragment>
       ))}
