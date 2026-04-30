@@ -11,6 +11,7 @@ import { ExamFiltersPanel } from './ExamFiltersPanel';
 import { ExamBulkActionBar } from './ExamBulkActionBar';
 import { Virtuoso } from 'react-virtuoso';
 import { VIRTUAL_LIST_HEIGHTS } from '../../constants/uiConstants';
+import { buildExamTextExport, downloadExamTextExport } from '../../utils/examTextExport';
 
 const ExamVersionHistory = lazyLoad<ExamVersionHistoryProps>(
   () => import('./ExamVersionHistory').then((module) => ({ default: module.ExamVersionHistory })),
@@ -391,10 +392,28 @@ export function AdminExams({
   
   const handleBulkExport = async () => {
     if (!onBulkExport || selectedExamIds.size === 0) return;
-    
-    const result = await onBulkExport(Array.from(selectedExamIds));
+
+    const selectedIds = Array.from(selectedExamIds);
+    const result = await onBulkExport(selectedIds);
     setBulkOperationResult(result);
     setShowBulkResult(true);
+
+    const successfulExamIds = new Set(
+      result.results.filter((item) => item.success).map((item) => item.examId),
+    );
+    if (successfulExamIds.size > 0) {
+      const examById = new Map(exams.map((exam) => [exam.id, exam]));
+      const successfulExams = selectedIds
+        .filter((examId) => successfulExamIds.has(examId))
+        .map((examId) => examById.get(examId))
+        .filter((exam): exam is Exam => Boolean(exam));
+
+      if (successfulExams.length > 0) {
+        const content = buildExamTextExport(successfulExams);
+        downloadExamTextExport(content);
+      }
+    }
+
     clearSelection();
   };
 
