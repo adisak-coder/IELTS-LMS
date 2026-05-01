@@ -179,6 +179,7 @@ async fn runtime_commands_transition_the_runtime_state_machine() {
     assert_eq!(start.status(), StatusCode::OK);
     let start_json = json_body(start).await;
     assert_eq!(start_json["data"]["status"], "live");
+    assert_eq!(start_json["data"]["revision"], 1);
     assert_eq!(start_json["data"]["activeSectionKey"], "listening");
     assert_eq!(start_json["data"]["sections"][0]["status"], "live");
 
@@ -215,6 +216,76 @@ async fn runtime_commands_transition_the_runtime_state_machine() {
         serde_json::Value::Null
     );
     assert_eq!(end_json["data"]["sections"][0]["status"], "completed");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn get_runtime_counts_down_from_section_start_instead_of_persisted_start_duration() {
+    let database = mysql::TestDatabase::new(SCHEDULING_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let auth = mysql::create_authenticated_user(
+        database.pool(),
+        UserRole::Admin,
+        "admin@example.com",
+        "Admin",
+    )
+    .await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let start = command_request(
+        &app,
+        &auth,
+        schedule_id,
+        json!({ "action": "start_runtime" }),
+    )
+    .await;
+    assert_eq!(start.status(), StatusCode::OK);
+
+    sqlx::query(
+        r#"
+        UPDATE exam_session_runtime_sections
+        SET actual_start_at = NOW() - INTERVAL 45 SECOND,
+            available_at = NOW() - INTERVAL 45 SECOND
+        WHERE runtime_id = (
+            SELECT id FROM exam_session_runtimes WHERE schedule_id = ?
+        )
+          AND section_key = 'listening'
+        "#,
+    )
+    .bind(schedule_id.to_string())
+    .execute(database.pool())
+    .await
+    .expect("backdate active section start");
+
+    let response = app
+        .oneshot(
+            auth.with_auth(
+                Request::builder().uri(format!("/api/v1/schedules/{schedule_id}/runtime")),
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let runtime = json_body(response).await;
+    let remaining = runtime["data"]["currentSectionRemainingSeconds"]
+        .as_i64()
+        .expect("runtime remaining seconds");
+    assert!(
+        remaining <= 30 * 60 - 40,
+        "remaining should count down from the active section start, got {remaining}"
+    );
+    assert!(
+        remaining > 30 * 60 - 90,
+        "remaining should not overcount elapsed time, got {remaining}"
+    );
 
     database.shutdown().await;
 }

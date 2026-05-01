@@ -510,7 +510,7 @@ impl SchedulingService {
                 active_section_key, current_section_key, current_section_remaining_seconds,
                 waiting_for_next_section, is_overrun, total_paused_seconds, created_at, updated_at, revision
             )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, false, false, 0, NOW(), NOW(), 0)
+            VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, false, false, 0, NOW(), NOW(), 1)
             "#,
         )
         .bind(runtime_id.to_string())
@@ -833,6 +833,26 @@ impl SchedulingService {
         .fetch_all(&self.pool)
         .await?;
 
+        let computed_time = if matches!(
+            runtime_row.status,
+            RuntimeStatus::Live | RuntimeStatus::Paused
+        ) {
+            compute_runtime_remaining_seconds(
+                runtime_row.current_section_key.as_deref(),
+                runtime_row.active_section_key.as_deref(),
+                &sections,
+                Utc::now(),
+            )
+        } else {
+            None
+        };
+        let current_section_remaining_seconds = computed_time
+            .map(|computed| computed.remaining_seconds)
+            .unwrap_or(runtime_row.current_section_remaining_seconds);
+        let is_overrun = computed_time
+            .map(|computed| computed.is_overrun)
+            .unwrap_or(runtime_row.is_overrun);
+
         Ok(ExamSessionRuntime {
             id: runtime_row.id.to_string(),
             schedule_id: runtime_row.schedule_id.to_string(),
@@ -843,9 +863,9 @@ impl SchedulingService {
             actual_end_at: runtime_row.actual_end_at,
             active_section_key: runtime_row.active_section_key,
             current_section_key: runtime_row.current_section_key,
-            current_section_remaining_seconds: runtime_row.current_section_remaining_seconds,
+            current_section_remaining_seconds,
             waiting_for_next_section: runtime_row.waiting_for_next_section,
-            is_overrun: runtime_row.is_overrun,
+            is_overrun,
             total_paused_seconds: runtime_row.total_paused_seconds,
             created_at: runtime_row.created_at,
             updated_at: runtime_row.updated_at,
