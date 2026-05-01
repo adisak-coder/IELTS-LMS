@@ -41,6 +41,7 @@ export type BlockingReason =
   | 'syncing_reconnect'
   | 'heartbeat_lost'
   | 'device_mismatch'
+  | 'storage_unavailable'
   | null;
 
 interface RuntimeReducerState {

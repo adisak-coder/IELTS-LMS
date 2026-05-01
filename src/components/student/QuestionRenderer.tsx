@@ -120,11 +120,17 @@ export function QuestionRenderer({
     );
   };
 
-  const updateIndexedAnswer = (index: number, value: string, total: number) => {
+  const updateIndexedAnswer = (
+    index: number,
+    value: string,
+    total: number,
+    interactionType: StudentAnswerMutationMeta['interactionType'] = 'typing',
+  ) => {
     const next = Array.from({ length: total }, (_, candidateIndex) =>
       candidateIndex === index ? value : (stringArrayAnswer[candidateIndex] ?? ''),
     );
     onChange(next, {
+      interactionType,
       slotIndex: index,
       slotId: getSlotId(index, `${block.id}:${index}`),
       slotCount: total,
@@ -205,7 +211,7 @@ export function QuestionRenderer({
                 type="radio"
                 name={`q-${q.id}`}
                 checked={answer === option}
-                onChange={() => onChange(option)}
+                onChange={() => onChange(option, { interactionType: 'discrete' })}
                 className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span className="text-sm uppercase text-gray-900">{labels[option as keyof typeof labels]}</span>
@@ -235,7 +241,7 @@ export function QuestionRenderer({
             type="text"
             name={q.id}
             value={typeof answer === 'string' ? answer : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => onChange(event.target.value, { interactionType: 'typing' })}
             className={`w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${inputWidthClass}`}
             placeholder="Enter answer..."
             security={security}
@@ -258,7 +264,7 @@ export function QuestionRenderer({
 
         <select
           value={typeof answer === 'string' ? answer : ''}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => onChange(event.target.value, { interactionType: 'discrete' })}
           className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-xs'}`}
           aria-label={`Heading selection for question ${number}`}
         >
@@ -281,12 +287,16 @@ export function QuestionRenderer({
 
     const toggleOption = (optionId: string) => {
       if (selectedOptions.includes(optionId)) {
-        onChange(selectedOptions.filter((candidate) => candidate !== optionId));
+        onChange(selectedOptions.filter((candidate) => candidate !== optionId), {
+          interactionType: 'discrete',
+        });
         return;
       }
 
       if (selectedOptions.length < mcqBlock.requiredSelections) {
-        onChange([...selectedOptions, optionId]);
+        onChange([...selectedOptions, optionId], {
+          interactionType: 'discrete',
+        });
       }
     };
 
@@ -369,7 +379,7 @@ export function QuestionRenderer({
             type="text"
             name={q.id}
             value={typeof answer === 'string' ? answer : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => onChange(event.target.value, { interactionType: 'typing' })}
             className={`w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${inputWidthClass}`}
             placeholder="Enter label..."
             security={security}
@@ -403,7 +413,7 @@ export function QuestionRenderer({
                 type="radio"
                 name={`q-${mcqBlock.id}`}
                 checked={answer === option.id}
-                onChange={() => onChange(option.id)}
+                onChange={() => onChange(option.id, { interactionType: 'discrete' })}
                 className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <div className="flex gap-2">
@@ -430,7 +440,7 @@ export function QuestionRenderer({
             type="text"
             name={q.id}
             value={typeof answer === 'string' ? answer : ''}
-            onChange={(event) => onChange(event.target.value)}
+            onChange={(event) => onChange(event.target.value, { interactionType: 'typing' })}
             className={`w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${inputWidthClass}`}
             placeholder="Enter answer..."
             security={security}
@@ -685,7 +695,13 @@ export function QuestionRenderer({
                 <div className={isCompactPane ? 'flex w-full flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
-                    onChange={(event) => updateIndexedAnswer(index, event.target.value, classificationBlock.items.length)}
+                    onChange={(event) =>
+                      updateIndexedAnswer(
+                        index,
+                        event.target.value,
+                        classificationBlock.items.length,
+                        'discrete',
+                      )}
                     className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Category selection for question ${number + index}`}
                   >
@@ -721,7 +737,13 @@ export function QuestionRenderer({
                 <div className={isCompactPane ? 'flex w-full flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
-                    onChange={(event) => updateIndexedAnswer(index, event.target.value, matchingFeaturesBlock.features.length)}
+                    onChange={(event) =>
+                      updateIndexedAnswer(
+                        index,
+                        event.target.value,
+                        matchingFeaturesBlock.features.length,
+                        'discrete',
+                      )}
                     className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Matching selection for question ${number + index}`}
                   >

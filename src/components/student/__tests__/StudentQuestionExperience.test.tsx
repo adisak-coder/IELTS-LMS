@@ -55,6 +55,49 @@ describe('student question experience', () => {
     expect(screen.getByRole('button', { name: '5' })).toBeInTheDocument();
   });
 
+  it('marks matching-dropdown answer changes as discrete interactions', () => {
+    const onChange = vi.fn();
+    const block = {
+      id: 'match-1',
+      type: 'MATCHING',
+      instruction: 'Match headings',
+      headings: [
+        { id: 'h1', text: 'Heading one' },
+        { id: 'h2', text: 'Heading two' },
+      ],
+      questions: [
+        {
+          id: 'q1',
+          paragraphLabel: 'A',
+          correctHeadingId: 'h1',
+        },
+      ],
+    } as any;
+
+    const question = {
+      id: 'q1',
+      paragraphLabel: 'A',
+      correctHeadingId: 'h1',
+    } as any;
+
+    render(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={1}
+        answer=""
+        onChange={onChange}
+      />,
+    );
+
+    const select = screen.getByRole('combobox', { name: /heading selection for question 1/i });
+    fireEvent.change(select, { target: { value: 'ii' } });
+
+    expect(onChange).toHaveBeenCalledWith('ii', {
+      interactionType: 'discrete',
+    });
+  });
+
   it('does not show decorative category tags for classification questions', () => {
     const block: ClassificationBlock = {
       id: 'classify-1',

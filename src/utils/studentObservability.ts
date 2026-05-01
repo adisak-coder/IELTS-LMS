@@ -2,7 +2,14 @@ export type StudentObservabilityField = string | number | boolean | null | undef
 
 interface StudentObservabilityDimensions {
   attemptId?: StudentObservabilityField;
+  browserEngine?: StudentObservabilityField;
+  durablePersistResult?: StudentObservabilityField;
+  deviceClass?: StudentObservabilityField;
   endpoint?: StudentObservabilityField;
+  lifecycleEventSource?: StudentObservabilityField;
+  pendingMutationAgeMs?: StudentObservabilityField;
+  pendingMutationCount?: StudentObservabilityField;
+  platform?: StudentObservabilityField;
   reason?: StudentObservabilityField;
   scheduleId?: StudentObservabilityField;
   statusCode?: StudentObservabilityField;
@@ -21,6 +28,10 @@ function normalizeStringField(value: StudentObservabilityField): string | null {
 }
 
 function normalizeStatusCodeField(value: StudentObservabilityField): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeNumberField(value: StudentObservabilityField): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
@@ -50,6 +61,13 @@ export function withStudentObservabilityDimensions(
     statusCode: normalizeStatusCodeField(fields.statusCode),
     reason: normalizeStringField(fields.reason) ?? null,
     syncState: normalizeStringField(fields.syncState) ?? null,
+    browserEngine: normalizeStringField(fields.browserEngine) ?? null,
+    platform: normalizeStringField(fields.platform) ?? null,
+    deviceClass: normalizeStringField(fields.deviceClass) ?? null,
+    lifecycleEventSource: normalizeStringField(fields.lifecycleEventSource) ?? null,
+    durablePersistResult: normalizeStringField(fields.durablePersistResult) ?? null,
+    pendingMutationAgeMs: normalizeNumberField(fields.pendingMutationAgeMs),
+    pendingMutationCount: normalizeNumberField(fields.pendingMutationCount),
   };
 }
 

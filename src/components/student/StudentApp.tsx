@@ -98,6 +98,14 @@ function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['
         badge: 'Blocked',
         contextLabel: 'Integrity Hold',
       };
+    case 'storage_unavailable':
+      return {
+        title: 'Answer storage unavailable',
+        message:
+          'Your browser cannot safely store new answers right now. Keep this tab open and contact the proctor.',
+        badge: 'Blocked',
+        contextLabel: 'Session Recovery',
+      };
     default:
       return null;
   }
@@ -657,17 +665,26 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     answer: Parameters<typeof runtimeActions.setAnswer>[1],
     meta?: StudentAnswerMutationMeta,
   ) => {
+    if (runtimeState.blocking.reason === 'storage_unavailable') {
+      return;
+    }
     runtimeActions.setAnswer(questionId, answer);
     attemptActions.persistAnswer(questionId, answer, meta);
   };
 
   const handleFlagToggle = (questionId: string) => {
+    if (runtimeState.blocking.reason === 'storage_unavailable') {
+      return;
+    }
     const nextFlagged = !runtimeState.flags[questionId];
     runtimeActions.toggleFlag(questionId);
     attemptActions.persistFlag(questionId, nextFlagged);
   };
 
   const handleWritingChange = (taskId: string, text: string) => {
+    if (runtimeState.blocking.reason === 'storage_unavailable') {
+      return;
+    }
     runtimeActions.setWritingAnswer(taskId, text);
     attemptActions.persistWritingAnswer(taskId, text);
   };

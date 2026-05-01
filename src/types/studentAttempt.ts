@@ -8,6 +8,7 @@ export type StudentAnswerValue =
   | undefined; // For unassigned answers
 
 export interface StudentAnswerMutationMeta {
+  interactionType?: 'typing' | 'discrete' | undefined;
   slotIndex?: number | undefined;
   slotId?: string | undefined;
   slotCount?: number | undefined;

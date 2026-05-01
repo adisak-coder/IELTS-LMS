@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { ExamState } from '../../types';
 import { ArrowLeftRight, Check, X, AlertTriangle } from 'lucide-react';
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
@@ -66,6 +66,19 @@ export function StudentWriting({
   const currentPlainText = currentText.replace(/<[^>]*>/g, '').trim();
   const showEditorPlaceholder = !isEditorFocused && currentPlainText.length === 0;
 
+  const commitEditorDraft = useCallback(() => {
+    if (!editorRef.current) {
+      return;
+    }
+
+    const sanitized = sanitizeHtml(editorRef.current.innerHTML);
+    if (sanitized !== editorRef.current.innerHTML) {
+      editorRef.current.innerHTML = sanitized;
+    }
+
+    onWritingChange(activeTaskId, editorRef.current.innerHTML);
+  }, [activeTaskId, onWritingChange]);
+
   useEffect(() => {
     if (currentQuestionId && currentQuestionId !== activeTaskId) {
       setActiveTaskId(currentQuestionId);
@@ -87,6 +100,27 @@ export function StudentWriting({
       onTimeExpired?.();
     }
   }, [timeRemaining, onTimeExpired]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'hidden') {
+        return;
+      }
+
+      commitEditorDraft();
+    };
+
+    const handlePageHide = () => {
+      commitEditorDraft();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [commitEditorDraft]);
 
   // Add input protection event listeners to the editor
   useEffect(() => {
@@ -360,16 +394,11 @@ export function StudentWriting({
                     editorHasFocusRef.current = true;
                     setIsEditorFocused(true);
                   }}
+                  onCompositionEnd={commitEditorDraft}
                   onBlur={() => {
                     editorHasFocusRef.current = false;
                     setIsEditorFocused(false);
-                    if (editorRef.current) {
-                      const sanitized = sanitizeHtml(editorRef.current.innerHTML);
-                      if (sanitized !== editorRef.current.innerHTML) {
-                        editorRef.current.innerHTML = sanitized;
-                      }
-                      onWritingChange(activeTaskId, editorRef.current.innerHTML);
-                    }
+                    commitEditorDraft();
                   }}
                   onPaste={blockWritingEditorInteraction}
                   onCopy={blockWritingEditorInteraction}

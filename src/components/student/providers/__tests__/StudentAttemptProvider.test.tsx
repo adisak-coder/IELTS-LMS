@@ -14,6 +14,7 @@ import { StudentAttemptProvider, useStudentAttempt } from '../StudentAttemptProv
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
 
 const ANSWER_DURABLE_WRITE_DEBOUNCE_MS = 100;
+const ANSWER_SYNC_CHECKPOINT_KEY_PREFIX = 'ielts_student_answer_checkpoint_v1';
 
 function createExamState(): ExamState {
   return {
@@ -182,12 +183,15 @@ describe('StudentAttemptProvider', () => {
     vi.spyOn(studentAttemptRepository, 'saveHeartbeatEvent').mockResolvedValue();
     vi.spyOn(studentAttemptRepository, 'getHeartbeatEvents').mockResolvedValue([]);
     vi.spyOn(studentAttemptRepository, 'getPendingMutations').mockResolvedValue([]);
+    vi.spyOn(studentAttemptRepository, 'getAttemptsByScheduleId').mockResolvedValue([]);
     vi.spyOn(studentAttemptRepoModule, 'refreshAttemptCredentialForAttempt').mockResolvedValue(false);
 
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
       value: true,
     });
+
+    window.localStorage.clear();
   });
 
   function createWrapper(attemptSnapshot = createAttemptSnapshot()) {
@@ -238,18 +242,7 @@ describe('StudentAttemptProvider', () => {
   }
 
   it('flushes durable queued mutations when connectivity returns', async () => {
-    const pendingMutation: StudentAttemptMutation = {
-      id: 'mutation-1',
-      attemptId: 'attempt-1',
-      scheduleId: 'sched-1',
-      timestamp: '2026-01-01T00:00:00.000Z',
-      type: 'answer',
-      payload: {
-        questionId: 'q1',
-      },
-    };
-
-    vi.mocked(studentAttemptRepository.getPendingMutations).mockResolvedValue([pendingMutation]);
+    vi.mocked(studentAttemptRepository.getPendingMutations).mockResolvedValue([]);
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
       value: false,
@@ -258,7 +251,7 @@ describe('StudentAttemptProvider', () => {
     const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
 
     await act(async () => {
-      await Promise.resolve();
+      result.current.actions.persistAnswer('q1', 'OFFLINE_TYPED');
     });
 
     await waitFor(() => {
@@ -271,7 +264,8 @@ describe('StudentAttemptProvider', () => {
     });
 
     await act(async () => {
-      await result.current.actions.flushPending();
+      void result.current.actions.flushPending();
+      await Promise.resolve();
     });
 
     await waitFor(() => {
@@ -353,9 +347,9 @@ describe('StudentAttemptProvider', () => {
     });
 
     const pendingMutations = vi.mocked(studentAttemptRepository.savePendingMutations).mock.calls.at(-1)?.[1];
-    expect(pendingMutations).toHaveLength(1);
-    expect(pendingMutations?.[0]?.type).toBe('violation');
-    expect(pendingMutations?.[0]?.payload).toMatchObject({
+    const violationMutation = pendingMutations?.find((mutation) => mutation.type === 'violation');
+    expect(violationMutation).toBeDefined();
+    expect(violationMutation?.payload).toMatchObject({
       violationId: 'violation-1',
       violationType: 'TAB_SWITCH',
       violations: [
@@ -1042,6 +1036,39 @@ describe('StudentAttemptProvider', () => {
     vi.useRealTimers();
   });
 
+  it('persists discrete objective selections durably without waiting for the debounce window', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'A', {
+        interactionType: 'discrete',
+      } as any);
+      await Promise.resolve();
+    });
+
+    expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(studentAttemptRepository.savePendingMutations).mock.calls[0]?.[1]?.[0]?.payload)
+      .toMatchObject({
+        questionId: 'q1',
+        value: 'A',
+        interactionType: 'discrete',
+      });
+
+    await act(async () => {
+      vi.advanceTimersByTime(ANSWER_DURABLE_WRITE_DEBOUNCE_MS + 10);
+      await Promise.resolve();
+    });
+
+    expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it('forces an immediate durable answer flush on input blur before the debounce window elapses', async () => {
     vi.useFakeTimers();
     Object.defineProperty(window.navigator, 'onLine', {
@@ -1080,28 +1107,81 @@ describe('StudentAttemptProvider', () => {
       new Error('quota exceeded'),
     );
 
-    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+    const { result } = renderHook(
+      () => ({
+        attempt: useStudentAttempt(),
+        runtime: useStudentRuntime(),
+      }),
+      { wrapper: createWrapper() },
+    );
 
     await act(async () => {
-      result.current.actions.persistAnswer('q1', 'LOCAL_TYPED');
+      result.current.attempt.actions.persistAnswer('q1', 'LOCAL_TYPED');
     });
 
     await flushAnswerDurableDebounceWindow();
     await act(async () => {
       await Promise.resolve();
     });
-    expect(result.current.state.attempt?.recovery.syncState).toBe('error');
+    expect(result.current.attempt.state.attempt?.recovery.syncState).toBe('error');
 
     await act(async () => {
-      const flushed = await result.current.actions.flushPending();
+      const flushed = await result.current.attempt.actions.flushPending();
       expect(flushed).toBe(false);
     });
 
     expect(studentAttemptRepository.saveAttempt).not.toHaveBeenCalled();
     expect(studentAttemptRepository.clearPendingMutations).not.toHaveBeenCalled();
-    expect(result.current.state.pendingMutationCount).toBeGreaterThan(0);
-    expect(result.current.state.attempt?.answers.q1).toBe('LOCAL_TYPED');
+    expect(result.current.attempt.state.pendingMutationCount).toBeGreaterThan(0);
+    expect(result.current.attempt.state.attempt?.answers.q1).toBe('LOCAL_TYPED');
+    expect(result.current.runtime.state.blocking.reason).toBe('storage_unavailable');
     vi.useRealTimers();
+  });
+
+  it('recovers answer mutations from the sync checkpoint when repository pending mutations are empty', async () => {
+    const checkpointPayload = {
+      attemptId: 'attempt-1',
+      savedAt: '2026-01-01T00:00:00.000Z',
+      mutationVersion: 2,
+      mutations: [
+        {
+          id: 'mutation-answer-1',
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          timestamp: '2026-01-01T00:00:00.000Z',
+          type: 'answer',
+          payload: {
+            questionId: 'q1',
+            value: 'CHECKPOINT_ANSWER',
+            interactionType: 'typing',
+          },
+        },
+      ],
+    };
+    window.localStorage.setItem(
+      `${ANSWER_SYNC_CHECKPOINT_KEY_PREFIX}:attempt-1`,
+      JSON.stringify(checkpointPayload),
+    );
+    vi.mocked(studentAttemptRepository.getPendingMutations).mockResolvedValue([]);
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const { result } = renderHook(
+      () => ({
+        attempt: useStudentAttempt(),
+        runtime: useStudentRuntime(),
+      }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(result.current.attempt.state.pendingMutationCount).toBe(1);
+    });
+
+    expect(result.current.attempt.state.attempt?.answers.q1).toBe('CHECKPOINT_ANSWER');
+    expect(result.current.runtime.state.answers.q1).toBe('CHECKPOINT_ANSWER');
   });
 
   it('forces an immediate durable answer flush on pagehide and beforeunload', async () => {
@@ -1132,6 +1212,40 @@ describe('StudentAttemptProvider', () => {
 
     await act(async () => {
       window.dispatchEvent(new Event('beforeunload'));
+      await Promise.resolve();
+    });
+    expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('forces an immediate durable answer flush on window blur and page freeze', async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: createWrapper() });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'A');
+    });
+    expect(studentAttemptRepository.savePendingMutations).not.toHaveBeenCalled();
+
+    await act(async () => {
+      window.dispatchEvent(new Event('blur'));
+      await Promise.resolve();
+    });
+    expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalledTimes(1);
+
+    vi.mocked(studentAttemptRepository.savePendingMutations).mockClear();
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'AB');
+    });
+    expect(studentAttemptRepository.savePendingMutations).not.toHaveBeenCalled();
+
+    await act(async () => {
+      document.dispatchEvent(new Event('freeze'));
       await Promise.resolve();
     });
     expect(studentAttemptRepository.savePendingMutations).toHaveBeenCalledTimes(1);

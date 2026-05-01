@@ -84,6 +84,58 @@ The invariant for the active tab is:
   - `studentAttemptRepository.backend.test.ts`: dropped slot mutation records slot-scoped reconcile metadata.
   - `StudentAttemptProvider.test.tsx`: flush does not clear RAM pending answers when durable persistence keeps failing.
 
+## Gap Closures Delivered (TDD Follow-up 3 — Mobile Safari/Chrome Data-Loss, 2026-05-01)
+
+- [x] **Discrete objective-answer interactions now bypass debounce for durable pending-mutation mirror writes**
+  - Objective selection interactions (`radio`/`checkbox`/`select`) now persist pending mutations immediately instead of waiting for the answer debounce window.
+  - Reduces mobile lifecycle loss window where iPad/phone Safari/Chrome may background/suspend before debounced durability fires.
+- [x] **Question controls now emit interaction metadata (`typing` vs `discrete`)**
+  - `QuestionRenderer` now tags answer changes with `interactionType` via `StudentAnswerMutationMeta`.
+  - Typing flows retain debounced durability behavior; discrete selection flows use immediate durability behavior.
+- [x] **Writing editor now commits draft on composition completion and page hide lifecycle**
+  - `StudentWriting` now commits the current editor draft on `compositionend`.
+  - `StudentWriting` now commits the current editor draft on `pagehide` and `visibilitychange` when hidden.
+  - Closes a mobile composition/lifecycle gap where the latest visible writing text could be lost during app/tab background transitions.
+
+### TDD Regression Coverage Added (Mobile Lifecycle / Interaction-Type)
+
+- [x] `StudentAttemptProvider.test.tsx`
+  - `persists discrete objective selections durably without waiting for the debounce window`
+- [x] `StudentQuestionExperience.test.tsx`
+  - `marks matching-dropdown answer changes as discrete interactions`
+- [x] `StudentWriting.lifecycle.test.tsx`
+  - `commits the current editor draft on compositionend`
+  - `commits the current editor draft when the page is hidden or unloaded`
+
+## Gap Closures Delivered (TDD Follow-up 4 — Mobile Durability Hardening, 2026-05-01)
+
+- [x] **Synchronous answer durability checkpoint added before async mirror persistence**
+  - `StudentAttemptProvider` now writes a local synchronous checkpoint (`ielts_student_answer_checkpoint_v1:<attemptId>`) for answer/writing/flag pending mutations during local mutation updates.
+  - Reduces iPad/phone suspend/kill loss window where async persistence may not complete before process suspension.
+- [x] **Checkpoint recovery path on mount when durable repository pending queue is unexpectedly empty**
+  - If repository pending mutations load as empty, provider restores pending answer mutations from the synchronous checkpoint and reapplies them to runtime/attempt state.
+  - Recovery emits `student_pending_checkpoint_recovered_total`.
+- [x] **Hard-stop blocking for storage durability failures**
+  - Pending-mutation persistence failures now set blocking reason to `storage_unavailable`, preventing silent continuation in non-durable mode.
+  - `StudentApp` now blocks answer/writing/flag interactions while `storage_unavailable` is active.
+- [x] **Mobile lifecycle flush coverage expanded**
+  - Provider now forces immediate durable mirror flush on additional lifecycle signals: `window.blur` and document `freeze` (in addition to `focusout`, `visibilitychange`, `pagehide`, `beforeunload`).
+- [x] **Observability dimensions expanded for mobile durability triage**
+  - Added mobile-correlating fields in student observability dimensions: `browserEngine`, `platform`, `deviceClass`, `lifecycleEventSource`, `durablePersistResult`, `pendingMutationAgeMs`, `pendingMutationCount`.
+  - Persistence failures now emit `student_pending_persist_failure_total` with these dimensions.
+
+### TDD Regression Coverage Added (Durability Hard-Stop / Checkpoint Recovery)
+
+- [x] `StudentAttemptProvider.test.tsx`
+  - `does not flush or clear RAM pending answers when durable pending-mutation persist fails` now verifies runtime enters `storage_unavailable` blocking state.
+  - `recovers answer mutations from the sync checkpoint when repository pending mutations are empty`.
+  - `forces an immediate durable answer flush on window blur and page freeze`.
+- [x] Affected runtime/app suites rerun green
+  - `StudentRuntimeProvider.test.tsx`
+  - `StudentApp.test.tsx`
+  - `StudentWriting.lifecycle.test.tsx`
+  - `StudentQuestionExperience.test.tsx`
+
 ## Scope
 - In scope:
   - `StudentRuntimeProvider` same-attempt hydration behavior.
