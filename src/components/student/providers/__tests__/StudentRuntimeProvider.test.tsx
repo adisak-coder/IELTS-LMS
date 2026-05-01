@@ -1685,6 +1685,50 @@ describe('StudentRuntimeProvider - Runtime timer smoothing', () => {
 
     expect(result.current.state.displayTimeRemaining).toBe(45);
   });
+
+  it('keeps exam phase and timer visible when a stale attempt snapshot regresses to pre-check during live runtime', async () => {
+    let attemptSnapshot = withCompletedPrecheck({
+      ...hydratedAttempt,
+      phase: 'exam',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+    const runtimeSnapshot = createRuntimeSnapshot('writing', 600);
+
+    const runtimeBackedWrapper = ({ children }: { children: React.ReactNode }) => (
+      <StudentRuntimeProvider
+        state={mockExamState}
+        onExit={vi.fn()}
+        runtimeBacked
+        runtimeSnapshot={runtimeSnapshot}
+        attemptSnapshot={attemptSnapshot}
+      >
+        {children}
+      </StudentRuntimeProvider>
+    );
+
+    const { result, rerender } = renderHook(() => useStudentRuntime(), {
+      wrapper: runtimeBackedWrapper,
+    });
+
+    expect(result.current.state.phase).toBe('exam');
+    expect(result.current.state.displayTimeRemaining).toBe(600);
+
+    await act(async () => {
+      attemptSnapshot = {
+        ...attemptSnapshot,
+        phase: 'pre-check',
+        integrity: {
+          ...attemptSnapshot.integrity,
+          preCheck: null,
+        },
+        updatedAt: '2026-01-01T00:00:05.000Z',
+      };
+      rerender();
+    });
+
+    expect(result.current.state.phase).toBe('exam');
+    expect(result.current.state.displayTimeRemaining).toBe(600);
+  });
 });
 
 describe('StudentRuntimeProvider - Progression locks', () => {

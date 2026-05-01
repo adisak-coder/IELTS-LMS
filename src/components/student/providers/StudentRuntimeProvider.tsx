@@ -582,8 +582,16 @@ function runtimeReducer(
         action.snapshot.proctorStatus === 'terminated' ||
         Boolean(nextSubmittedAt) ||
         isRuntimeStructurallyCompleted(action.runtimeSnapshot);
+      const runtimeStatus = action.runtimeBacked ? action.runtimeSnapshot?.status ?? null : null;
+      const hasActiveSection = Boolean(action.runtimeSnapshot?.currentSectionKey);
+      const shouldPromoteToExamPhase =
+        action.runtimeBacked &&
+        !terminalVerified &&
+        (runtimeStatus === 'live' || runtimeStatus === 'paused' || hasActiveSection);
       const nextPhase = terminalVerified
         ? 'post-exam'
+        : shouldPromoteToExamPhase
+          ? 'exam'
         : action.snapshot.phase === 'post-exam'
           ? action.runtimeBacked
             ? state.phase === 'pre-check'
