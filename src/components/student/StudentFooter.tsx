@@ -59,7 +59,7 @@ export function StudentFooter({
 
   return (
     <footer
-      className={`border-t border-gray-200 bg-white flex flex-col flex-shrink-0 z-10 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] ${
+      className={`student-exam-footer border-t border-gray-200 bg-white flex flex-col flex-shrink-0 z-10 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] ${
         tabletMode ? 'max-h-24 md:max-h-24' : 'max-h-32 md:max-h-28 lg:max-h-24'
       }`}
       role="contentinfo"

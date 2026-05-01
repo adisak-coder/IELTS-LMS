@@ -28,7 +28,7 @@ describe('StudentZoomableMedia', () => {
     expect(screen.getByText(/zoom only/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /zoom in image/i }));
-    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('155%');
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('120%');
 
     const viewport = screen.getByTestId('zoomable-media-viewport');
     viewport.scrollLeft = 40;
@@ -56,7 +56,7 @@ describe('StudentZoomableMedia', () => {
     });
     fireEvent.touchEnd(viewport, { touches: [] });
 
-    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('248%');
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('192%');
   });
 
   it('opens the zoom viewer on a two-finger gesture from the thumbnail', () => {

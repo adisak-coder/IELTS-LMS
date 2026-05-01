@@ -155,6 +155,7 @@ describe('StudentWriting a11y', () => {
       name: /writing task navigation and submission/i,
     });
 
+    expect(footer).toHaveClass('student-exam-footer');
     expect(within(footer).getByRole('button', { name: 'Task 1' })).toBeInTheDocument();
     fireEvent.click(within(footer).getByRole('button', { name: 'Task 2' }));
     expect(onNavigate).toHaveBeenCalledWith('task2');
@@ -178,6 +179,8 @@ describe('StudentWriting a11y', () => {
     fireEvent.click(screen.getByRole('button', { name: /review & submit/i }));
 
     expect(screen.getByRole('heading', { name: /review your responses/i })).toBeInTheDocument();
+    expect(screen.queryByText(/word count warning/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+\s*\/\s*\d+\s*words/i)).not.toBeInTheDocument();
   });
 
   it('does not expose a writing highlight toolbar button', () => {

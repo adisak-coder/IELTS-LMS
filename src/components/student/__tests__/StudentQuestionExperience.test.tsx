@@ -58,6 +58,9 @@ describe('student question experience', () => {
       />,
     );
 
+    expect(
+      screen.getByRole('contentinfo', { name: /question navigation and progress/i }),
+    ).toHaveClass('student-exam-footer');
     expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '2-4' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '5' })).toBeInTheDocument();

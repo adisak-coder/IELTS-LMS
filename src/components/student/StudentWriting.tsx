@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { ExamState } from '../../types';
-import { ArrowLeftRight, Check, X, AlertTriangle } from 'lucide-react';
+import { ArrowLeftRight, Check, X } from 'lucide-react';
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
 import { stripHtml } from '../../utils/builderEnhancements';
 import { MIN_HEIGHTS } from '../../constants/uiConstants';
@@ -276,19 +276,6 @@ export function StudentWriting({
     setShowReviewModal(false);
   };
 
-  // Calculate word count for HTML content
-  const getWordCount = (html: string) => {
-    const text = html.replace(/<[^>]*>/g, '').trim();
-    return text === '' ? 0 : text.split(/\s+/).length;
-  };
-
-  // Check if all tasks meet minimum word count
-  const allTasksMet = writingConfig.tasks.every(task => {
-    const text = writingAnswers[task.id] || '';
-    const count = getWordCount(text);
-    return count >= task.minWords;
-  });
-
 	return (
     <div className="flex flex-col h-full w-full bg-white">
       <div
@@ -329,7 +316,7 @@ export function StudentWriting({
                     sources={[currentChart.imageSrc]}
                     alt={currentChart.title}
                     label={currentChart.title}
-                    hint="Tap to zoom the chart"
+                    showZoomUi={false}
                     className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50"
                   />
                 ) : (
@@ -419,7 +406,7 @@ export function StudentWriting({
       </div>
 
       <footer
-        className="border-t border-gray-200 bg-white flex flex-shrink-0 z-10 shadow-[0_-2px_10px_rgba(0,0,0,0.03)]"
+        className="student-exam-footer border-t border-gray-200 bg-white flex flex-shrink-0 z-10 shadow-[0_-2px_10px_rgba(0,0,0,0.03)]"
         role="contentinfo"
         aria-label="Writing task navigation and submission"
       >
@@ -463,20 +450,12 @@ export function StudentWriting({
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {writingConfig.tasks.map((task) => {
                 const text = writingAnswers[task.id] || '';
-                const wordCount = getWordCount(text);
-                const isMet = wordCount >= task.minWords;
                 const previewText = text.replace(/<[^>]*>/g, '').trim();
 
                 return (
                   <div key={task.id} className="border border-gray-200 rounded-xl p-4">
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="font-bold text-gray-900">{task.label}</h3>
-                      <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold ${
-                        isMet ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                      }`}>
-                        {isMet ? <Check size={14} /> : <AlertTriangle size={14} />}
-                        {wordCount} / {task.minWords} words
-                      </div>
                     </div>
                     <div className="text-sm text-gray-600 max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
                       {previewText || <span className="text-gray-400 italic">No response written</span>}
@@ -487,15 +466,6 @@ export function StudentWriting({
             </div>
 
             <div className="p-6 border-t border-gray-200 bg-gray-50">
-              {!allTasksMet && (
-                <div className="flex items-start gap-3 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                  <AlertTriangle size={20} className="text-amber-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-sm font-semibold text-amber-900">Word count warning</p>
-                    <p className="text-xs text-amber-700 mt-1">Some tasks do not meet the minimum word count requirement. You may still submit, but your score may be affected.</p>
-                  </div>
-                </div>
-              )}
               <div className="flex gap-3">
                 <button
                   onClick={handleCancelSubmit}

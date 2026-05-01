@@ -451,28 +451,59 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
 
     const root = document.documentElement;
     const body = document.body;
+    const scheduledRefreshTimers: number[] = [];
 
     const updateViewportHeight = () => {
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      root.style.setProperty('--student-viewport-height', `${Math.round(viewportHeight)}px`);
+      const visualViewport = window.visualViewport;
+      const viewportHeight = visualViewport
+        ? Math.min(window.innerHeight, Math.round(visualViewport.height + visualViewport.offsetTop))
+        : Math.round(window.innerHeight);
+      root.style.setProperty('--student-viewport-height', `${Math.max(0, viewportHeight)}px`);
     };
 
-    updateViewportHeight();
+    const scheduleViewportHeightRefresh = () => {
+      for (const timer of scheduledRefreshTimers.splice(0)) {
+        window.clearTimeout(timer);
+      }
+      updateViewportHeight();
+      scheduledRefreshTimers.push(window.setTimeout(updateViewportHeight, 80));
+      scheduledRefreshTimers.push(window.setTimeout(updateViewportHeight, 220));
+      scheduledRefreshTimers.push(window.setTimeout(updateViewportHeight, 420));
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        scheduleViewportHeightRefresh();
+      }
+    };
+
+    scheduleViewportHeightRefresh();
     root.classList.add('student-exam-active');
     body.classList.add('student-exam-active');
-    window.addEventListener('resize', updateViewportHeight);
-    window.addEventListener('orientationchange', updateViewportHeight);
-    window.visualViewport?.addEventListener('resize', updateViewportHeight);
-    window.visualViewport?.addEventListener('scroll', updateViewportHeight);
+    window.addEventListener('resize', scheduleViewportHeightRefresh);
+    window.addEventListener('orientationchange', scheduleViewportHeightRefresh);
+    window.addEventListener('focus', scheduleViewportHeightRefresh);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener('focusin', scheduleViewportHeightRefresh);
+    document.addEventListener('focusout', scheduleViewportHeightRefresh);
+    window.visualViewport?.addEventListener('resize', scheduleViewportHeightRefresh);
+    window.visualViewport?.addEventListener('scroll', scheduleViewportHeightRefresh);
 
     return () => {
+      for (const timer of scheduledRefreshTimers) {
+        window.clearTimeout(timer);
+      }
       root.classList.remove('student-exam-active');
       body.classList.remove('student-exam-active');
       root.style.removeProperty('--student-viewport-height');
-      window.removeEventListener('resize', updateViewportHeight);
-      window.removeEventListener('orientationchange', updateViewportHeight);
-      window.visualViewport?.removeEventListener('resize', updateViewportHeight);
-      window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
+      window.removeEventListener('resize', scheduleViewportHeightRefresh);
+      window.removeEventListener('orientationchange', scheduleViewportHeightRefresh);
+      window.removeEventListener('focus', scheduleViewportHeightRefresh);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener('focusin', scheduleViewportHeightRefresh);
+      document.removeEventListener('focusout', scheduleViewportHeightRefresh);
+      window.visualViewport?.removeEventListener('resize', scheduleViewportHeightRefresh);
+      window.visualViewport?.removeEventListener('scroll', scheduleViewportHeightRefresh);
     };
   }, [effectivePhase]);
 

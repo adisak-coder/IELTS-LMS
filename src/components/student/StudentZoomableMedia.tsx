@@ -8,6 +8,7 @@ type StudentZoomableMediaProps = {
   alt: string;
   label: string;
   hint?: string | undefined;
+  showZoomUi?: boolean | undefined;
   className?: string | undefined;
   imageClassName?: string | undefined;
   modalImageClassName?: string | undefined;
@@ -18,7 +19,7 @@ type StudentZoomableMediaProps = {
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 2.8;
-const DEFAULT_ZOOM = 1.35;
+const DEFAULT_ZOOM = 1;
 const TOUCH_OPEN_GUARD_MS = 650;
 
 const INITIAL_PINCH_STATE = {
@@ -36,6 +37,7 @@ export function StudentZoomableMedia({
   alt,
   label,
   hint = 'Tap to zoom',
+  showZoomUi = true,
   className,
   imageClassName,
   modalImageClassName,
@@ -188,12 +190,12 @@ export function StudentZoomableMedia({
           {renderInteractiveOverlay()}
         </div>
       ) : null}
-      {!renderInteractiveOverlay ? (
+      {showZoomUi && !renderInteractiveOverlay ? (
         <div className="absolute left-3 top-3 rounded-full bg-gray-950/75 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-white shadow-lg">
           Zoom
         </div>
       ) : null}
-      {!renderInteractiveOverlay ? (
+      {showZoomUi && !renderInteractiveOverlay ? (
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-gray-950/75 to-transparent px-3 py-2">
           <div className="inline-flex items-center rounded-full bg-white/95 px-3 py-1 text-[length:var(--student-meta-font-size)] font-bold text-gray-900 shadow-sm">
             {hint}
@@ -233,8 +235,8 @@ export function StudentZoomableMedia({
           onTouchStart={handleThumbnailTouchStart}
           onTouchMove={handleThumbnailTouchMove}
           className={`group relative block w-full overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 text-left ${className ?? ''}`}
-          aria-label={`${label}. ${hint}`}
-          title={hint}
+          aria-label={`${label}. ${showZoomUi ? hint : 'Open zoom view'}`}
+          title={showZoomUi ? hint : 'Open zoom view'}
         >
           {imageContent}
         </button>
