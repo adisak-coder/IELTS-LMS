@@ -1395,7 +1395,7 @@ describe('StudentApp runtime-backed mode', () => {
     expect(screen.queryByText(/Examination Complete!/i)).not.toBeInTheDocument();
   });
 
-  it('auto-submits a runtime-backed section when loading at 00:00', async () => {
+  it('does not auto-submit a runtime-backed section when loading at 00:00 before a server-confirmed transition', async () => {
     const config = createDefaultConfig('Academic', 'Academic');
     config.security.requireFullscreen = false;
     config.security.detectSecondaryScreen = false;
@@ -1510,6 +1510,10 @@ describe('StudentApp runtime-backed mode', () => {
 
     await waitFor(() => {
       expect(screen.queryByText(/Waiting for cohort advance/i)).not.toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('student-time-remaining')).toHaveTextContent('00:00');
     });
   });
 

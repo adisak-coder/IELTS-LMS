@@ -136,6 +136,33 @@ The invariant for the active tab is:
   - `StudentWriting.lifecycle.test.tsx`
   - `StudentQuestionExperience.test.tsx`
 
+## Gap Closures Delivered (TDD Follow-up 5 — Reconnect Recovery / Mobile Resume, 2026-05-01)
+
+- [x] **Reconnect recovery is now retry-based instead of one-shot**
+  - `StudentNetworkProvider` now retries reconnect recovery with bounded exponential backoff while online.
+  - Recovery only unblocks after refresh, device continuity verification (when enabled), and pending mutation flush complete successfully.
+  - Prevents transient refresh/storage failures from leaving students permanently stuck after reconnect.
+- [x] **Foreground lifecycle resume now re-triggers reconnect recovery for mobile browsers**
+  - Added reconnect resume triggers on `pageshow` and `visibilitychange` (`visible`) in addition to `online`.
+  - Covers iPad/phone Safari and Chrome lifecycle cases where network recovery occurs without a fresh `online` event.
+- [x] **Pending mutation retention now survives dual durable-store failures in-session**
+  - `LocalStorageStudentAttemptCache` now keeps a RAM fallback queue when both localStorage and IndexedDB pending-mutation persistence fail.
+  - Pending mutations can still be restored in the same tab session, reducing “answer disappeared after resume” risk under mobile storage pressure/policy failures.
+- [x] **Client session continuity hardened for mobile resume/session eviction**
+  - `ensureClientSessionId` now reads/writes both sessionStorage and localStorage.
+  - `ensureClientSessionIdForAttempt` now seeds from attempt `recovery/integrity.clientSessionId`, reducing mutation-sequence drift after sessionStorage resets.
+
+### TDD Regression Coverage Added (Reconnect / Mobile Resume)
+
+- [x] `StudentNetworkProvider.test.tsx`
+  - `retries reconnect recovery after a transient runtime refresh failure and eventually unblocks`
+  - `re-runs reconnect recovery on pageshow while online and blocked`
+  - `re-runs reconnect recovery on visibilitychange when tab returns visible`
+- [x] `studentAttemptRepository.test.ts`
+  - `persists pending mutations via IndexedDB fallback when localStorage write fails`
+  - `retains pending mutations in memory when both localStorage and IndexedDB persistence fail`
+  - `reuses a persisted client session id when sessionStorage is cleared on mobile resume`
+
 ## Scope
 - In scope:
   - `StudentRuntimeProvider` same-attempt hydration behavior.

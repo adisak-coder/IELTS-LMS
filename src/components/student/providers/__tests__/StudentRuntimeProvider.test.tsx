@@ -1497,12 +1497,107 @@ describe('StudentRuntimeProvider - Runtime timer smoothing', () => {
       runtimeSnapshot = {
         ...runtimeSnapshot,
         currentSectionRemainingSeconds: 90,
+        sections: runtimeSnapshot.sections.map((section) =>
+          section.sectionKey === 'writing'
+            ? {
+                ...section,
+                extensionMinutes: 1,
+              }
+            : section,
+        ),
         updatedAt: '2026-01-01T00:00:01.000Z',
       };
       rerender();
     });
 
     expect(result.current.state.displayTimeRemaining).toBe(90);
+  });
+
+  it('does not jump up when same-section runtime remaining increases without an extension signal', async () => {
+    const attemptSnapshot: StudentAttempt = {
+      ...hydratedAttempt,
+      integrity: {
+        ...hydratedAttempt.integrity,
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: true,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+      },
+    };
+
+    let runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: attemptSnapshot.scheduleId,
+      examId: attemptSnapshot.examId,
+      examTitle: attemptSnapshot.examTitle,
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'writing',
+      currentSectionKey: 'writing',
+      currentSectionRemainingSeconds: 79,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'writing',
+          label: 'Writing',
+          order: 0,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const runtimeBackedWrapper = ({ children }: { children: React.ReactNode }) => (
+      <StudentRuntimeProvider
+        state={mockExamState}
+        onExit={vi.fn()}
+        runtimeBacked
+        runtimeSnapshot={runtimeSnapshot}
+        attemptSnapshot={attemptSnapshot}
+      >
+        {children}
+      </StudentRuntimeProvider>
+    );
+
+    const { result, rerender } = renderHook(() => useStudentRuntime(), {
+      wrapper: runtimeBackedWrapper,
+    });
+
+    expect(result.current.state.phase).toBe('exam');
+    expect(result.current.state.displayTimeRemaining).toBe(79);
+
+    await act(async () => {
+      runtimeSnapshot = {
+        ...runtimeSnapshot,
+        currentSectionRemainingSeconds: 90,
+        updatedAt: '2026-01-01T00:00:01.000Z',
+      };
+      rerender();
+    });
+
+    expect(result.current.state.displayTimeRemaining).toBe(79);
   });
 });
 

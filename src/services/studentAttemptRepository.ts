@@ -1341,21 +1341,38 @@ function readOrPrimeMutationSequenceWatermark(attemptId: string, clientSessionId
 function ensureClientSessionId(
   scheduleId: string,
   studentKey: string,
+  preferredClientSessionId: string | null = null,
 ): string {
   const session = getBrowserStorage('sessionStorage');
-  if (!session) {
-    return generateUuid();
-  }
+  const local = getBrowserStorage('localStorage');
 
   const storageKey = getClientSessionStorageKey(scheduleId, studentKey);
-  const stored = session.getItem(storageKey);
+  const stored = session?.getItem(storageKey) ?? local?.getItem(storageKey) ?? null;
   if (stored) {
+    try {
+      session?.setItem(storageKey, stored);
+    } catch {
+      // ignore
+    }
+    try {
+      local?.setItem(storageKey, stored);
+    } catch {
+      // ignore
+    }
     return stored;
   }
 
-  const generated = generateUuid();
+  const generated =
+    typeof preferredClientSessionId === 'string' && preferredClientSessionId.trim().length > 0
+      ? preferredClientSessionId
+      : generateUuid();
   try {
-    session.setItem(storageKey, generated);
+    session?.setItem(storageKey, generated);
+  } catch {
+    // ignore
+  }
+  try {
+    local?.setItem(storageKey, generated);
   } catch {
     // ignore
   }
@@ -1363,7 +1380,9 @@ function ensureClientSessionId(
 }
 
 export function ensureClientSessionIdForAttempt(attempt: StudentAttempt): string {
-  return ensureClientSessionId(attempt.scheduleId, attempt.studentKey);
+  const preferredClientSessionId =
+    attempt.recovery.clientSessionId ?? attempt.integrity.clientSessionId ?? null;
+  return ensureClientSessionId(attempt.scheduleId, attempt.studentKey, preferredClientSessionId);
 }
 
 export async function refreshAttemptCredentialForAttempt(attempt: StudentAttempt): Promise<boolean> {
@@ -1508,6 +1527,8 @@ export interface IStudentAttemptRepository {
 }
 
 class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
+  private readonly pendingMutationFallbackMemory = new Map<string, StudentAttemptMutation[]>();
+
   private getItem<T>(key: string): T[] {
     const item = localStorage.getItem(key);
     if (!item) {
@@ -1659,13 +1680,28 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
       pending.push(nextEntry);
     }
 
-    this.setItem(STORAGE_KEY_PENDING_MUTATIONS, pending);
-    await putPendingMutationRecordInIndexedDb(nextEntry);
+    let localWriteError: unknown = null;
+    try {
+      this.setItem(STORAGE_KEY_PENDING_MUTATIONS, pending);
+    } catch (error) {
+      localWriteError = error;
+    }
+
+    const indexedDbPersisted = await putPendingMutationRecordInIndexedDb(nextEntry);
+    if (localWriteError && !indexedDbPersisted) {
+      // Last-resort fallback keeps pending edits in-memory for this session when browser
+      // storage is unavailable. Durable stores remain preferred whenever available.
+      this.pendingMutationFallbackMemory.set(attemptId, nextEntry.mutations);
+      return;
+    }
+
+    this.pendingMutationFallbackMemory.delete(attemptId);
   }
 
   async getPendingMutations(attemptId: string): Promise<StudentAttemptMutation[]> {
     const localPending = this.getItem<PendingAttemptMutationRecord>(STORAGE_KEY_PENDING_MUTATIONS);
     const indexedDbPending = await getPendingMutationRecordsFromIndexedDb();
+    const fallbackPending = this.pendingMutationFallbackMemory.get(attemptId) ?? [];
 
     if (indexedDbPending !== null) {
       if (indexedDbPending.length === 0 && localPending.length > 0) {
@@ -1675,22 +1711,54 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
         }
       } else {
         if (!arePendingMutationRecordSetsEqual(localPending, indexedDbPending)) {
-          this.setItem(STORAGE_KEY_PENDING_MUTATIONS, indexedDbPending);
+          try {
+            this.setItem(STORAGE_KEY_PENDING_MUTATIONS, indexedDbPending);
+          } catch {
+            // If localStorage is unavailable/quota-limited, keep IndexedDB as source of truth.
+          }
         }
-        return indexedDbPending.find((entry) => entry.attemptId === attemptId)?.mutations ?? [];
+        const indexedResult =
+          indexedDbPending.find((entry) => entry.attemptId === attemptId)?.mutations ?? [];
+        if (indexedResult.length > 0) {
+          this.pendingMutationFallbackMemory.delete(attemptId);
+          return indexedResult;
+        }
+        if (fallbackPending.length > 0) {
+          return fallbackPending;
+        }
+        return indexedResult;
       }
     }
 
-    return localPending.find((entry) => entry.attemptId === attemptId)?.mutations ?? [];
+    const localResult = localPending.find((entry) => entry.attemptId === attemptId)?.mutations ?? [];
+    if (localResult.length > 0) {
+      this.pendingMutationFallbackMemory.delete(attemptId);
+      return localResult;
+    }
+    if (fallbackPending.length > 0) {
+      return fallbackPending;
+    }
+    return localResult;
   }
 
   async clearPendingMutations(attemptId: string): Promise<void> {
     const pending = this.getItem<PendingAttemptMutationRecord>(STORAGE_KEY_PENDING_MUTATIONS);
-    this.setItem(
-      STORAGE_KEY_PENDING_MUTATIONS,
-      pending.filter((entry) => entry.attemptId !== attemptId),
-    );
-    await deletePendingMutationRecordInIndexedDb(attemptId);
+    let localWriteError: unknown = null;
+    try {
+      this.setItem(
+        STORAGE_KEY_PENDING_MUTATIONS,
+        pending.filter((entry) => entry.attemptId !== attemptId),
+      );
+    } catch (error) {
+      localWriteError = error;
+    }
+
+    const indexedDbCleared = await deletePendingMutationRecordInIndexedDb(attemptId);
+    this.pendingMutationFallbackMemory.delete(attemptId);
+    if (localWriteError && !indexedDbCleared) {
+      // Storage write failure is tolerated because fallback memory is now cleared.
+      return;
+    }
   }
 
   async saveHeartbeatEvent(event: StudentHeartbeatEvent): Promise<void> {
@@ -2061,8 +2129,14 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         if (runtimeTerminal) {
           return true;
         }
+        if (!runtimeSectionKey) {
+          return false;
+        }
         const moduleKey = mutationModuleKey(mutation);
-        return !runtimeSectionKey || !moduleKey || moduleKey !== runtimeSectionKey;
+        if (!moduleKey) {
+          return false;
+        }
+        return moduleKey !== runtimeSectionKey;
       });
       const prunedMutations = first.remainingMutations.filter((mutation) => !dropped.includes(mutation));
 

@@ -154,7 +154,7 @@ describe('Student Provider Runtime Integration', () => {
     expect(screen.queryByText(/pre-check/i)).not.toBeInTheDocument();
   });
 
-  it('always shows syscheck before the waiting room when entering a scheduled exam', () => {
+  it('falls back to attempt-backed lobby flow when runtime snapshot is unavailable', () => {
     const preCheckPendingAttempt: StudentAttempt = {
       ...attemptSnapshot,
       phase: 'lobby',
@@ -175,8 +175,40 @@ describe('Student Provider Runtime Integration', () => {
       />,
     );
 
-    expect(screen.getByRole('heading', { name: /system checking/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /start exam/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /system checking/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /start exam/i })).toBeInTheDocument();
+  });
+
+  it('treats runtime refresh callbacks without runtime snapshot as attempt-backed state', () => {
+    const attemptOnlySnapshot: StudentAttempt = {
+      ...attemptSnapshot,
+      phase: 'exam',
+      integrity: {
+        ...attemptSnapshot.integrity,
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: true,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+      },
+    };
+
+    render(
+      <StudentAppWrapper
+        state={state}
+        onExit={() => {}}
+        scheduleId="sched-1"
+        attemptSnapshot={attemptOnlySnapshot}
+        onRuntimeRefresh={async () => {}}
+        runtimeSnapshot={null}
+      />,
+    );
+
+    expect(screen.queryByText(/waiting for start/i)).not.toBeInTheDocument();
   });
 
   it('syncs navigation provider with runtime currentSectionKey', () => {

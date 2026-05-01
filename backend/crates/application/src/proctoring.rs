@@ -1905,20 +1905,6 @@ fn runtime_hydration_row_to_runtime(
     row: RuntimeHydrationRow,
     section_rows: Vec<RuntimeHydrationSectionRow>,
 ) -> ExamSessionRuntime {
-    let now = Utc::now();
-    let computed_runtime = compute_runtime_remaining_seconds_for_hydration(
-        row.current_section_key.as_deref(),
-        row.active_section_key.as_deref(),
-        &section_rows,
-        now,
-    );
-    let current_section_remaining_seconds = computed_runtime
-        .map(|(remaining_seconds, _)| remaining_seconds)
-        .unwrap_or(row.current_section_remaining_seconds);
-    let is_overrun = computed_runtime
-        .map(|(_, is_overrun)| is_overrun)
-        .unwrap_or(row.is_overrun);
-
     ExamSessionRuntime {
         id: row.id.to_string(),
         schedule_id: row.schedule_id.to_string(),
@@ -1929,9 +1915,9 @@ fn runtime_hydration_row_to_runtime(
         actual_end_at: row.actual_end_at,
         active_section_key: row.active_section_key,
         current_section_key: row.current_section_key,
-        current_section_remaining_seconds,
+        current_section_remaining_seconds: row.current_section_remaining_seconds,
         waiting_for_next_section: row.waiting_for_next_section,
-        is_overrun,
+        is_overrun: row.is_overrun,
         total_paused_seconds: row.total_paused_seconds,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -1941,37 +1927,6 @@ fn runtime_hydration_row_to_runtime(
             .map(runtime_section_from_hydration)
             .collect(),
     }
-}
-
-fn compute_runtime_remaining_seconds_for_hydration(
-    current_section_key: Option<&str>,
-    active_section_key: Option<&str>,
-    sections: &[RuntimeHydrationSectionRow],
-    now: DateTime<Utc>,
-) -> Option<(i32, bool)> {
-    let section_key = current_section_key.or(active_section_key)?;
-    let section = sections
-        .iter()
-        .find(|section| section.section_key == section_key)?;
-    let actual_start_at = section.actual_start_at?;
-    let duration_seconds = i64::from(
-        section
-            .planned_duration_minutes
-            .saturating_add(section.extension_minutes),
-    )
-    .saturating_mul(60);
-    let time_base = if section.status == SectionRuntimeStatus::Paused || section.paused_at.is_some()
-    {
-        section.paused_at.unwrap_or(now)
-    } else {
-        now
-    };
-    let raw_elapsed_seconds = (time_base - actual_start_at).num_seconds().max(0);
-    let elapsed_seconds =
-        raw_elapsed_seconds.saturating_sub(i64::from(section.accumulated_paused_seconds.max(0)));
-    let remaining_seconds = (duration_seconds - elapsed_seconds).clamp(0, duration_seconds);
-
-    Some((remaining_seconds as i32, elapsed_seconds > duration_seconds))
 }
 
 fn runtime_section_from_hydration(value: RuntimeHydrationSectionRow) -> RuntimeSectionState {
@@ -2233,4 +2188,63 @@ async fn insert_audit_log(
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_hydration_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn hydration_uses_persisted_remaining_time_and_overrun_flag() {
+        let runtime_uuid = Uuid::new_v4();
+        let schedule_uuid = Uuid::new_v4();
+        let exam_uuid = Uuid::new_v4();
+        let now = Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap();
+
+        let row = RuntimeHydrationRow {
+            id: runtime_uuid.hyphenated(),
+            schedule_id: schedule_uuid.hyphenated(),
+            exam_id: exam_uuid.hyphenated(),
+            status: RuntimeStatus::Live,
+            plan_snapshot: json!([]),
+            actual_start_at: Some(now - chrono::Duration::hours(1)),
+            actual_end_at: None,
+            active_section_key: Some("reading".to_owned()),
+            current_section_key: Some("reading".to_owned()),
+            current_section_remaining_seconds: 612,
+            waiting_for_next_section: false,
+            is_overrun: false,
+            total_paused_seconds: 0,
+            created_at: now,
+            updated_at: now,
+            revision: 7,
+        };
+
+        let section_rows = vec![RuntimeHydrationSectionRow {
+            id: Uuid::new_v4().hyphenated(),
+            runtime_id: runtime_uuid.hyphenated(),
+            section_key: "reading".to_owned(),
+            label: "Reading".to_owned(),
+            section_order: 1,
+            planned_duration_minutes: 1,
+            gap_after_minutes: 0,
+            status: SectionRuntimeStatus::Live,
+            available_at: Some(now - chrono::Duration::hours(1)),
+            actual_start_at: Some(now - chrono::Duration::hours(1)),
+            actual_end_at: None,
+            paused_at: None,
+            accumulated_paused_seconds: 0,
+            extension_minutes: 0,
+            completion_reason: None,
+            projected_start_at: Some(now - chrono::Duration::hours(1)),
+            projected_end_at: Some(now - chrono::Duration::minutes(59)),
+        }];
+
+        let runtime = runtime_hydration_row_to_runtime(row, section_rows);
+
+        assert_eq!(runtime.current_section_remaining_seconds, 612);
+        assert!(!runtime.is_overrun);
+        assert_eq!(runtime.revision, 7);
+    }
 }

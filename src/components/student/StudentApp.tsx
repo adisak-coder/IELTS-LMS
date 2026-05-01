@@ -520,8 +520,15 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       const reachedZero = runtimeState.displayTimeRemaining === 0;
       const transitionedToZero =
         reachedZero && typeof priorTimeRemaining === 'number' && priorTimeRemaining > 0;
-      const loadedAtZero = reachedZero && priorTimeRemaining === null;
-      if (!transitionedToZero && !loadedAtZero) {
+      if (!transitionedToZero) {
+        return;
+      }
+
+      const serverSectionKey = runtimeState.runtimeSnapshot?.currentSectionKey ?? null;
+      const serverRemaining = runtimeState.runtimeSnapshot?.currentSectionRemainingSeconds;
+      const serverConfirmedBoundary =
+        serverSectionKey !== runtimeState.currentModule || serverRemaining === 0;
+      if (!serverConfirmedBoundary) {
         return;
       }
     } else if (runtimeState.displayTimeRemaining !== 0) {
@@ -545,6 +552,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     runtimeState.currentModule,
     runtimeState.displayTimeRemaining,
     runtimeState.runtimeBacked,
+    runtimeState.runtimeSnapshot,
     runtimeState.runtimeStatus,
   ]);
   const shouldShowTimeExtension = shouldOfferTimeExtension({

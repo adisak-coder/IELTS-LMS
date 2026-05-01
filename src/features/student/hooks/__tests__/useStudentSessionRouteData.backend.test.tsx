@@ -602,7 +602,7 @@ describe('useStudentSessionRouteData backend mode', () => {
       }
       if (url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334') {
         liveCallCount += 1;
-        if (liveCallCount === 1) {
+        if (liveCallCount <= 2) {
           return Promise.resolve(jsonResponse(buildLiveSessionContext(initialAttempt)));
         }
         return Promise.resolve(jsonResponse(buildLiveSessionContext(revisionlessAttempt)));
@@ -674,6 +674,61 @@ describe('useStudentSessionRouteData backend mode', () => {
         );
       }),
     ).toBe(false);
+  });
+
+  it('preserves last-known runtime snapshot when a refresh payload temporarily omits runtime', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
+
+    const initialAttempt = {
+      ...buildAttempt('ver-1'),
+      revision: 1,
+      answers: { q1: 'INITIAL' },
+      updatedAt: '2026-01-01T09:00:01.000Z',
+    };
+    const fresherAttemptWithoutRuntime = {
+      ...buildAttempt('ver-1'),
+      revision: 2,
+      answers: { q1: 'FRESH_ATTEMPT' },
+      updatedAt: '2026-01-01T09:00:02.000Z',
+    };
+
+    let liveCallCount = 0;
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/v1/student/sessions/sched-1/static?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildStaticSessionContext()));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334') {
+        liveCallCount += 1;
+        if (liveCallCount === 1) {
+          return Promise.resolve(jsonResponse(buildLiveSessionContext(initialAttempt)));
+        }
+        const refreshPayload = buildLiveSessionContext(fresherAttemptWithoutRuntime);
+        refreshPayload.runtime = null;
+        return Promise.resolve(jsonResponse(refreshPayload));
+      }
+      return Promise.resolve(jsonResponse(buildBootstrapContext(buildAttempt())));
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.runtimeSnapshot?.currentSectionKey).toBe('reading');
+    });
+
+    await act(async () => {
+      await result.current.refreshRuntime();
+    });
+
+    await waitFor(() => {
+      expect(result.current.attemptSnapshot?.revision).toBe(2);
+      expect(result.current.attemptSnapshot?.answers.q1).toBe('FRESH_ATTEMPT');
+    });
+    expect(result.current.runtimeSnapshot?.currentSectionKey).toBe('reading');
   });
 
   it('reads runtime-delivered rollout canary and kill-switch flags for answer invariant behavior', async () => {

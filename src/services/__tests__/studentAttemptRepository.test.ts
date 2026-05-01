@@ -14,6 +14,7 @@ import type { ExamSchedule } from '../../types/domain';
 import type { StudentAttempt, StudentAttemptMutation } from '../../types/studentAttempt';
 import {
   compactSubmittedAttempt,
+  ensureClientSessionIdForAttempt,
   pruneStudentAttemptCache,
   resetStudentAttemptPendingMutationIndexedDbForTests,
   studentLocalCachePolicy,
@@ -527,6 +528,110 @@ describe('studentAttemptRepository', () => {
         .map((mutation) => mutation.payload['slotIndex'])
         .sort((left, right) => Number(left) - Number(right)),
     ).toEqual([2, 3]);
+  });
+
+  it('persists pending mutations via IndexedDB fallback when localStorage write fails', async () => {
+    const attempt = makeAttempt();
+    await studentAttemptRepository.saveAttempt(attempt);
+
+    const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
+    const failingSetItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+      if (key === 'ielts_student_attempt_pending_mutations_v1') {
+        throw new Error('quota exceeded');
+      }
+      return originalSetItem(key, value);
+    });
+
+    const mutation: StudentAttemptMutation = {
+      id: 'mutation-idb-fallback',
+      attemptId: attempt.id,
+      scheduleId: attempt.scheduleId,
+      timestamp: '2026-01-10T09:00:01.000Z',
+      type: 'answer',
+      payload: { questionId: 'q1', value: 'A' },
+    };
+
+    try {
+      await expect(
+        studentAttemptRepository.savePendingMutations(attempt.id, [mutation]),
+      ).resolves.toBeUndefined();
+
+      const stored = await studentAttemptRepository.getPendingMutations(attempt.id);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]?.id).toBe('mutation-idb-fallback');
+    } finally {
+      failingSetItem.mockRestore();
+    }
+  });
+
+  it('retains pending mutations in memory when both localStorage and IndexedDB persistence fail', async () => {
+    const attempt = makeAttempt({ id: 'attempt-fallback-memory' });
+    await studentAttemptRepository.saveAttempt(attempt);
+
+    const originalIndexedDb = (
+      window as Window & {
+        indexedDB?: IDBFactory;
+      }
+    ).indexedDB;
+    Object.defineProperty(window, 'indexedDB', {
+      configurable: true,
+      value: undefined,
+    });
+
+    const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
+    const failingSetItem = vi.spyOn(window.localStorage, 'setItem').mockImplementation((key, value) => {
+      if (key === 'ielts_student_attempt_pending_mutations_v1') {
+        throw new Error('quota exceeded');
+      }
+      return originalSetItem(key, value);
+    });
+
+    const mutation: StudentAttemptMutation = {
+      id: 'mutation-memory-fallback',
+      attemptId: attempt.id,
+      scheduleId: attempt.scheduleId,
+      timestamp: '2026-01-10T09:00:02.000Z',
+      type: 'answer',
+      payload: { questionId: 'q2', value: 'B' },
+    };
+
+    try {
+      await expect(
+        studentAttemptRepository.savePendingMutations(attempt.id, [mutation]),
+      ).resolves.toBeUndefined();
+
+      const restored = await studentAttemptRepository.getPendingMutations(attempt.id);
+      expect(restored).toHaveLength(1);
+      expect(restored[0]?.id).toBe('mutation-memory-fallback');
+    } finally {
+      failingSetItem.mockRestore();
+      Object.defineProperty(window, 'indexedDB', {
+        configurable: true,
+        value: originalIndexedDb,
+      });
+    }
+  });
+
+  it('reuses a persisted client session id when sessionStorage is cleared on mobile resume', () => {
+    const attempt = makeAttempt({
+      integrity: {
+        ...makeAttempt().integrity,
+        clientSessionId: 'client-session-stable',
+      },
+      recovery: {
+        ...makeAttempt().recovery,
+        clientSessionId: 'client-session-stable',
+      },
+    });
+
+    const storageKey = `ielts-student-client-session:v1:${attempt.scheduleId}:${attempt.studentKey}`;
+    window.localStorage.setItem(storageKey, 'client-session-stable');
+    window.sessionStorage.removeItem(storageKey);
+
+    const resolved = ensureClientSessionIdForAttempt(attempt);
+
+    expect(resolved).toBe('client-session-stable');
+    expect(window.sessionStorage.getItem(storageKey)).toBe('client-session-stable');
   });
 
   it('compacts a submitted attempt to receipt metadata when no local queues remain', async () => {

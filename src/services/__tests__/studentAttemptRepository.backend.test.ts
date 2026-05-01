@@ -845,6 +845,75 @@ describe('studentAttemptRepository backend mode', () => {
     }
   });
 
+  it('does not prune objective mutations on SECTION_MISMATCH when runtime section is unavailable', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: null,
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonConflict('SECTION_MISMATCH', 'Mutation does not belong to the current section.'),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: { status: 'live', currentSectionKey: null },
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonConflict('SECTION_MISMATCH', 'Mutation does not belong to the current section.'),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    const pendingMutation: StudentAttemptMutation = {
+      id: 'mutation-1',
+      attemptId: attempt.id,
+      scheduleId: attempt.scheduleId,
+      timestamp: '2026-01-01T09:00:30.000Z',
+      type: 'answer',
+      payload: { questionId: 'q1', value: 'A', module: 'reading' },
+    };
+    await studentAttemptRepository.savePendingMutations(attempt.id, [pendingMutation]);
+
+    await expect(studentAttemptRepository.saveAttempt(attempt)).rejects.toThrow();
+
+    const mutationBatchCalls = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === '/api/v1/student/sessions/sched-1/mutations:batch',
+    );
+    expect(mutationBatchCalls).toHaveLength(2);
+
+    const pendingAfterFailure = await studentAttemptRepository.getPendingMutations(attempt.id);
+    expect(pendingAfterFailure).toEqual([pendingMutation]);
+
+    const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
+    const cached = cachedAttempts.find((candidate) => candidate.id === attempt.id) ?? null;
+    expect(cached?.recovery.lastDroppedMutations).toBeNull();
+  });
+
   it('records dropped slot mutations as slot-scoped reconcile targets', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
 

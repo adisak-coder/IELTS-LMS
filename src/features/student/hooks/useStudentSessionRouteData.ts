@@ -370,6 +370,7 @@ export function useStudentSessionRouteData(
   const staticVersionIdRef = useRef<string | null>(null);
   const refreshEpochRef = useRef(0);
   const appliedFreshnessRef = useRef<LiveSnapshotFreshness | null>(null);
+  const runtimeSnapshotRef = useRef<ExamSessionRuntime | null>(null);
   const storedCandidateProfile = useMemo(
     () => (scheduleId && candidateId ? loadStoredCandidateProfile(scheduleId, candidateId) : null),
     [candidateId, scheduleId],
@@ -378,6 +379,10 @@ export function useStudentSessionRouteData(
     () => (scheduleId && candidateId ? buildStudentKey(scheduleId, candidateId) : null),
     [candidateId, scheduleId],
   );
+
+  useEffect(() => {
+    runtimeSnapshotRef.current = runtimeSnapshot;
+  }, [runtimeSnapshot]);
 
   const loadStaticSessionSnapshot = useCallback(async (): Promise<LoadedStaticSnapshot | null> => {
     if (!scheduleId || !candidateId || !isWcodeCandidateId(candidateId)) {
@@ -598,6 +603,10 @@ export function useStudentSessionRouteData(
       applyDecision.applyRuntime && live.runtime && scheduleEntity
         ? mapBackendRuntime(live.runtime, scheduleEntity)
         : null;
+    const previousRuntimeSnapshot = runtimeSnapshotRef.current;
+    const nextRuntimeSnapshot = applyDecision.applyRuntime
+      ? mappedRuntime ?? previousRuntimeSnapshot
+      : previousRuntimeSnapshot;
     const rollout = resolveAnswerInvariantRollout(live);
     let reconciledAttempt: StudentAttempt | null = null;
 
@@ -626,8 +635,9 @@ export function useStudentSessionRouteData(
     }
 
     setAnswerInvariantRollout(rollout);
-    if (applyDecision.applyRuntime) {
-      setRuntimeSnapshot(mappedRuntime);
+    if (applyDecision.applyRuntime && nextRuntimeSnapshot !== previousRuntimeSnapshot) {
+      runtimeSnapshotRef.current = nextRuntimeSnapshot;
+      setRuntimeSnapshot(nextRuntimeSnapshot);
     }
     if (reconciledAttempt) {
       setAttemptSnapshot(reconciledAttempt);
@@ -729,8 +739,13 @@ export function useStudentSessionRouteData(
       const mappedRuntime = applyDecision.applyRuntime && live.runtime
         ? mapBackendRuntime(live.runtime, loadedStatic.scheduleEntity)
         : null;
-      if (applyDecision.applyRuntime) {
-        setRuntimeSnapshot(mappedRuntime);
+      const previousRuntimeSnapshot = runtimeSnapshotRef.current;
+      const nextRuntimeSnapshot = applyDecision.applyRuntime
+        ? mappedRuntime ?? previousRuntimeSnapshot
+        : previousRuntimeSnapshot;
+      if (applyDecision.applyRuntime && nextRuntimeSnapshot !== previousRuntimeSnapshot) {
+        runtimeSnapshotRef.current = nextRuntimeSnapshot;
+        setRuntimeSnapshot(nextRuntimeSnapshot);
       }
 
       if (live.attempt && applyDecision.applyAttempt) {
@@ -811,8 +826,8 @@ export function useStudentSessionRouteData(
     void loadStudentData();
   }, [loadStudentData]);
 
-  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 10_000 : 20_000;
-  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 15_000 : 30_000;
+  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 5_000 : 15_000;
+  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 8_000 : 25_000;
 
   useAsyncPolling(
     async () => {

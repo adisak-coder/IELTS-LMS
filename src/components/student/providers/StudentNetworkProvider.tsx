@@ -123,6 +123,82 @@ export function StudentNetworkProvider({
     return true;
   }, [attemptActions, attemptState.attempt, attemptState.attemptId, runtimeActions, scheduleId]);
 
+  const runReconnectRecovery = useCallback((epoch: number) => {
+    if (onlineInFlightRef.current) {
+      return;
+    }
+
+    const promise = (async () => {
+      let retryAttempt = 0;
+      try {
+        while (epoch === recoveryEpochRef.current && navigator.onLine) {
+          try {
+            if (onRefreshRuntime) {
+              await onRefreshRuntime();
+              if (epoch !== recoveryEpochRef.current) {
+                return;
+              }
+            }
+
+            const isSameDevice = policy.requireDeviceContinuityOnReconnect
+              ? await verifyDeviceContinuity()
+              : true;
+            if (epoch !== recoveryEpochRef.current) {
+              return;
+            }
+            if (!isSameDevice) {
+              return;
+            }
+
+            const flushed = await attemptActions.flushPending();
+            if (epoch !== recoveryEpochRef.current) {
+              return;
+            }
+            if (!flushed) {
+              throw new Error('pending_flush_failed');
+            }
+
+            await attemptActions.flushHeartbeatEvents().catch(() => {});
+            if (epoch !== recoveryEpochRef.current) {
+              return;
+            }
+            runtimeActions.setBlockingReason(null);
+            runtimeActions.setAttemptSyncState('saved');
+            return;
+          } catch {
+            if (epoch !== recoveryEpochRef.current || !navigator.onLine) {
+              return;
+            }
+            runtimeActions.setBlockingReason('syncing_reconnect');
+            runtimeActions.setAttemptSyncState('syncing_reconnect');
+            const retryDelayMs = Math.min(10_000, 500 * 2 ** retryAttempt);
+            retryAttempt = Math.min(retryAttempt + 1, 20);
+            await new Promise<void>((resolve) => {
+              window.setTimeout(() => resolve(), retryDelayMs);
+            });
+          }
+        }
+      } finally {
+        if (epoch === recoveryEpochRef.current) {
+          setIsRecovering(false);
+        }
+      }
+    })();
+
+    onlineInFlightRef.current = promise;
+    void promise.finally(() => {
+      if (onlineInFlightRef.current === promise) {
+        onlineInFlightRef.current = null;
+      }
+    });
+  }, [
+    attemptActions,
+    onRefreshRuntime,
+    policy.requireDeviceContinuityOnReconnect,
+    runtimeActions,
+    verifyDeviceContinuity,
+  ]);
+
   const handleOnline = useCallback(() => {
     if (onlineInFlightRef.current) {
       return;
@@ -138,7 +214,7 @@ export function StudentNetworkProvider({
       setLastReconnectAt(timestamp);
       runtimeActions.setBlockingReason('syncing_reconnect');
       runtimeActions.setAttemptSyncState('syncing_reconnect');
-      await attemptActions.recordNetworkStatus('online', timestamp);
+      await attemptActions.recordNetworkStatus('online', timestamp).catch(() => {});
       if (epoch !== recoveryEpochRef.current) {
         return;
       }
@@ -155,46 +231,7 @@ export function StudentNetworkProvider({
         'NETWORK_RECONNECTED',
         { timestamp },
         attemptState.attemptId ?? undefined,
-      );
-
-      try {
-        if (onRefreshRuntime) {
-          await onRefreshRuntime();
-          if (epoch !== recoveryEpochRef.current) {
-            return;
-          }
-        }
-
-        const isSameDevice = policy.requireDeviceContinuityOnReconnect
-          ? await verifyDeviceContinuity()
-          : true;
-        if (epoch !== recoveryEpochRef.current) {
-          return;
-        }
-        if (!isSameDevice) {
-          return;
-        }
-
-        const flushed = await attemptActions.flushPending();
-        if (epoch !== recoveryEpochRef.current) {
-          return;
-        }
-        if (!flushed) {
-          runtimeActions.setBlockingReason('syncing_reconnect');
-          return;
-        }
-
-        await attemptActions.flushHeartbeatEvents().catch(() => {});
-        if (epoch !== recoveryEpochRef.current) {
-          return;
-        }
-        runtimeActions.setBlockingReason(null);
-        runtimeActions.setAttemptSyncState('saved');
-      } finally {
-        if (epoch === recoveryEpochRef.current) {
-          setIsRecovering(false);
-        }
-      }
+      ).catch(() => {});
     })();
 
     onlineInFlightRef.current = promise;
@@ -202,15 +239,45 @@ export function StudentNetworkProvider({
       if (onlineInFlightRef.current === promise) {
         onlineInFlightRef.current = null;
       }
+      if (epoch === recoveryEpochRef.current && navigator.onLine) {
+        setIsRecovering(true);
+        runReconnectRecovery(epoch);
+      }
     });
   }, [
     attemptActions,
     attemptState.attemptId,
-    onRefreshRuntime,
-    policy.requireDeviceContinuityOnReconnect,
+    runReconnectRecovery,
     runtimeActions,
     scheduleId,
-    verifyDeviceContinuity,
+  ]);
+
+  const handleForegroundResume = useCallback(() => {
+    if (!navigator.onLine || onlineInFlightRef.current) {
+      return;
+    }
+
+    const blockedForRecovery =
+      runtimeState.blocking.reason === 'syncing_reconnect' ||
+      runtimeState.blocking.reason === 'offline' ||
+      runtimeState.blocking.reason === 'heartbeat_lost';
+    if (!blockedForRecovery) {
+      return;
+    }
+
+    if (runtimeState.blocking.reason === 'offline') {
+      runtimeActions.setBlockingReason('syncing_reconnect');
+      runtimeActions.setAttemptSyncState('syncing_reconnect');
+    }
+
+    const epoch = recoveryEpochRef.current;
+    setIsOnline(true);
+    setIsRecovering(true);
+    runReconnectRecovery(epoch);
+  }, [
+    runReconnectRecovery,
+    runtimeActions,
+    runtimeState.blocking.reason,
   ]);
 
   useEffect(() => {
@@ -223,12 +290,24 @@ export function StudentNetworkProvider({
 
     window.addEventListener('online', onlineListener);
     window.addEventListener('offline', offlineListener);
+    const pageShowListener = () => {
+      handleForegroundResume();
+    };
+    const visibilityListener = () => {
+      if (document.visibilityState === 'visible') {
+        handleForegroundResume();
+      }
+    };
+    window.addEventListener('pageshow', pageShowListener);
+    document.addEventListener('visibilitychange', visibilityListener);
 
     return () => {
       window.removeEventListener('online', onlineListener);
       window.removeEventListener('offline', offlineListener);
+      window.removeEventListener('pageshow', pageShowListener);
+      document.removeEventListener('visibilitychange', visibilityListener);
     };
-  }, [handleOffline, handleOnline]);
+  }, [handleForegroundResume, handleOffline, handleOnline]);
 
   useEffect(() => {
     let cancelled = false;

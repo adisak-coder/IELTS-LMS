@@ -42,7 +42,7 @@ export function StudentAppWrapper({
           ? answerInvariantRollout.enabled && !answerInvariantRollout.killSwitch
           : true
       }
-      runtimeBacked={Boolean(runtimeSnapshot || onRuntimeRefresh)}
+      runtimeBacked={Boolean(runtimeSnapshot)}
       runtimeSnapshot={runtimeSnapshot}
     >
       <StudentAttemptProvider scheduleId={scheduleId} attemptSnapshot={attemptSnapshot}>

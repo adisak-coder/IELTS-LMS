@@ -135,6 +135,7 @@ describe('StudentNetworkProvider', () => {
   function createWrapper(
     attemptSnapshot = createAttemptSnapshot(),
     config = createExamState().config,
+    onRefreshRuntime?: () => Promise<void>,
   ) {
     const state = createExamState();
     state.config = config;
@@ -149,7 +150,11 @@ describe('StudentNetworkProvider', () => {
           scheduleId={attemptSnapshot.scheduleId}
           attemptSnapshot={attemptSnapshot}
         >
-          <StudentNetworkProvider config={config} scheduleId={attemptSnapshot.scheduleId}>
+          <StudentNetworkProvider
+            config={config}
+            scheduleId={attemptSnapshot.scheduleId}
+            onRefreshRuntime={onRefreshRuntime}
+          >
             {children}
           </StudentNetworkProvider>
         </StudentAttemptProvider>
@@ -285,7 +290,7 @@ describe('StudentNetworkProvider', () => {
       expect(result.current.attempt.state.attempt?.recovery.syncState).toBe('error');
     });
 
-    expect(result.current.network.state.isRecovering).toBe(false);
+    expect(result.current.network.state.isRecovering).toBe(true);
   });
 
   it('hard-blocks once after repeated heartbeat failures', async () => {
@@ -352,5 +357,140 @@ describe('StudentNetworkProvider', () => {
     expect(
       result.current.runtime.state.violations.some((violation) => violation.type === 'DEVICE_MISMATCH'),
     ).toBe(false);
+  });
+
+  it('retries reconnect recovery after a transient runtime refresh failure and eventually unblocks', async () => {
+    vi.mocked(getDeviceFingerprint).mockResolvedValue({
+      components: {},
+      hash: 'fp-1',
+    });
+    const onRefreshRuntime = vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('live refresh timeout'))
+      .mockResolvedValue(undefined);
+
+    const pendingMutation: StudentAttemptMutation = {
+      id: 'mutation-1',
+      attemptId: 'attempt-1',
+      scheduleId: 'sched-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'answer',
+      payload: {
+        questionId: 'q1',
+        value: 'A',
+      },
+    };
+
+    vi.mocked(studentAttemptRepository.getPendingMutations).mockResolvedValue([pendingMutation]);
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: false,
+    });
+
+    const { result } = renderHook(
+      () => ({
+        runtime: useStudentRuntime(),
+      }),
+      { wrapper: createWrapper(createAttemptSnapshot(), createExamState().config, onRefreshRuntime) },
+    );
+
+    act(() => {
+      Object.defineProperty(window.navigator, 'onLine', {
+        configurable: true,
+        value: true,
+      });
+      window.dispatchEvent(new Event('online'));
+    });
+
+    await waitFor(() => {
+      expect(result.current.runtime.state.blocking.reason).toBe('syncing_reconnect');
+    });
+
+    await waitFor(() => {
+      expect(onRefreshRuntime).toHaveBeenCalledTimes(2);
+    }, { timeout: 3_000 });
+    await waitFor(() => {
+      expect(result.current.runtime.state.blocking.reason).toBeNull();
+    }, { timeout: 3_000 });
+  });
+
+  it('re-runs reconnect recovery on pageshow while online and blocked', async () => {
+    vi.mocked(getDeviceFingerprint).mockResolvedValue({
+      components: {},
+      hash: 'fp-1',
+    });
+    const onRefreshRuntime = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+
+    const { result } = renderHook(
+      () => ({
+        runtime: useStudentRuntime(),
+      }),
+      { wrapper: createWrapper(createAttemptSnapshot(), createExamState().config, onRefreshRuntime) },
+    );
+
+    act(() => {
+      result.current.runtime.actions.setBlockingReason('syncing_reconnect');
+      result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
+    });
+
+    act(() => {
+      window.dispatchEvent(new Event('pageshow'));
+    });
+
+    await waitFor(() => {
+      expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(result.current.runtime.state.blocking.reason).toBeNull();
+    });
+  });
+
+  it('re-runs reconnect recovery on visibilitychange when tab returns visible', async () => {
+    vi.mocked(getDeviceFingerprint).mockResolvedValue({
+      components: {},
+      hash: 'fp-1',
+    });
+    const onRefreshRuntime = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+
+    Object.defineProperty(window.navigator, 'onLine', {
+      configurable: true,
+      value: true,
+    });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      value: 'hidden',
+    });
+
+    const { result } = renderHook(
+      () => ({
+        runtime: useStudentRuntime(),
+      }),
+      { wrapper: createWrapper(createAttemptSnapshot(), createExamState().config, onRefreshRuntime) },
+    );
+
+    act(() => {
+      result.current.runtime.actions.setBlockingReason('syncing_reconnect');
+      result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
+    });
+
+    act(() => {
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'visible',
+      });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
+    await waitFor(() => {
+      expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(result.current.runtime.state.blocking.reason).toBeNull();
+    });
   });
 });

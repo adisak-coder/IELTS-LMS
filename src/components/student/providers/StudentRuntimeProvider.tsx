@@ -49,6 +49,7 @@ interface RuntimeReducerState {
   currentModule: ModuleType;
   currentQuestionId: string | null;
   timeRemaining: number;
+  currentSectionExtensionMinutes: number | null;
   elapsedTime: number;
   submittedModules: ModuleType[];
   answers: Record<string, StudentAnswer | undefined>;
@@ -128,6 +129,7 @@ type RuntimeAction =
       nextModule: ModuleType;
       nextQuestionId: string | null;
       snapshot: ExamSessionRuntime | null;
+      currentSectionExtensionMinutes: number | null;
       preserveLocalAdvance?: boolean;
     }
   | {
@@ -195,6 +197,18 @@ function getDroppedMutationMarker(
   }
 
   return `${dropped.at}:${dropped.count}:${dropped.fromModule ?? ''}:${dropped.toModule ?? ''}:${dropped.reason}`;
+}
+
+function getRuntimeSectionExtensionMinutes(
+  runtimeSnapshot: ExamSessionRuntime | null,
+  sectionKey: string | null,
+): number | null {
+  if (!runtimeSnapshot || !sectionKey) {
+    return null;
+  }
+
+  const section = runtimeSnapshot.sections.find((candidate) => candidate.sectionKey === sectionKey);
+  return typeof section?.extensionMinutes === 'number' ? section.extensionMinutes : null;
 }
 
 function deriveBlockingState(
@@ -333,6 +347,9 @@ function createInitialRuntimeState(
     currentModule: firstModule,
     currentQuestionId: attemptQuestionId ?? (runtimeBacked ? firstQuestionId : null),
     timeRemaining: runtimeBacked ? runtimeSnapshot?.currentSectionRemainingSeconds ?? 0 : 0,
+    currentSectionExtensionMinutes: runtimeBacked
+      ? getRuntimeSectionExtensionMinutes(runtimeSnapshot, runtimeSnapshot?.currentSectionKey ?? firstModule)
+      : null,
     elapsedTime: 0,
     submittedModules: [],
     answers: attemptSnapshot?.answers ?? {},
@@ -460,8 +477,23 @@ function runtimeReducer(
                 : 'exam';
       const nextQuestionId = moduleChanged ? action.nextQuestionId : state.currentQuestionId;
       const snapshotTimeRemaining = action.snapshot?.currentSectionRemainingSeconds;
+      const extensionIncreased =
+        typeof action.currentSectionExtensionMinutes === 'number' &&
+        (state.currentSectionExtensionMinutes === null ||
+          action.currentSectionExtensionMinutes > state.currentSectionExtensionMinutes);
+      const allowUpwardCorrection = moduleChanged || extensionIncreased;
       const nextTimeRemaining =
-        typeof snapshotTimeRemaining === 'number' ? snapshotTimeRemaining : state.timeRemaining;
+        typeof snapshotTimeRemaining === 'number'
+          ? snapshotTimeRemaining > state.timeRemaining && !allowUpwardCorrection
+            ? state.timeRemaining
+            : snapshotTimeRemaining
+          : state.timeRemaining;
+      const nextCurrentSectionExtensionMinutes =
+        typeof action.currentSectionExtensionMinutes === 'number'
+          ? action.currentSectionExtensionMinutes
+          : moduleChanged
+            ? null
+            : state.currentSectionExtensionMinutes;
       const nextWaitingForCohortAdvance =
         state.waitingForCohortAdvance && !moduleChanged && !terminalVerified;
 
@@ -470,6 +502,7 @@ function runtimeReducer(
         state.currentModule === action.nextModule &&
         state.currentQuestionId === nextQuestionId &&
         state.timeRemaining === nextTimeRemaining &&
+        state.currentSectionExtensionMinutes === nextCurrentSectionExtensionMinutes &&
         state.waitingForCohortAdvance === nextWaitingForCohortAdvance
       ) {
         return state;
@@ -481,6 +514,7 @@ function runtimeReducer(
         currentModule: action.nextModule,
         currentQuestionId: nextQuestionId,
         timeRemaining: nextTimeRemaining,
+        currentSectionExtensionMinutes: nextCurrentSectionExtensionMinutes,
         waitingForCohortAdvance: nextWaitingForCohortAdvance,
       };
     }
@@ -675,6 +709,7 @@ function runtimeReducer(
         currentModule: action.firstModule,
         currentQuestionId: action.firstQuestionId,
         timeRemaining: action.durationSeconds,
+        currentSectionExtensionMinutes: null,
         elapsedTime: 0,
       };
     case 'submit_module': {
@@ -688,6 +723,7 @@ function runtimeReducer(
           return {
             ...state,
             phase: 'post-exam',
+            currentSectionExtensionMinutes: null,
             waitingForCohortAdvance: false,
           };
         }
@@ -698,6 +734,7 @@ function runtimeReducer(
             phase: 'post-exam',
             currentModule: state.currentModule,
             currentQuestionId: null,
+            currentSectionExtensionMinutes: null,
             submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
             waitingForCohortAdvance: false,
           };
@@ -708,6 +745,7 @@ function runtimeReducer(
           currentModule: action.nextModule,
           currentQuestionId: action.nextQuestionId,
           timeRemaining: action.nextDurationSeconds,
+          currentSectionExtensionMinutes: null,
           elapsedTime: 0,
           submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
           waitingForCohortAdvance: false,
@@ -719,6 +757,7 @@ function runtimeReducer(
           ...state,
           phase: 'post-exam',
           currentQuestionId: null,
+          currentSectionExtensionMinutes: null,
           submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
         };
       }
@@ -728,6 +767,7 @@ function runtimeReducer(
         currentModule: action.nextModule,
         currentQuestionId: action.nextQuestionId,
         timeRemaining: action.nextDurationSeconds,
+        currentSectionExtensionMinutes: null,
         elapsedTime: 0,
         submittedModules: Array.from(new Set([...state.submittedModules, state.currentModule])),
       };
@@ -941,19 +981,53 @@ export function StudentRuntimeProvider({
       latestSubmittedModule !== null &&
       runtimeSnapshot?.currentSectionKey === latestSubmittedModule &&
       runtimeState.currentModule === expectedLocalModule;
+    const currentSectionExtensionMinutes = getRuntimeSectionExtensionMinutes(
+      runtimeSnapshot,
+      runtimeSnapshot.currentSectionKey ?? nextModule,
+    );
+    const sameSection = nextModule === runtimeState.currentModule;
+    const reportedRemaining = runtimeSnapshot.currentSectionRemainingSeconds;
+    const extensionIncreased =
+      typeof currentSectionExtensionMinutes === 'number' &&
+      (runtimeState.currentSectionExtensionMinutes === null ||
+        currentSectionExtensionMinutes > runtimeState.currentSectionExtensionMinutes);
+    const nonMonotonicJump =
+      sameSection &&
+      reportedRemaining > runtimeState.timeRemaining &&
+      !extensionIncreased;
+    if (nonMonotonicJump) {
+      emitStudentObservabilityMetric(
+        'student_timer_non_monotonic_jump_total',
+        withStudentObservabilityDimensions({
+          scheduleId: runtimeSnapshot.scheduleId,
+          attemptId: attemptSnapshot?.id ?? null,
+          endpoint: `/v1/student/sessions/${runtimeSnapshot.scheduleId}/live`,
+          statusCode: 200,
+          reason: 'same_section_positive_jump',
+          runtimeStatus: runtimeSnapshot.status,
+          currentSectionKey: runtimeSnapshot.currentSectionKey ?? null,
+          previousRemainingSeconds: runtimeState.timeRemaining,
+          reportedRemainingSeconds: reportedRemaining,
+        }),
+      );
+    }
     dispatch({
       type: 'hydrate_runtime',
       nextModule,
       nextQuestionId: getFirstQuestionIdForModule(state, nextModule),
       snapshot: runtimeSnapshot,
+      currentSectionExtensionMinutes,
       preserveLocalAdvance,
     });
   }, [
+    attemptSnapshot?.id,
     enabledModules,
     runtimeBacked,
     runtimeSnapshot,
+    runtimeState.currentSectionExtensionMinutes,
     runtimeState.currentModule,
     runtimeState.submittedModules,
+    runtimeState.timeRemaining,
     state,
   ]);
 
