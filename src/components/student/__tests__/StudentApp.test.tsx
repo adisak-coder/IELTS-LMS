@@ -363,7 +363,7 @@ describe('StudentApp runtime-backed mode', () => {
     }
   });
 
-  it('keeps tablet footer locked after pinch ends and only rebases on real layout change', async () => {
+  it('keeps tablet footer locked after pinch ends and only rebases on orientation change', async () => {
     const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
     const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
     const originalMatchMedia = window.matchMedia;
@@ -415,10 +415,16 @@ describe('StudentApp runtime-backed mode', () => {
       expect(root.style.getPropertyValue('--student-viewport-height')).toBe('900px');
 
       act(() => {
-        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1366 });
-        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 620 });
+        Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1200 });
+        Object.defineProperty(window, 'innerHeight', { configurable: true, value: 760 });
         visualViewport.setHeight(620);
         window.dispatchEvent(new Event('resize'));
+      });
+
+      expect(root.style.getPropertyValue('--student-viewport-height')).toBe('900px');
+
+      act(() => {
+        window.dispatchEvent(new Event('orientationchange'));
       });
 
       expect(root.style.getPropertyValue('--student-viewport-height')).toBe('620px');

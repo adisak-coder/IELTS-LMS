@@ -470,13 +470,11 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       return;
     }
 
-    const layoutResizeThresholdPx = 48;
     const root = document.documentElement;
     const body = document.body;
     const scheduledRefreshTimers: number[] = [];
     let editableFocused = isEditableInputTarget(document.activeElement);
     let stableViewportHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
-    let stableViewportWidth = Math.round(window.innerWidth);
     let pinchLockActive = false;
     let pinchGestureActive = false;
     let layoutRebasePending = false;
@@ -506,7 +504,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       }
 
       if (layoutRebasePending) {
-        stableViewportWidth = Math.round(window.innerWidth);
         stableViewportHeight = nextViewportHeight;
         pinchLockActive = false;
         pinchGestureActive = false;
@@ -576,17 +573,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     };
 
     const handleWindowResize = () => {
-      if (!tabletMode) {
-        scheduleViewportHeightRefresh();
-        return;
-      }
-
-      const widthDelta = Math.abs(Math.round(window.innerWidth) - stableViewportWidth);
-      if (widthDelta >= layoutResizeThresholdPx) {
-        requestLayoutRebase();
-        return;
-      }
-
       scheduleViewportHeightRefresh();
     };
 
