@@ -196,8 +196,8 @@ export function StudentZoomableMedia({
         </div>
       ) : null}
       {showZoomUi && !renderInteractiveOverlay ? (
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-gray-950/75 to-transparent px-3 py-2">
-          <div className="inline-flex items-center rounded-full bg-white/95 px-3 py-1 text-[length:var(--student-meta-font-size)] font-bold text-gray-900 shadow-sm">
+        <div className="absolute inset-x-0 bottom-0 px-3 py-2">
+          <div className="inline-flex items-center rounded-full bg-white/95 px-3 py-1 text-[length:var(--student-meta-font-size)] font-bold text-gray-900">
             {hint}
           </div>
         </div>
@@ -371,9 +371,9 @@ export function StudentZoomableMedia({
                     }
                   }}
                 >
-                  <div className="mx-auto flex min-h-full w-full justify-center">
+                  <div className="mx-auto flex min-h-full w-full items-center justify-center">
                     <div
-                      className="relative"
+                      className="relative max-w-full"
                       style={{
                         width: `${Math.round(zoom * 100)}%`,
                         minWidth: `${Math.round(zoom * 100)}%`,
@@ -382,7 +382,7 @@ export function StudentZoomableMedia({
                       <img
                         src={currentSource}
                         alt={alt}
-                        className={`block h-auto w-full object-contain ${modalImageClassName ?? ''}`}
+                        className={`block h-auto w-full max-w-full object-contain ${modalImageClassName ?? ''}`}
                         draggable={false}
                         referrerPolicy="no-referrer"
                         onError={handleImageError}
@@ -390,6 +390,7 @@ export function StudentZoomableMedia({
                         onDragStart={handleContextMenu}
                         style={{
                           ...imageZoomStyle,
+                          maxHeight: 'calc(100dvh - 16rem)',
                           WebkitTouchCallout: 'none',
                           WebkitUserSelect: 'none',
                           userSelect: 'none',
