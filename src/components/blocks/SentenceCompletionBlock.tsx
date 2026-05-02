@@ -9,6 +9,7 @@ import {
   buildAcceptedAnswerFields,
   resolveAcceptedAnswers,
 } from '../../utils/acceptedAnswers';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface SentenceCompletionBlockProps {
   block: SentenceCompletionBlockType;
@@ -146,6 +147,11 @@ export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, 
           placeholder="Enter instruction for this question..."
         />
       </div>
+      <InsertedImagesEditor
+        images={block.insertedImages}
+        onChange={(nextImages) => updateBlock({ ...block, insertedImages: nextImages })}
+        errors={errors}
+      />
 
       {/* Questions */}
       <div>

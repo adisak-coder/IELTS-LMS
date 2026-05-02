@@ -9,6 +9,7 @@ import {
   buildAcceptedAnswerFields,
   resolveAcceptedAnswers,
 } from '../../utils/acceptedAnswers';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface NoteCompletionBlockProps {
   block: NoteCompletionBlockType;
@@ -122,6 +123,11 @@ export function NoteCompletionBlock({ block, startNum, endNum, updateBlock, dele
           placeholder="Enter instruction..."
         />
       </div>
+      <InsertedImagesEditor
+        images={block.insertedImages}
+        onChange={(nextImages) => updateBlock({ ...block, insertedImages: nextImages })}
+        errors={errors}
+      />
 
       <div>
         <div className="flex items-center justify-between mb-3">

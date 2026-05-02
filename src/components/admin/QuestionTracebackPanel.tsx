@@ -93,9 +93,23 @@ function renderGroup(group: ObjectiveTracebackGroup, index: number) {
                 <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400">
                   Student answer
                 </p>
-                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800">
-                  {item.studentAnswer || '—'}
-                </p>
+                {item.studentAnswerSlots && item.studentAnswerSlots.length > 0 ? (
+                  <div className="mt-2 space-y-1">
+                    {item.studentAnswerSlots.map((slotValue, slotIndex) => (
+                      <p
+                        key={`${item.questionId}:slot:${slotIndex}`}
+                        className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800"
+                      >
+                        {`[${slotIndex + 1}] `}
+                        {slotValue === '' ? '∅' : slotValue}
+                      </p>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-800">
+                    {item.studentAnswer || '—'}
+                  </p>
+                )}
               </div>
 
               <div className="rounded-xl border border-gray-200 bg-white p-3">

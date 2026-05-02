@@ -46,7 +46,31 @@ async fn grading_review_and_result_release_flow_round_trips() {
     let database = mysql::TestDatabase::new(GRADING_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
     let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
-    let attempt_id = bootstrap_and_submit(database.pool(), schedule_id, "alice").await;
+    let submitted_answers = json!({
+        "q-reading-1": "Alpha answer",
+        "q-listening-1": "Listening response",
+        "q-slot": ["cat", ""]
+    });
+    let submitted_writing_answers = json!({
+        "task1": "<div>Task&nbsp;response</div><div>Second line &amp; detail</div>",
+        "task2": {
+            "label": "Task 2",
+            "prompt": "Discuss both views.",
+            "text": "<p>Argument line 1</p><p>Argument line 2</p>"
+        }
+    });
+    let submitted_flags = json!({
+        "q-reading-1": true
+    });
+    let attempt_id = bootstrap_and_submit(
+        database.pool(),
+        schedule_id,
+        "alice",
+        submitted_answers.clone(),
+        submitted_writing_answers.clone(),
+        submitted_flags.clone(),
+    )
+    .await;
     let auth = create_authenticated_user(
         database.pool(),
         UserRole::Grader,
@@ -96,6 +120,122 @@ async fn grading_review_and_result_release_flow_round_trips() {
             .unwrap(),
     )
     .unwrap();
+    assert_eq!(
+        session_detail_json["data"]["submissions"][0]["attemptId"],
+        attempt_id.to_string()
+    );
+
+    let submission_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/grading/submissions/{}",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(submission_detail.status(), StatusCode::OK);
+    let submission_detail_json = json_body(submission_detail).await;
+    assert_eq!(
+        submission_detail_json["data"]["submissionId"],
+        submission_id.to_string()
+    );
+    assert_eq!(
+        submission_detail_json["data"]["studentName"],
+        "Candidate alice"
+    );
+
+    let section_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/grading/submissions/{}/sections",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(section_detail.status(), StatusCode::OK);
+    let section_detail_json = json_body(section_detail).await;
+    let section_items = section_detail_json["data"]
+        .as_array()
+        .expect("section submissions array");
+    let reading_section = section_items
+        .iter()
+        .find(|entry| entry["section"] == "reading")
+        .expect("reading section");
+    assert_eq!(
+        reading_section["answers"]["answers"]["q-reading-1"],
+        submitted_answers["q-reading-1"]
+    );
+    assert_eq!(
+        reading_section["answers"]["answers"]["q-slot"],
+        submitted_answers["q-slot"]
+    );
+    let listening_section = section_items
+        .iter()
+        .find(|entry| entry["section"] == "listening")
+        .expect("listening section");
+    assert_eq!(
+        listening_section["answers"]["answers"]["q-listening-1"],
+        submitted_answers["q-listening-1"]
+    );
+    let writing_section = section_items
+        .iter()
+        .find(|entry| entry["section"] == "writing")
+        .expect("writing section");
+    let writing_tasks = writing_section["answers"]["tasks"]
+        .as_array()
+        .expect("writing tasks array");
+    let task1 = writing_tasks
+        .iter()
+        .find(|entry| entry["taskId"] == "task1")
+        .expect("task1 writing payload");
+    assert_eq!(task1["text"], submitted_writing_answers["task1"]);
+    let task2 = writing_tasks
+        .iter()
+        .find(|entry| entry["taskId"] == "task2")
+        .expect("task2 writing payload");
+    assert_eq!(
+        task2["text"],
+        submitted_writing_answers["task2"]["text"]
+    );
+
+    let writing_task_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/grading/submissions/{}/writing-tasks",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(writing_task_detail.status(), StatusCode::OK);
+    let writing_task_detail_json = json_body(writing_task_detail).await;
+    let writing_task_items = writing_task_detail_json["data"]
+        .as_array()
+        .expect("writing task submissions array");
+    let stored_task1 = writing_task_items
+        .iter()
+        .find(|entry| entry["taskId"] == "task1")
+        .expect("stored task1");
+    assert_eq!(stored_task1["studentText"], submitted_writing_answers["task1"]);
+    let stored_task2 = writing_task_items
+        .iter()
+        .find(|entry| entry["taskId"] == "task2")
+        .expect("stored task2");
+    assert_eq!(
+        stored_task2["studentText"],
+        submitted_writing_answers["task2"]["text"]
+    );
 
     let start_review = app
         .clone()
@@ -355,7 +495,23 @@ async fn grading_review_and_result_release_flow_round_trips() {
     );
     assert_eq!(
         result_detail_json["data"]["writingResults"]["task1"]["studentText"],
-        "Task response"
+        submitted_writing_answers["task1"]
+    );
+    assert_eq!(
+        result_detail_json["data"]["writingResults"]["task2"]["studentText"],
+        submitted_writing_answers["task2"]["text"]
+    );
+    assert_eq!(
+        result_detail_json["data"]["finalSubmission"]["answers"],
+        submitted_answers
+    );
+    assert_eq!(
+        result_detail_json["data"]["finalSubmission"]["writingAnswers"],
+        submitted_writing_answers
+    );
+    assert_eq!(
+        result_detail_json["data"]["finalSubmission"]["flags"],
+        submitted_flags
     );
 
     let unauthorized_grader = create_authenticated_user(
@@ -526,6 +682,9 @@ async fn bootstrap_and_submit(
     pool: &sqlx::MySqlPool,
     schedule_id: Uuid,
     candidate_id: &str,
+    answers: serde_json::Value,
+    writing_answers: serde_json::Value,
+    flags: serde_json::Value,
 ) -> Uuid {
     let service = DeliveryService::new(pool.clone());
     let context = service
@@ -550,9 +709,9 @@ async fn bootstrap_and_submit(
             StudentSubmitRequest {
                 attempt_id: attempt_id.clone(),
                 student_key: student_key(schedule_id, candidate_id),
-                answers: None,
-                writing_answers: None,
-                flags: None,
+                answers: Some(answers),
+                writing_answers: Some(writing_answers),
+                flags: Some(flags),
                 last_seen_revision: Some(0),
                 submission_id: Some(format!("submission-{candidate_id}")),
                 client_session_id: None,

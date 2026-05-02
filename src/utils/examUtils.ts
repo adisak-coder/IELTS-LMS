@@ -12,6 +12,11 @@ import { createDefaultConfig, normalizeExamConfig } from '../constants/examDefau
 import { hydrateExamState } from '../services/examAdapterService';
 import { resolveAcceptedAnswers } from './acceptedAnswers';
 import { analyzeTablePlaceholders, getCanonicalTableCells } from './tableCompletion';
+import {
+  coerceInsertedImages,
+  getInsertedImages,
+  supportsInsertedImages,
+} from './insertedImages';
 
 export const getBlockQuestionCount = (block: QuestionBlock): number => {
   switch (block.type) {
@@ -517,6 +522,28 @@ const validateMatchingFeaturesBlock = (block: MatchingFeaturesBlock): Validation
   return errors;
 };
 
+const validateInsertedImages = (block: QuestionBlock): ValidationError[] => {
+  if (!supportsInsertedImages(block)) {
+    return [];
+  }
+
+  const errors: ValidationError[] = [];
+  const insertedImages = getInsertedImages(block);
+
+  insertedImages.forEach((image, index) => {
+    if (!image.url.trim()) {
+      errors.push({
+        blockId: block.id,
+        field: `insertedImages[${index}].url`,
+        message: `Inserted image ${index + 1} URL is required`,
+        type: 'error',
+      });
+    }
+  });
+
+  return errors;
+};
+
 export const validateBlock = (block: QuestionBlock): BlockValidation => {
   let errors: ValidationError[] = [];
   
@@ -564,6 +591,8 @@ export const validateBlock = (block: QuestionBlock): BlockValidation => {
       errors = validateMatchingFeaturesBlock(block);
       break;
   }
+
+  errors.push(...validateInsertedImages(block));
   
   return {
     blockId: block.id,
@@ -694,6 +723,7 @@ interface LegacyBlock {
   id: string;
   type: string;
   instruction?: string;
+  insertedImages?: unknown;
   stem?: string;
   assetUrl?: string;
   correctCount?: number;
@@ -723,10 +753,21 @@ interface LegacyBlock {
 }
 
 const migrateLegacyBlock = (block: LegacyBlock): QuestionBlock => {
+  const shouldIncludeInsertedImages = supportsInsertedImages(
+    block.type as QuestionBlock['type'],
+  );
   const baseBlock = {
     id: block.id,
     type: block.type,
-    instruction: block.instruction || ''
+    instruction: block.instruction || '',
+    ...(shouldIncludeInsertedImages
+      ? {
+          insertedImages: coerceInsertedImages(
+            block.insertedImages,
+            `${block.id}-img`,
+          ),
+        }
+      : {}),
   };
   
   switch (block.type) {

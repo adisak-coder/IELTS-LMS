@@ -10,6 +10,7 @@ import type {
 } from '../types';
 import { resolveAcceptedAnswers } from './acceptedAnswers';
 import { htmlToPlainText } from './htmlText';
+import { getInsertedImages, supportsInsertedImages } from './insertedImages';
 import { getCanonicalTableCells } from './tableCompletion';
 
 const EXAM_SEPARATOR = '='.repeat(92);
@@ -107,6 +108,19 @@ function renderBlock(
   const instruction = toPlainText(block.instruction);
   if (instruction) {
     context.lines.push(`Instruction: ${instruction}`);
+  }
+  if (supportsInsertedImages(block)) {
+    const insertedImages = getInsertedImages(block);
+    insertedImages.forEach((image, index) => {
+      const url = toPlainText(image.url);
+      const caption = toPlainText(image.caption);
+      if (url) {
+        context.lines.push(`Inserted image ${index + 1}: ${url}`);
+      }
+      if (caption) {
+        context.lines.push(`Inserted image ${index + 1} caption: ${caption}`);
+      }
+    });
   }
 
   switch (block.type) {

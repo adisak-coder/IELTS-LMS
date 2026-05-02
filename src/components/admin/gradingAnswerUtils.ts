@@ -7,6 +7,50 @@ import { getCanonicalTableCells } from '../../utils/tableCompletion';
 
 type UnknownRecord = Record<string, unknown>;
 
+/**
+ * Raw Fidelity Invariant (Submit -> Grading):
+ * - null | undefined -> ''
+ * - non-empty strings are preserved exactly (no trim/collapse/normalization)
+ * - multi-slot arrays preserve order and empty intermediate slots
+ *
+ * Objective grading views/exports must never "helpfully" normalize student answers via:
+ * filter(Boolean), join(', '), trim(), whitespace collapsing, dedupe/sort, or compacting.
+ */
+export function rawSlotValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  return String(value);
+}
+
+export function renderRawMultiSlotAnswer(slots: unknown[]): string[] {
+  return slots.map((slot) => rawSlotValue(slot));
+}
+
+export interface RawObjectiveAnswerProjection {
+  scalar: string;
+  slots: string[] | null;
+  canonical: string;
+}
+
+export function projectRawObjectiveAnswer(value: unknown): RawObjectiveAnswerProjection {
+  if (Array.isArray(value)) {
+    const slots = renderRawMultiSlotAnswer(value);
+    return {
+      scalar: '',
+      slots,
+      // Canonical CSV-safe representation for multi-slot answers.
+      canonical: JSON.stringify(slots),
+    };
+  }
+
+  const scalar = rawSlotValue(value);
+  return {
+    scalar,
+    slots: null,
+    canonical: scalar,
+  };
+}
+
 export function extractObjectiveAnswerMap(sectionAnswers: unknown): Record<string, unknown> {
   if (!sectionAnswers || typeof sectionAnswers !== 'object') {
     return {};
@@ -231,25 +275,15 @@ export function getStudentAnswerDisplay(
   answerMap: Record<string, unknown>,
 ): string {
   const value = getQuestionAnswer(descriptor, answerMap);
-  const { block } = descriptor;
+  return projectRawObjectiveAnswer(value).canonical;
+}
 
-  if (block.type === 'MULTI_MCQ') {
-    const options = Array.isArray(block.options) ? block.options : [];
-    const ids = Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
-    return ids.map((id) => lookupOptionText(options, id)).join(', ');
-  }
-
-  if (block.type === 'SINGLE_MCQ') {
-    const options = Array.isArray(block.options) ? block.options : [];
-    return typeof value === 'string' ? lookupOptionText(options, value) : '';
-  }
-
-  if (block.type === 'MATCHING') {
-    const headings = Array.isArray(block.headings) ? block.headings : [];
-    return typeof value === 'string' ? lookupHeadingText(headings, value) : '';
-  }
-
-  return formatAnswerValue(value);
+export function getStudentAnswerRawProjection(
+  descriptor: StudentQuestionDescriptor,
+  answerMap: Record<string, unknown>,
+): RawObjectiveAnswerProjection {
+  const value = getQuestionAnswer(descriptor, answerMap);
+  return projectRawObjectiveAnswer(value);
 }
 
 function normalizedSetFromUnknown(value: unknown): Set<string> {

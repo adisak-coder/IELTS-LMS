@@ -270,6 +270,57 @@ describe('gradingReviewUtils', () => {
     expect(rows[0]?.isCorrect).toBe('Correct');
   });
 
+  test('keeps objective raw-fidelity for array answers and CSV parity', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'mcq-block-1',
+            type: 'MULTI_MCQ',
+            instruction: 'Choose two',
+            stem: 'Choose two',
+            requiredSelections: 2,
+            options: [
+              { id: 'A', text: 'Alpha', isCorrect: true },
+              { id: 'B', text: 'Beta', isCorrect: false },
+              { id: 'C', text: 'Charlie', isCorrect: true },
+            ],
+          },
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ];
+
+    const storedAnswer = [' A ', '', 'C,C'];
+    const sectionSubmission = createSectionSubmission(
+      'sub-1',
+      'reading',
+      { 'mcq-block-1': storedAnswer },
+      [createQuestionResult('mcq-block-1', false, 0)],
+    );
+
+    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.items).toHaveLength(1);
+    expect(groups[0]?.items[0]?.studentAnswerSlots).toEqual(storedAnswer);
+    expect(groups[0]?.items[0]?.studentAnswer).toBe('[" A ","","C,C"]');
+
+    const exportData = buildWideObjectiveExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
+      examState,
+      moduleType: 'reading',
+    });
+
+    expect(exportData.rows[0]?.['answer:mcq-block-1']).toBe(groups[0]?.items[0]?.studentAnswer);
+  });
+
   test('prefers stored objective correctness when it differs from the raw answer', () => {
     const examState = createInitialExamState('Exam', 'Academic');
     examState.reading.passages = [

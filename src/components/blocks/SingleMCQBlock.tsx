@@ -3,6 +3,7 @@ import { SingleMCQBlock as SingleMCQBlockType, MCQOption } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface SingleMCQBlockProps {
   block: SingleMCQBlockType;
@@ -99,6 +100,11 @@ export function SingleMCQBlock({ block, startNum, endNum, updateBlock, deleteBlo
           placeholder="Enter instruction for this question..."
         />
       </div>
+      <InsertedImagesEditor
+        images={block.insertedImages}
+        onChange={(nextImages) => updateBlock({ ...block, insertedImages: nextImages })}
+        errors={errors}
+      />
 
       {/* Question Stem */}
       <div className="mb-6">

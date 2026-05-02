@@ -10,6 +10,13 @@ describe('cloneExamContent', () => {
       type: 'TFNG',
       mode: 'TFNG',
       instruction: 'Instruction',
+      insertedImages: [
+        {
+          id: 'img-1',
+          url: 'https://example.com/context.png',
+          caption: 'Context image',
+        },
+      ],
       questions: [{ id: 'q-1', statement: 'S', correctAnswer: 'T' }],
     };
 
@@ -20,6 +27,10 @@ describe('cloneExamContent', () => {
     expect(cloned.questions).not.toBe(block.questions);
     expect(cloned.questions[0]?.id).not.toBe(block.questions[0]?.id);
     expect(cloned.questions[0]?.statement).toBe(block.questions[0]?.statement);
+    expect(cloned.insertedImages).not.toBe(block.insertedImages);
+    expect(cloned.insertedImages?.[0]?.id).not.toBe(block.insertedImages?.[0]?.id);
+    expect(cloned.insertedImages?.[0]?.url).toBe(block.insertedImages?.[0]?.url);
+    expect(cloned.insertedImages?.[0]?.caption).toBe(block.insertedImages?.[0]?.caption);
   });
 
   it('clones a reading passage without shared references', () => {
@@ -43,4 +54,3 @@ describe('cloneExamContent', () => {
     expect(originalBlock.questions[0]!.statement).toBe('Original');
   });
 });
-

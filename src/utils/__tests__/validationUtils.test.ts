@@ -134,4 +134,43 @@ describe('validateQuestionBlock - placeholder/blanks alignment', () => {
 
     expect(errors.some((e) => e.field.includes('cell-0'))).toBe(false);
   });
+
+  it('requires inserted image URL when an image row exists on supported block types', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-9',
+      type: 'SHORT_ANSWER',
+      instruction: 'Answer the question.',
+      insertedImages: [{ id: 'img-1', url: '', caption: 'Optional caption' }],
+      questions: [
+        {
+          id: 'q-1',
+          prompt: 'Name one pet.',
+          correctAnswer: 'dog',
+          acceptedAnswers: ['dog'],
+          answerRule: 'ONE_WORD',
+        },
+      ],
+    });
+
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: 'insertedImages[0].url',
+        }),
+      ]),
+    );
+  });
+
+  it('does not validate inserted image slots for map/diagram blocks', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-10',
+      type: 'MAP',
+      instruction: 'Label the map.',
+      insertedImages: [{ id: 'img-1', url: '', caption: 'Should be ignored' }],
+      assetUrl: 'https://example.com/map.png',
+      questions: [{ id: 'q-1', label: 'A', correctAnswer: 'A', x: 50, y: 50 }],
+    });
+
+    expect(errors.some((error) => error.field.includes('insertedImages'))).toBe(false);
+  });
 });

@@ -598,6 +598,152 @@ describe('student question experience', () => {
     expect(stickyWrapper).not.toBeNull();
   });
 
+  it('renders inserted reading images between instruction and question body with drive URL resolution', () => {
+    const state = {
+      title: 'Reading Test',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: {
+        passages: [
+          {
+            id: 'passage-1',
+            title: 'Passage 1',
+            content: 'Read and answer.',
+            images: [],
+            blocks: [
+              {
+                id: 'q-block',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question.',
+                insertedImages: [
+                  {
+                    id: 'img-1',
+                    url: 'https://drive.google.com/file/d/abc123DEF456/view?usp=sharing',
+                    caption: 'Blueprint caption',
+                  },
+                ],
+                questions: [{ id: 'q1', prompt: 'What is shown?', correctAnswer: 'diagram', answerRule: 'ONE_WORD' }],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentReading
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="q1"
+        onNavigate={() => {}}
+      />,
+    );
+
+    const instruction = screen.getByText('Answer the question.');
+    const caption = screen.getByText('Blueprint caption');
+    const prompt = screen.getByText('What is shown?');
+    expect(
+      instruction.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      caption.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    const image = screen.getByAltText('Blueprint caption');
+    expect(image).toHaveAttribute(
+      'src',
+      'https://drive.google.com/uc?export=view&id=abc123DEF456',
+    );
+  });
+
+  it('does not render inserted image slot for reading map blocks', () => {
+    const state = {
+      title: 'Reading Test',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+        },
+      },
+      reading: {
+        passages: [
+          {
+            id: 'passage-1',
+            title: 'Passage 1',
+            content: 'Read and answer.',
+            images: [],
+            blocks: [
+              {
+                id: 'map-block',
+                type: 'MAP',
+                instruction: 'Label the map.',
+                insertedImages: [
+                  {
+                    id: 'img-hidden',
+                    url: 'https://example.com/map-context.png',
+                    caption: 'Hidden map caption',
+                  },
+                ],
+                assetUrl: 'https://example.com/map.png',
+                questions: [{ id: 'q-map-1', label: 'Entrance', correctAnswer: 'A', x: 50, y: 50 }],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentReading
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="q-map-1"
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(screen.queryByText('Hidden map caption')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /question reference image/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('uses accessibility typography variables for the reading passage panel', () => {
     const state = {
       title: 'Reading Test',
@@ -1074,6 +1220,84 @@ describe('student question experience', () => {
     expect(screen.getByText('Questions 11')).toBeInTheDocument();
     expect(screen.queryByText('Questions 11–11')).not.toBeInTheDocument();
     expect(screen.getByText('Questions 12–13')).toBeInTheDocument();
+  });
+
+  it('renders inserted listening images between instruction and question body', () => {
+    const state = {
+      title: 'Listening Test',
+      type: 'Academic',
+      activeModule: 'listening',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: true, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: { passages: [] },
+      listening: {
+        parts: [
+          {
+            id: 'part-1',
+            title: 'Part 1',
+            audioUrl: '/audio/test.mp3',
+            transcript: 'Listen and answer.',
+            pins: [],
+            blocks: [
+              {
+                id: 'listening-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer this question.',
+                insertedImages: [
+                  {
+                    id: 'img-1',
+                    url: 'https://example.com/listening-context.png',
+                    caption: 'Listening context image',
+                  },
+                ],
+                questions: [{ id: 'listening-q1', prompt: 'What did you hear?', correctAnswer: 'rain', answerRule: 'ONE_WORD' }],
+              },
+            ],
+          },
+        ],
+      },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentListening
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="listening-q1"
+        onNavigate={() => {}}
+      />,
+    );
+
+    const instruction = screen.getByText('Answer this question.');
+    const caption = screen.getByText('Listening context image');
+    const prompt = screen.getByText('What did you hear?');
+    expect(
+      instruction.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      caption.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    expect(screen.getByAltText('Listening context image')).toHaveAttribute(
+      'src',
+      'https://example.com/listening-context.png',
+    );
   });
 
   it('opens the question navigator from the header when the control is available', () => {

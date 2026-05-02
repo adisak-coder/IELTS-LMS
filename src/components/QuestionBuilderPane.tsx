@@ -243,6 +243,7 @@ export function QuestionBuilderPane({
           type: 'TFNG',
           mode: 'TFNG',
           instruction: 'Do the following statements agree with the information given?',
+          insertedImages: [],
           questions: [{ id: createId('q'), statement: '', correctAnswer: 'T' }]
         } as TFNGBlockType;
         break;
@@ -252,6 +253,7 @@ export function QuestionBuilderPane({
           type: 'CLOZE',
           answerRule: 'TWO_WORDS',
           instruction: 'Complete the summary below. Choose NO MORE THAN TWO WORDS from the passage for each answer.',
+          insertedImages: [],
           questions: [{ id: createId('q'), prompt: 'The ____ is important.', correctAnswer: '', acceptedAnswers: [] }]
         } as ClozeBlockType;
         break;
@@ -260,6 +262,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'MATCHING',
           instruction: 'Choose the correct heading for each paragraph from the list of headings below.',
+          insertedImages: [],
           headings: [{ id: createId('h'), text: 'Heading 1' }],
           questions: [{ id: createId('q'), paragraphLabel: 'A', correctHeading: '' }]
         } as MatchingBlockType;
@@ -269,6 +272,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'MULTI_MCQ',
           instruction: 'Choose TWO letters, A-E.',
+          insertedImages: [],
           stem: '',
           requiredSelections: 2,
           options: [
@@ -292,6 +296,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'SINGLE_MCQ',
           instruction: 'Choose the correct answer.',
+          insertedImages: [],
           stem: '',
           options: [
             { id: createId('opt'), text: 'Option A', isCorrect: true },
@@ -305,6 +310,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'SHORT_ANSWER',
           instruction: 'Answer the questions below using words from the passage.',
+          insertedImages: [],
           questions: [{ id: createId('q'), prompt: 'What is described?', correctAnswer: '', acceptedAnswers: [], answerRule: 'TWO_WORDS' }]
         } as ShortAnswerBlockType;
         break;
@@ -313,6 +319,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'SENTENCE_COMPLETION',
           instruction: 'Complete the sentences below using words from the passage.',
+          insertedImages: [],
           questions: [{ id: createId('q'), sentence: 'The ____ is important.', blanks: [{ id: createId('blank'), correctAnswer: '', acceptedAnswers: [], position: 0 }], answerRule: 'TWO_WORDS' }]
         } as SentenceCompletionBlockType;
         break;
@@ -330,6 +337,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'FLOW_CHART',
           instruction: 'Complete the flow chart below.',
+          insertedImages: [],
           steps: [{ id: createId('step'), label: 'Step 1', correctAnswer: '' }]
         } as FlowChartBlockType;
         break;
@@ -338,6 +346,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'TABLE_COMPLETION',
           instruction: 'Complete the table below.',
+          insertedImages: [],
           answerRule: 'TWO_WORDS',
           headers: ['Column 1', 'Column 2'],
           rows: [['', '____']],
@@ -349,6 +358,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'NOTE_COMPLETION',
           instruction: 'Complete the notes below.',
+          insertedImages: [],
           questions: [{ id: createId('q'), noteText: 'The ____ is important.', blanks: [{ id: createId('blank'), correctAnswer: '', acceptedAnswers: [], position: 0 }], answerRule: 'TWO_WORDS' }]
         } as NoteCompletionBlockType;
         break;
@@ -357,6 +367,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'CLASSIFICATION',
           instruction: 'Classify the following statements.',
+          insertedImages: [],
           categories: ['Category A', 'Category B'],
           items: [{ id: createId('item'), text: 'Statement 1', correctCategory: 'Category A' }]
         } as ClassificationBlockType;
@@ -366,6 +377,7 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'MATCHING_FEATURES',
           instruction: 'Match the features with the options.',
+          insertedImages: [],
           features: [{ id: createId('feat'), text: 'Feature 1', correctMatch: 'Option A' }],
           options: ['Option A', 'Option B', 'Option C']
         } as MatchingFeaturesBlockType;

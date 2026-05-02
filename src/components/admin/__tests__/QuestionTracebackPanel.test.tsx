@@ -65,4 +65,64 @@ describe('QuestionTracebackPanel', () => {
     expect(screen.getAllByText('Answer')).toHaveLength(2);
     expect(screen.getByText('Correct answer')).toBeInTheDocument();
   });
+
+  test('renders raw multi-slot arrays slot-by-slot without normalization', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'block-1',
+            type: 'MULTI_MCQ',
+            instruction: 'Choose two',
+            stem: 'Choose two',
+            requiredSelections: 2,
+            options: [
+              { id: 'A', text: 'Alpha', isCorrect: true },
+              { id: 'B', text: 'Beta', isCorrect: false },
+              { id: 'C', text: 'Charlie', isCorrect: true },
+            ],
+          },
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ];
+
+    render(
+      <QuestionTracebackPanel
+        section="reading"
+        examState={examState}
+        sectionSubmission={{
+          id: 'sec-1',
+          submissionId: 'sub-1',
+          section: 'reading',
+          answers: {
+            type: 'reading',
+            answers: {
+              'block-1': [' A ', '', 'C,C'],
+            },
+          },
+          autoGradingResults: undefined,
+          gradingStatus: 'auto_graded',
+          reviewedBy: undefined,
+          reviewedAt: undefined,
+          finalizedBy: undefined,
+          finalizedAt: undefined,
+          submittedAt: '2026-01-01T00:00:00.000Z',
+        } as any}
+        examLoading={false}
+        examError={null}
+      />,
+    );
+
+    expect(
+      screen.getByText((text) => text.includes('[1]') && text.includes('A')),
+    ).toBeInTheDocument();
+    expect(screen.getByText('[2] ∅')).toBeInTheDocument();
+    expect(screen.getByText('[3] C,C')).toBeInTheDocument();
+  });
 });

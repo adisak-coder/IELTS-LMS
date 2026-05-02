@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ExamState, QuestionAnswer } from '../../types';
+import { ExamState, QuestionAnswer, QuestionBlock } from '../../types';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { QuestionRenderer } from './QuestionRenderer';
 import { ArrowLeft, ArrowRight, ArrowLeftRight, Flag } from 'lucide-react';
@@ -14,6 +14,8 @@ import type { StimulusAnnotation } from '../../types';
 import { formatQuestionRange } from './questionRangeLabel';
 import { useSplitPaneResize } from './useSplitPaneResize';
 import { normalizeReadingPlainTextForDisplay } from './normalizeReadingPassageText';
+import { getImageUrlCandidates } from '../../utils/imageUrl';
+import { getInsertedImages, supportsInsertedImages } from '../../utils/insertedImages';
 
 interface StudentReadingProps {
   state: ExamState;
@@ -105,6 +107,40 @@ export function StudentReading({
           highlightEnabled={highlightEnabled}
           highlightColor={highlightColor}
         />
+      </div>
+    );
+  };
+
+  const renderBlockInsertedImages = (block: QuestionBlock) => {
+    if (!supportsInsertedImages(block)) {
+      return null;
+    }
+
+    const insertedImages = getInsertedImages(block).filter((image) => image.url.trim());
+    if (insertedImages.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
+        {insertedImages.map((image, index) => {
+          const caption = image.caption?.trim() ?? '';
+          return (
+            <div key={image.id || `${block.id}-inserted-image-${index}`} className="space-y-1">
+              <StudentZoomableMedia
+                sources={getImageUrlCandidates(image.url)}
+                alt={caption || `Question reference image ${index + 1}`}
+                label={`Question reference image ${index + 1}`}
+                hint="Tap to zoom the image"
+                className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+                imageClassName="max-h-[56dvh]"
+              />
+              {caption ? (
+                <p className="text-xs text-gray-600">{caption}</p>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     );
   };
@@ -287,6 +323,7 @@ export function StudentReading({
                       Questions {formatQuestionRange(blockStartQ, blockEndQ)}
                     </h3>
                     {renderBlockInstruction(block.instruction)}
+                    {renderBlockInsertedImages(block)}
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8 md:space-y-10'}>

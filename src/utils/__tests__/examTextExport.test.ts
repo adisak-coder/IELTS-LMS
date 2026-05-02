@@ -306,6 +306,38 @@ describe('examTextExport', () => {
     });
   });
 
+  it('exports inserted image URL/caption lines under block instructions for supported types only', () => {
+    const exam = createExamFixture('exam-1', 'Inserted Images');
+    const readingBlocks = exam.content.reading.passages[0]?.blocks ?? [];
+    const tfngBlock = readingBlocks.find((block) => block.type === 'TFNG');
+    const mapBlock = readingBlocks.find((block) => block.type === 'MAP');
+
+    if (tfngBlock) {
+      tfngBlock.insertedImages = [
+        {
+          id: 'img-1',
+          url: 'https://example.com/context.png',
+          caption: 'Context caption',
+        },
+      ];
+    }
+    if (mapBlock) {
+      mapBlock.insertedImages = [
+        {
+          id: 'img-map',
+          url: 'https://example.com/should-not-export.png',
+          caption: 'Should not export',
+        },
+      ];
+    }
+
+    const output = buildExamTextExport([exam], new Date('2026-04-30T12:00:00.000Z'));
+
+    expect(output).toContain('Inserted image 1: https://example.com/context.png');
+    expect(output).toContain('Inserted image 1 caption: Context caption');
+    expect(output).not.toContain('https://example.com/should-not-export.png');
+  });
+
   it('builds filename using yyyy-mm-dd format', () => {
     const filename = buildExamTextExportFilename(new Date('2026-04-30T12:00:00.000Z'));
     expect(filename).toBe('exam-export-2026-04-30.txt');

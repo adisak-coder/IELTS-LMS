@@ -24,6 +24,7 @@ import {
 import { countBlankPlaceholders } from './blankPlaceholders';
 import { resolveAcceptedAnswers } from './acceptedAnswers';
 import { analyzeTablePlaceholders, getCanonicalTableCells } from './tableCompletion';
+import { getInsertedImages, supportsInsertedImages } from './insertedImages';
 
 export interface ValidationError {
   field: string;
@@ -70,6 +71,28 @@ export function validateQuestionBlock(block: QuestionBlock): ValidationError[] {
       // Existing types - validation already implemented elsewhere
       break;
   }
+
+  errors.push(...validateInsertedImageSet(block));
+
+  return errors;
+}
+
+function validateInsertedImageSet(block: QuestionBlock): ValidationError[] {
+  if (!supportsInsertedImages(block)) {
+    return [];
+  }
+
+  const errors: ValidationError[] = [];
+  const insertedImages = getInsertedImages(block);
+
+  insertedImages.forEach((image, index) => {
+    if (!image.url.trim()) {
+      errors.push({
+        field: `insertedImages[${index}].url`,
+        message: `Inserted image ${index + 1} URL is required`,
+      });
+    }
+  });
 
   return errors;
 }

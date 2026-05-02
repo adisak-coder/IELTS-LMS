@@ -13,6 +13,7 @@ import {
   getCanonicalTableCells,
   normalizeTableCompletionBlock,
 } from '../../utils/tableCompletion';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface TableCompletionBlockProps {
   block: TableCompletionBlockType;
@@ -186,6 +187,11 @@ export function TableCompletionBlock({
           placeholder="Enter instruction..."
         />
       </div>
+      <InsertedImagesEditor
+        images={block.insertedImages}
+        onChange={(nextImages) => commitBlock({ ...block, insertedImages: nextImages })}
+        errors={errors}
+      />
 
       <div className="mb-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">Answer Rule</label>

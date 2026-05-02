@@ -5,6 +5,9 @@ import type {
 import {
   getCorrectAnswerDisplay,
   getQuestionPrompt,
+  projectRawObjectiveAnswer,
+  rawSlotValue,
+  renderRawMultiSlotAnswer,
   getStudentAnswerDisplay,
   isStudentAnswerCorrect,
 } from '../gradingAnswerUtils';
@@ -95,7 +98,7 @@ describe('gradingAnswerUtils', () => {
     expect(isStudentAnswerCorrect(descriptor, { 'q-alt': 'different' })).toBe(false);
   });
 
-  test('SINGLE_MCQ: maps option id to option text', () => {
+  test('SINGLE_MCQ: preserves stored option id in student answer display', () => {
     const descriptor = {
       id: 'block-1',
       blockId: 'block-1',
@@ -118,11 +121,11 @@ describe('gradingAnswerUtils', () => {
     } as unknown as StudentQuestionDescriptor;
 
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Alpha');
-    expect(getStudentAnswerDisplay(descriptor, { 'block-1': 'A' })).toBe('Alpha');
+    expect(getStudentAnswerDisplay(descriptor, { 'block-1': 'A' })).toBe('A');
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': 'A' })).toBe(true);
   });
 
-  test('MULTI_MCQ: set-compare ignores ordering', () => {
+  test('MULTI_MCQ: set-compare ignores ordering while display preserves raw array projection', () => {
     const descriptor = {
       id: 'block-1',
       blockId: 'block-1',
@@ -147,7 +150,7 @@ describe('gradingAnswerUtils', () => {
     } as unknown as StudentQuestionDescriptor;
 
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Alpha, Charlie');
-    expect(getStudentAnswerDisplay(descriptor, { 'block-1': ['C', 'A'] })).toBe('Charlie, Alpha');
+    expect(getStudentAnswerDisplay(descriptor, { 'block-1': ['C', 'A'] })).toBe('["C","A"]');
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': ['C', 'A'] })).toBe(true);
   });
 
@@ -326,5 +329,45 @@ describe('gradingAnswerUtils', () => {
     expect(getQuestionPrompt(descriptor)).toBe('Table cell row 1, col 2');
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Anu | Anupama');
     expect(isStudentAnswerCorrect(descriptor, { 'tbl-1': ['anupama', 'india'] })).toBe(true);
+  });
+
+  test('raw slot fidelity: preserves scalar string exactly and maps nullish to empty', () => {
+    expect(rawSlotValue(' answer ')).toBe(' answer ');
+    expect(rawSlotValue('\nline\n')).toBe('\nline\n');
+    expect(rawSlotValue(null)).toBe('');
+    expect(rawSlotValue(undefined)).toBe('');
+  });
+
+  test('raw slot fidelity: preserves multi-slot order, empties, whitespace, punctuation, and symbols', () => {
+    const fixtures: string[][] = [
+      ['A', 'B', 'C'],
+      [' A ', 'B\nB', 'C\tC'],
+      ['A', '', 'C'],
+      ['', '', ''],
+      ['A,', 'B|B', '[C]'],
+      ['0', 'false', 'null'],
+      [' A\n', '\tB ', ' C  '],
+    ];
+
+    fixtures.forEach((fixture) => {
+      expect(renderRawMultiSlotAnswer(fixture)).toEqual(fixture);
+    });
+  });
+
+  test('raw slot fidelity: preserves empty intermediate slots without filter(Boolean) loss', () => {
+    const projected = projectRawObjectiveAnswer(['first', '', 'third']);
+    expect(projected.slots).toEqual(['first', '', 'third']);
+    expect(projected.canonical).toBe('["first","","third"]');
+  });
+
+  test('raw slot fidelity: null and undefined slots become empty strings', () => {
+    const projected = projectRawObjectiveAnswer(['A', null, undefined, 'D']);
+    expect(projected.slots).toEqual(['A', '', '', 'D']);
+  });
+
+  test('raw slot fidelity: comma-containing slot values are not flattened with join', () => {
+    const projected = projectRawObjectiveAnswer(['hello, world', 'x', 'y']);
+    expect(projected.canonical).not.toBe('hello, world, x, y');
+    expect(projected.slots).toEqual(['hello, world', 'x', 'y']);
   });
 });

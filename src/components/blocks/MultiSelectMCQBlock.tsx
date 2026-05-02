@@ -3,6 +3,7 @@ import { QuestionBlock, MultiMCQBlock as MultiMCQBlockType } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface Props {
   block: QuestionBlock;
@@ -83,6 +84,13 @@ export const MultiSelectMCQBlock: React.FC<Props> = ({ block, startNum, endNum, 
             <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle size={10} /> {getFieldError('instruction')!.message}</p>
           )}
         </div>
+        <InsertedImagesEditor
+          images={mcqBlock.insertedImages}
+          onChange={(nextImages) =>
+            updateBlock({ ...mcqBlock, insertedImages: nextImages })
+          }
+          errors={errors}
+        />
 
         <div className="mb-5">
           <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-1.5 block">Question Stem</label>

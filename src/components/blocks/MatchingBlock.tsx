@@ -3,6 +3,7 @@ import { QuestionBlock, MatchingBlock as MatchingBlockType } from '../../types';
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowRight, ArrowUp, ArrowDown, AlertCircle, AlertTriangle } from 'lucide-react';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface Props {
   block: QuestionBlock;
@@ -106,6 +107,13 @@ export const MatchingBlock: React.FC<Props> = ({ block, startNum, endNum, update
             <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle size={10} /> {getFieldError('instruction')!.message}</p>
           )}
         </div>
+        <InsertedImagesEditor
+          images={matchingBlock.insertedImages}
+          onChange={(nextImages) =>
+            updateBlock({ ...matchingBlock, insertedImages: nextImages })
+          }
+          errors={errors}
+        />
         
         <div className="flex gap-8">
           <div className="flex-1">

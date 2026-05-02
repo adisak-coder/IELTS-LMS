@@ -3,6 +3,7 @@ import { FlowChartBlock as FlowChartBlockType } from '../../types';
 import { ArrowUp, ArrowDown, Trash2, Plus } from 'lucide-react';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface FlowChartBlockProps {
   block: FlowChartBlockType;
@@ -65,6 +66,11 @@ export function FlowChartBlock({ block, startNum, endNum, updateBlock, deleteBlo
           placeholder="Enter instruction..."
         />
       </div>
+      <InsertedImagesEditor
+        images={block.insertedImages}
+        onChange={(nextImages) => updateBlock({ ...block, insertedImages: nextImages })}
+        errors={errors}
+      />
 
       <div>
         <div className="flex items-center justify-between mb-3">

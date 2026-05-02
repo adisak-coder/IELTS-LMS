@@ -10,6 +10,7 @@ import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
 import { AcceptedAnswersEditor } from './AcceptedAnswersEditor';
 import { buildAcceptedAnswerFields, resolveAcceptedAnswers } from '../../utils/acceptedAnswers';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface Props {
   block: QuestionBlock;
@@ -92,6 +93,14 @@ export const ClozeBlock: React.FC<Props> = ({ block, startNum, endNum, updateBlo
           {getFieldError('instruction') && (
             <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle size={10} /> {getFieldError('instruction')!.message}</p>
           )}
+
+          <InsertedImagesEditor
+            images={clozeBlock.insertedImages}
+            onChange={(nextImages) =>
+              updateBlock({ ...clozeBlock, insertedImages: nextImages })
+            }
+            errors={errors}
+          />
           
           <div className="flex items-center gap-3 mt-3">
             <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Answer Rule:</label>

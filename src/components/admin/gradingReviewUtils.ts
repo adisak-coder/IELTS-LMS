@@ -14,7 +14,7 @@ import {
   extractObjectiveAnswerMap,
   getCorrectAnswerDisplay,
   getQuestionPrompt,
-  getStudentAnswerDisplay,
+  getStudentAnswerRawProjection,
   isStudentAnswerCorrect,
 } from './gradingAnswerUtils';
 import { htmlToPlainText } from '../../utils/htmlText';
@@ -36,6 +36,7 @@ export interface ObjectiveTracebackItem {
   questionId: string;
   prompt: string;
   studentAnswer: string;
+  studentAnswerSlots?: string[] | undefined;
   correctAnswer: string;
   correctness: boolean | null;
   awardedScore: number | null;
@@ -229,12 +230,14 @@ function buildTracebackItem(
   const awardedScore =
     questionResult?.awardedScore ?? (computedCorrectness === null ? null : computedCorrectness ? 1 : 0);
   const maxScore = questionResult?.maxScore ?? (computedCorrectness === null ? null : 1);
+  const rawStudentAnswer = getStudentAnswerRawProjection(descriptor, answerMap);
 
   return {
     numberLabel: getQuestionNumberLabel(descriptors, descriptor.id),
     questionId: descriptor.id,
     prompt: getQuestionPrompt(descriptor),
-    studentAnswer: getStudentAnswerDisplay(descriptor, answerMap),
+    studentAnswer: rawStudentAnswer.canonical,
+    studentAnswerSlots: rawStudentAnswer.slots ?? undefined,
     correctAnswer: getCorrectAnswerDisplay(descriptor),
     correctness,
     awardedScore,

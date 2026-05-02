@@ -3,6 +3,7 @@ import { QuestionBlock, TFNGBlock as TFNGBlockType, TFNGMode } from '../../types
 import { MoreVertical, Plus, Trash2, GripVertical, ArrowUp, ArrowDown, AlertCircle } from 'lucide-react';
 import { createId } from '../../utils/idUtils';
 import { handleBoldHotkey } from '../../utils/boldMarkdown';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface Props {
   block: QuestionBlock;
@@ -117,6 +118,11 @@ export const TFNGBlock: React.FC<Props> = ({ block, startNum, endNum, updateBloc
             )}
           </div>
         </div>
+        <InsertedImagesEditor
+          images={tfngBlock.insertedImages}
+          onChange={(nextImages) => updateBlock({ ...tfngBlock, insertedImages: nextImages })}
+          errors={errors}
+        />
         
         <div className="border border-gray-100 rounded-sm overflow-hidden">
           <table className="w-full text-sm text-left">

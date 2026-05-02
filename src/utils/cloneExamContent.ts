@@ -16,6 +16,7 @@ import type {
   NoteCompletionBlock,
   ClassificationBlock,
   MatchingFeaturesBlock,
+  InsertedBlockImage,
   StimulusImageAsset,
 } from '../types';
 import { createId } from './idUtils';
@@ -41,6 +42,19 @@ function cloneStimulusImageAssetWithNewIds(asset: StimulusImageAsset): StimulusI
   };
 }
 
+function cloneInsertedImagesWithNewIds(
+  images: InsertedBlockImage[] | undefined,
+): InsertedBlockImage[] | undefined {
+  if (!Array.isArray(images)) {
+    return undefined;
+  }
+
+  return images.map((image) => ({
+    ...image,
+    id: createId('img'),
+  }));
+}
+
 export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBlock {
   const cloned = deepClone(block);
   const nextBlockId = createId('blk');
@@ -51,6 +65,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         questions: typed.questions.map((question) => ({
           ...question,
           id: createId('q'),
@@ -63,6 +78,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         questions: typed.questions.map((question) => ({
           ...question,
           id: createId('q'),
@@ -75,6 +91,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         headings: typed.headings.map((heading) => ({
           ...heading,
           id: createId('h'),
@@ -91,6 +108,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         questions: typed.questions.map((question) => ({
           ...question,
           id: createId('q'),
@@ -103,6 +121,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         options: typed.options.map((option) => ({
           ...option,
           id: createId('opt'),
@@ -115,6 +134,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         options: typed.options.map((option) => ({
           ...option,
           id: createId('opt'),
@@ -127,6 +147,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         questions: typed.questions.map((question) => ({
           ...question,
           id: createId('q'),
@@ -139,6 +160,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         questions: typed.questions.map((question) => ({
           ...question,
           id: createId('q'),
@@ -155,6 +177,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         labels: typed.labels.map((label) => ({
           ...label,
           id: createId('lbl'),
@@ -167,6 +190,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         steps: typed.steps.map((step) => ({
           ...step,
           id: createId('step'),
@@ -179,6 +203,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         cells: typed.cells.map((cell) => ({
           ...cell,
           id: createId('cell'),
@@ -191,6 +216,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         questions: typed.questions.map((question) => ({
           ...question,
           id: createId('q'),
@@ -207,6 +233,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         items: typed.items.map((item) => ({
           ...item,
           id: createId('item'),
@@ -219,6 +246,7 @@ export function cloneQuestionBlockWithNewIds(block: QuestionBlock): QuestionBloc
       return {
         ...typed,
         id: nextBlockId,
+        insertedImages: cloneInsertedImagesWithNewIds(typed.insertedImages),
         features: typed.features.map((feature) => ({
           ...feature,
           id: createId('feat'),
@@ -260,4 +288,3 @@ export function cloneListeningPartWithNewIds(part: ListeningPart): ListeningPart
     blocks: cloned.blocks.map(cloneQuestionBlockWithNewIds),
   };
 }
-

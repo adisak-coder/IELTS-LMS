@@ -166,6 +166,13 @@ export interface BaseQuestionBlock {
   id: string;
   type: QuestionType;
   instruction: string;
+  insertedImages?: InsertedBlockImage[] | undefined;
+}
+
+export interface InsertedBlockImage {
+  id: string;
+  url: string;
+  caption?: string | undefined;
 }
 
 export interface TFNGBlock extends BaseQuestionBlock {

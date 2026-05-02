@@ -65,5 +65,40 @@ describe('validateMatchingBlock', () => {
       ]),
     );
   });
-});
 
+  it('validates inserted image URLs for supported block types', () => {
+    const block: MatchingBlock = {
+      id: 'blk-1',
+      type: 'MATCHING',
+      instruction: 'Choose headings',
+      insertedImages: [{ id: 'img-1', url: '', caption: 'Context image' }],
+      headings: [{ id: 'h-1', text: 'Heading 1' }],
+      questions: [{ id: 'q-1', paragraphLabel: 'A', correctHeading: 'i' }],
+    };
+
+    const result = validateBlock(block);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'error',
+          field: 'insertedImages[0].url',
+        }),
+      ]),
+    );
+  });
+
+  it('skips inserted image validation for map blocks', () => {
+    const result = validateBlock({
+      id: 'map-1',
+      type: 'MAP',
+      instruction: 'Label the map.',
+      insertedImages: [{ id: 'img-1', url: '', caption: 'Ignored row' }],
+      assetUrl: 'https://example.com/map.png',
+      questions: [{ id: 'q-1', label: 'Entrance', correctAnswer: 'A', x: 10, y: 20 }],
+    } as any);
+
+    expect(result.errors.some((error) => error.field.includes('insertedImages'))).toBe(
+      false,
+    );
+  });
+});

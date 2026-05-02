@@ -8,6 +8,7 @@ import {
   buildAcceptedAnswerFields,
   resolveAcceptedAnswers,
 } from '../../utils/acceptedAnswers';
+import { InsertedImagesEditor } from './InsertedImagesEditor';
 
 interface ShortAnswerBlockProps {
   block: ShortAnswerBlockType;
@@ -99,6 +100,11 @@ export function ShortAnswerBlock({ block, startNum, endNum, updateBlock, deleteB
           placeholder="Enter instruction for this question..."
         />
       </div>
+      <InsertedImagesEditor
+        images={block.insertedImages}
+        onChange={(nextImages) => updateBlock({ ...block, insertedImages: nextImages })}
+        errors={errors}
+      />
 
       {/* Questions */}
       <div>
