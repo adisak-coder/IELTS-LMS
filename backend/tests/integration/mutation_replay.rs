@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use ielts_backend_application::{
     builder::BuilderService,
-    delivery::{DeliveryService, MutationBatchResponseMode},
+    delivery::{DeliveryConflictReason, DeliveryError, DeliveryService, MutationBatchResponseMode},
     scheduling::SchedulingService,
 };
 use ielts_backend_domain::{
@@ -166,6 +166,133 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
     database.shutdown().await;
 }
 
+#[tokio::test]
+async fn operation_mutations_reject_stale_revision_and_preserve_field_scope() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service = DeliveryService::new(database.pool().clone());
+    let session = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, "alice"),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+    let attempt = session.attempt.expect("attempt");
+    let attempt_id = attempt.id.clone();
+    let student_key = student_key(schedule_id, "alice");
+    let client_session_id = Uuid::new_v4().to_string();
+
+    let first = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: attempt_id.clone(),
+                student_key: student_key.clone(),
+                client_session_id: client_session_id.clone(),
+                mutations: vec![MutationEnvelope {
+                    id: "op-1".to_owned(),
+                    seq: 1,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
+                    mutation_type: "SetScalar".to_owned(),
+                    base_revision: None,
+                    payload: json!({
+                        "baseRevision": 0,
+                        "questionId": "q1",
+                        "value": "ALPHA",
+                    }),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect("apply first operation");
+
+    assert_eq!(first.server_accepted_through_seq, 1);
+    let first_attempt = first.attempt.expect("full response attempt");
+    assert_eq!(first_attempt.answers["q1"], "ALPHA");
+
+    let stale = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: attempt_id.clone(),
+                student_key: student_key.clone(),
+                client_session_id: client_session_id.clone(),
+                mutations: vec![MutationEnvelope {
+                    id: "op-stale".to_owned(),
+                    seq: 2,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 5).unwrap(),
+                    mutation_type: "SetScalar".to_owned(),
+                    base_revision: None,
+                    payload: json!({
+                        "baseRevision": 0,
+                        "questionId": "q1",
+                        "value": "STALE",
+                    }),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect_err("stale revision must be rejected");
+
+    match stale {
+        DeliveryError::Conflict {
+            reason: Some(reason),
+            latest_revision: Some(latest_revision),
+            ..
+        } => {
+            assert_eq!(reason, DeliveryConflictReason::BaseRevisionMismatch);
+            assert_eq!(latest_revision, 1);
+        }
+        other => panic!("expected base revision mismatch conflict, got {:?}", other),
+    }
+
+    let second = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: attempt_id.clone(),
+                student_key: student_key.clone(),
+                client_session_id: client_session_id.clone(),
+                mutations: vec![MutationEnvelope {
+                    id: "op-2".to_owned(),
+                    seq: 2,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
+                    mutation_type: "SetScalar".to_owned(),
+                    base_revision: None,
+                    payload: json!({
+                        "baseRevision": 1,
+                        "questionId": "q2",
+                        "value": "BRAVO",
+                    }),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect("second operation should succeed");
+
+    let second_attempt = second.attempt.expect("full response attempt");
+    assert_eq!(second_attempt.answers["q1"], "ALPHA");
+    assert_eq!(second_attempt.answers["q2"], "BRAVO");
+
+    database.shutdown().await;
+}
+
 async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule::ExamSchedule {
     let actor = ActorContext::new(Uuid::new_v4().to_string(), ActorRole::Admin);
     let builder_service = BuilderService::new(pool.clone());
@@ -190,7 +317,23 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
             exam_id.clone(),
             SaveDraftRequest {
                 content_snapshot: json!({
-                    "reading": {"passages": [{"id": "reading-1"}]},
+                    "reading": {
+                        "passages": [
+                            {
+                                "id": "reading-1",
+                                "blocks": [
+                                    {
+                                        "id": "reading-block-1",
+                                        "type": "SHORT_ANSWER",
+                                        "questions": [
+                                            {"id": "q1", "prompt": "Q1"},
+                                            {"id": "q2", "prompt": "Q2"}
+                                        ]
+                                    }
+                                ]
+                            }
+                        ]
+                    },
                     "listening": {"parts": [{"id": "listening-1"}]},
                     "writing": {"tasks": [{"id": "writing-1"}]},
                     "speaking": {"part1Topics": ["topic"], "cueCard": "cue", "part3Discussion": ["discussion"]}

@@ -287,6 +287,8 @@ export interface ExamSessionRuntime {
   activeSectionKey: ModuleType | null;
   currentSectionKey: ModuleType | null;
   currentSectionRemainingSeconds: number;
+  currentSectionDeadlineAt?: string | null | undefined;
+  serverNow?: string | undefined;
   waitingForNextSection: boolean;
   isOverrun: boolean;
   totalPausedSeconds: number;

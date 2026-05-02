@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use ielts_backend_domain::schedule::{
     AlertAckRequest, AttemptCommandRequest, CompleteExamRequest, DegradedLiveState,
     ExamSessionRuntime, ExtendSectionRequest, PresenceAction, ProctorAlert, ProctorPresence,
@@ -1937,12 +1937,13 @@ fn runtime_hydration_row_to_runtime(
     row: RuntimeHydrationRow,
     section_rows: Vec<RuntimeHydrationSectionRow>,
 ) -> ExamSessionRuntime {
+    let server_now = Utc::now();
     let computed_time = if matches!(row.status, RuntimeStatus::Live | RuntimeStatus::Paused) {
         compute_runtime_remaining_seconds(
             row.current_section_key.as_deref(),
             row.active_section_key.as_deref(),
             &section_rows,
-            Utc::now(),
+            server_now,
         )
     } else {
         None
@@ -1953,6 +1954,22 @@ fn runtime_hydration_row_to_runtime(
     let is_overrun = computed_time
         .map(|computed| computed.is_overrun)
         .unwrap_or(row.is_overrun);
+    let current_section_deadline_at = row
+        .current_section_key
+        .as_deref()
+        .and_then(|section_key| {
+            section_rows
+                .iter()
+                .find(|section| section.section_key == section_key)
+        })
+        .and_then(|section| {
+            if section.status != SectionRuntimeStatus::Live || section.paused_at.is_some() {
+                return None;
+            }
+
+            let remaining = i64::from(current_section_remaining_seconds.max(0));
+            Some(server_now + Duration::seconds(remaining))
+        });
 
     ExamSessionRuntime {
         id: row.id.to_string(),
@@ -1965,6 +1982,8 @@ fn runtime_hydration_row_to_runtime(
         active_section_key: row.active_section_key,
         current_section_key: row.current_section_key,
         current_section_remaining_seconds,
+        current_section_deadline_at,
+        server_now,
         waiting_for_next_section: row.waiting_for_next_section,
         is_overrun,
         total_paused_seconds: row.total_paused_seconds,

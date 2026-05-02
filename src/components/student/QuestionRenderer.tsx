@@ -88,6 +88,7 @@ export function QuestionRenderer({
   hideDiagramReference = false,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
+  const latestStringArrayAnswerRef = React.useRef<string[]>(stringArrayAnswer);
   const isCompactPane = tabletMode && compactPane;
   const fieldIndentClass = tabletMode ? 'ml-0' : 'ml-9';
   const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
@@ -129,16 +130,23 @@ export function QuestionRenderer({
     total: number,
     interactionType: StudentAnswerMutationMeta['interactionType'] = 'typing',
   ) => {
+    const sourceSlots = latestStringArrayAnswerRef.current;
     const next = Array.from({ length: total }, (_, candidateIndex) =>
-      candidateIndex === index ? value : (stringArrayAnswer[candidateIndex] ?? ''),
+      candidateIndex === index ? value : (sourceSlots[candidateIndex] ?? ''),
     );
+    latestStringArrayAnswerRef.current = next;
     onChange(next, {
       interactionType,
       slotIndex: index,
       slotId: getSlotId(index, `${block.id}:${index}`),
       slotCount: total,
+      slotValue: value,
     });
   };
+
+  React.useEffect(() => {
+    latestStringArrayAnswerRef.current = stringArrayAnswer;
+  }, [stringArrayAnswer]);
 
   const renderTextField = (
     slotId: string,

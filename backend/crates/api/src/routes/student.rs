@@ -645,6 +645,14 @@ pub async fn record_heartbeat(
     let ack_only =
         event_type == "heartbeat" && query.response_mode != Some(HeartbeatResponseMode::Full);
     let attempt = service.record_heartbeat(schedule_id, req).await?;
+    let runtime = if query.response_mode == Some(HeartbeatResponseMode::Full) {
+        service
+            .get_live_session_context(schedule_id, None, None, None)
+            .await?
+            .runtime
+    } else {
+        None
+    };
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
     state
         .telemetry
@@ -668,6 +676,7 @@ pub async fn record_heartbeat(
     Ok(ApiResponse::success_with_request_id(
         StudentHeartbeatResponse {
             attempt: if ack_only { None } else { Some(attempt) },
+            runtime,
             refreshed_attempt_credential: auth_service
                 .maybe_refresh_attempt_token(&principal.authorization)
                 .await

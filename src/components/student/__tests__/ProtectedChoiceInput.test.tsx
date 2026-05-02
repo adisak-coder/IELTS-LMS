@@ -88,4 +88,31 @@ describe('ProtectedChoiceInput', () => {
     expect((handleChange.mock.calls[0]?.[0] as { target?: { checked?: unknown } }).target?.checked).toBe(true);
     expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
   });
+
+  it('commits a deferred focusout rescue when iPad applies a late checked value', async () => {
+    vi.useFakeTimers();
+    const handleChange = vi.fn();
+
+    render(
+      <ProtectedChoiceInput
+        type="checkbox"
+        checked={false}
+        onChange={handleChange}
+        aria-label="choice answer"
+      />,
+    );
+
+    const input = screen.getByRole('checkbox', { name: 'choice answer' }) as HTMLInputElement;
+    fireEvent(input, new FocusEvent('focusout', { bubbles: true }));
+    expect(handleChange).not.toHaveBeenCalled();
+
+    input.checked = true;
+    vi.advanceTimersByTime(0);
+    await Promise.resolve();
+
+    expect(handleChange).toHaveBeenCalledTimes(1);
+    expect((handleChange.mock.calls[0]?.[0] as { target?: { checked?: unknown } }).target?.checked).toBe(true);
+    expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
 });

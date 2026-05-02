@@ -159,6 +159,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
+  const latestAnswersRef = useRef(runtimeState.answers);
   const moduleSubmitInFlightRef = useRef<Promise<void> | null>(null);
   const moduleSubmitFingerprintRef = useRef<string | null>(null);
   const priorTimeRemainingRef = useRef<number | null>(null);
@@ -219,6 +220,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
 
   useEffect(() => {
     runtimeStateRef.current = runtimeState;
+    latestAnswersRef.current = runtimeState.answers;
   }, [runtimeState]);
 
   const flushAndSubmitCurrentModuleWithRetry = useMemo(() => {
@@ -710,8 +712,48 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     if (runtimeState.blocking.reason === 'storage_unavailable') {
       return;
     }
-    runtimeActions.setAnswer(questionId, answer);
-    attemptActions.persistAnswer(questionId, answer, meta);
+    const hasSlotIntent =
+      typeof meta?.slotIndex === 'number' &&
+      Number.isInteger(meta.slotIndex) &&
+      meta.slotIndex >= 0;
+    let resolvedAnswer = answer;
+
+    if (hasSlotIntent) {
+      const slotIndex = meta!.slotIndex as number;
+      const currentValue = latestAnswersRef.current[questionId];
+      const currentSlots = Array.isArray(currentValue) ? currentValue : [];
+      const requestedSlotCount =
+        typeof meta?.slotCount === 'number' &&
+        Number.isInteger(meta.slotCount) &&
+        meta.slotCount > 0
+          ? meta.slotCount
+          : currentSlots.length;
+      const nextSlotCount = Math.max(requestedSlotCount, currentSlots.length, slotIndex + 1);
+      const nextSlots = Array.from({ length: nextSlotCount }, (_, index) => currentSlots[index] ?? '');
+      let nextSlotValue =
+        typeof meta?.slotValue === 'string'
+          ? meta.slotValue
+          : '';
+      if (nextSlotValue === '' && Array.isArray(answer)) {
+        const candidate = answer[slotIndex];
+        nextSlotValue = typeof candidate === 'string' ? candidate : '';
+      } else if (nextSlotValue === '' && typeof answer === 'string') {
+        nextSlotValue = answer;
+      } else if (nextSlotValue === '' && (answer === null || answer === undefined)) {
+        nextSlotValue = '';
+      } else if (nextSlotValue === '') {
+        nextSlotValue = String(answer);
+      }
+      nextSlots[slotIndex] = nextSlotValue;
+      resolvedAnswer = nextSlots;
+    }
+
+    latestAnswersRef.current = {
+      ...latestAnswersRef.current,
+      [questionId]: resolvedAnswer,
+    };
+    runtimeActions.setAnswer(questionId, resolvedAnswer);
+    attemptActions.persistAnswer(questionId, resolvedAnswer, meta);
   };
 
   const handleFlagToggle = (questionId: string) => {

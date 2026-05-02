@@ -82,4 +82,30 @@ describe('ProtectedSelect', () => {
     expect((handleChange.mock.calls[0]?.[0] as { target?: { value?: unknown } }).target?.value).toBe('B');
     expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
   });
+
+  it('commits a deferred focusout rescue when iPad applies a late selected value', async () => {
+    vi.useFakeTimers();
+    const handleChange = vi.fn();
+
+    render(
+      <ProtectedSelect value="A" onChange={handleChange} aria-label="select answer">
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+      </ProtectedSelect>,
+    );
+
+    const select = screen.getByRole('combobox', { name: 'select answer' }) as HTMLSelectElement;
+    fireEvent(select, new FocusEvent('focusout', { bubbles: true }));
+    expect(handleChange).not.toHaveBeenCalled();
+
+    select.value = 'C';
+    vi.advanceTimersByTime(0);
+    await Promise.resolve();
+
+    expect(handleChange).toHaveBeenCalledTimes(1);
+    expect((handleChange.mock.calls[0]?.[0] as { target?: { value?: unknown } }).target?.value).toBe('C');
+    expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
 });

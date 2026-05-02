@@ -125,6 +125,8 @@ pub struct ExamSessionRuntime {
     pub active_section_key: Option<String>,
     pub current_section_key: Option<String>,
     pub current_section_remaining_seconds: i32,
+    pub current_section_deadline_at: Option<DateTime<Utc>>,
+    pub server_now: DateTime<Utc>,
     pub waiting_for_next_section: bool,
     pub is_overrun: bool,
     pub total_paused_seconds: i32,

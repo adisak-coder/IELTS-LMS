@@ -143,6 +143,8 @@ type BackendExamSessionRuntime = {
   activeSectionKey?: ModuleType | null | undefined;
   currentSectionKey?: ModuleType | null | undefined;
   currentSectionRemainingSeconds: number;
+  currentSectionDeadlineAt?: string | null | undefined;
+  serverNow?: string | undefined;
   waitingForNextSection: boolean;
   isOverrun: boolean;
   totalPausedSeconds: number;
@@ -504,6 +506,8 @@ export function mapBackendRuntime(
     activeSectionKey: payload.activeSectionKey ?? null,
     currentSectionKey: payload.currentSectionKey ?? null,
     currentSectionRemainingSeconds: payload.currentSectionRemainingSeconds,
+    currentSectionDeadlineAt: payload.currentSectionDeadlineAt ?? null,
+    serverNow: payload.serverNow ?? payload.updatedAt,
     waitingForNextSection: payload.waitingForNextSection,
     isOverrun: payload.isOverrun,
     totalPausedSeconds: payload.totalPausedSeconds,

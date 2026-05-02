@@ -3890,6 +3890,8 @@ mod tests {
             active_section_key: None,
             current_section_key: None,
             current_section_remaining_seconds: 0,
+            current_section_deadline_at: None,
+            server_now: now,
             waiting_for_next_section: false,
             is_overrun: false,
             total_paused_seconds: 0,

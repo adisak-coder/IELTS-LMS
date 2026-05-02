@@ -177,4 +177,34 @@ describe('ProtectedInput', () => {
     expect(handleChange).toHaveBeenCalledTimes(1);
     expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
   });
+
+  it('commits a deferred focusout rescue when iPad applies a late DOM value after blur', async () => {
+    vi.useFakeTimers();
+    const handleChange = vi.fn();
+
+    render(
+      <ProtectedInput
+        security={{ preventAutofill: true, preventAutocorrect: true } as any}
+        name="answer"
+        value="abc"
+        onChange={handleChange}
+      />,
+    );
+
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    input.value = 'abcd';
+    fireEvent(input, new FocusEvent('focusout', { bubbles: true }));
+    expect(handleChange).toHaveBeenCalledTimes(1);
+
+    input.value = 'abcde';
+    vi.advanceTimersByTime(0);
+    await Promise.resolve();
+
+    expect(handleChange).toHaveBeenCalledTimes(2);
+    expect((handleChange.mock.calls[1]?.[0] as { target?: { value?: unknown } }).target?.value).toBe(
+      'abcde',
+    );
+    expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
 });

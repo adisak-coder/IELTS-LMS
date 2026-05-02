@@ -22,12 +22,16 @@ use crate::{
     state::AppState,
 };
 use ielts_backend_application::auth::AuthService;
+use ielts_backend_application::scheduling::SchedulingService;
 use ielts_backend_domain::auth::UserRole;
 use ielts_backend_domain::schedule::LiveUpdateEvent;
+use ielts_backend_infrastructure::actor_context::{ActorContext, ActorRole};
+use uuid::Uuid;
 
 #[derive(Debug)]
 enum OutboundItem {
     TextWithAck(String, oneshot::Sender<()>),
+    RawText(String),
     Pong(Vec<u8>),
     Event(LiveUpdateEvent),
 }
@@ -55,6 +59,7 @@ where
 pub struct LiveUpdatesQuery {
     pub schedule_id: Option<String>,
     pub attempt_id: Option<String>,
+    pub last_seen_runtime_revision: Option<i64>,
 }
 
 pub async fn websocket_live(
@@ -127,6 +132,7 @@ pub async fn websocket_live(
                 state,
                 schedule_id,
                 attempt_id,
+                query.last_seen_runtime_revision,
                 session.user.id,
                 user_role,
             )
@@ -168,11 +174,29 @@ fn should_forward_event(
     true
 }
 
+async fn build_runtime_snapshot_frame(state: &AppState, schedule_id: &str) -> Option<String> {
+    let schedule_uuid = Uuid::parse_str(schedule_id).ok()?;
+    let actor = ActorContext::new(Uuid::nil().to_string(), ActorRole::Admin);
+    let runtime = SchedulingService::new(state.db_pool())
+        .get_runtime(&actor, schedule_uuid)
+        .await
+        .ok()?;
+    Some(
+        json!({
+            "type": "runtime_snapshot",
+            "scheduleId": schedule_id,
+            "runtime": runtime,
+        })
+        .to_string(),
+    )
+}
+
 async fn handle_socket(
     mut socket: WebSocket,
     state: AppState,
     schedule_id: Option<String>,
     attempt_id: Option<String>,
+    last_seen_runtime_revision: Option<i64>,
     user_id: String,
     user_role: UserRole,
 ) {
@@ -249,6 +273,18 @@ async fn handle_socket(
                                 break;
                             }
                             let _ = ack.send(());
+                        }
+                        Some(OutboundItem::RawText(payload)) => {
+                            let disconnecting = writer_disconnect_reason.lock().unwrap().is_some();
+                            if disconnecting {
+                                continue;
+                            }
+                            if send_with_timeout(&mut ws_sender, Message::Text(payload), write_timeout)
+                                .await
+                                .is_err()
+                            {
+                                break;
+                            }
                         }
                         Some(OutboundItem::Pong(payload)) => {
                             let disconnecting = writer_disconnect_reason.lock().unwrap().is_some();
@@ -375,6 +411,27 @@ async fn handle_socket(
         }
     }
 
+    if let Some(ref sid) = schedule_id {
+        if let Some(frame) = build_runtime_snapshot_frame(&state, sid).await {
+            let should_send = if let Some(last_seen) = last_seen_runtime_revision {
+                serde_json::from_str::<serde_json::Value>(&frame)
+                    .ok()
+                    .and_then(|value| {
+                        value
+                            .get("runtime")
+                            .and_then(|runtime| runtime.get("revision"))
+                            .and_then(|revision| revision.as_i64())
+                    })
+                    .is_some_and(|revision| revision > last_seen)
+            } else {
+                true
+            };
+            if should_send {
+                let _ = outbound_tx.try_send(OutboundItem::RawText(frame));
+            }
+        }
+    }
+
     let mut saturation_since: Option<Instant> = None;
 
     loop {
@@ -443,6 +500,32 @@ async fn handle_socket(
                             attempt_id.as_deref(),
                         ) {
                             continue;
+                        }
+
+                        if event.kind == "schedule_runtime" {
+                            if let Some(frame) = build_runtime_snapshot_frame(&state, &event.id).await {
+                                match outbound_tx.try_send(OutboundItem::RawText(frame)) {
+                                    Ok(()) => {
+                                        saturation_since = None;
+                                    }
+                                    Err(mpsc::error::TrySendError::Full(_)) => {
+                                        if saturation_since.is_none() {
+                                            saturation_since = Some(Instant::now());
+                                        }
+                                        notify.notify_one();
+
+                                        if saturation_since.is_some_and(|since| since.elapsed() >= slow_client_disconnect) {
+                                            *disconnect_reason.lock().unwrap() = Some(DisconnectReason {
+                                                code: 1008,
+                                                reason: "slow client".to_owned(),
+                                            });
+                                            notify.notify_one();
+                                            break;
+                                        }
+                                    }
+                                    Err(mpsc::error::TrySendError::Closed(_)) => break,
+                                }
+                            }
                         }
 
                         match outbound_tx.try_send(OutboundItem::Event(event)) {

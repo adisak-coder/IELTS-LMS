@@ -25,23 +25,37 @@ export function ProtectedInput({
   const attemptContext = useOptionalStudentAttempt();
   const resolvedSessionId = sessionId ?? attemptContext?.state.attempt?.scheduleId;
   const resolvedStudentId = studentId ?? attemptContext?.state.attemptId ?? undefined;
+  const { onInput: userOnInput, onChange: userOnChange, onBlur: userOnBlur, ...restInputProps } =
+    inputProps;
   const inputRef = useRef<HTMLInputElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
   const lastRescuedDomValueRef = useRef<string | null>(null);
+  const latestDomValueRef = useRef<string>('');
+  const deferredRescueTimerRef = useRef<number | null>(null);
+  const onChangeRef = useRef<typeof userOnChange>(userOnChange);
+  const controlledValueRef = useRef(inputProps.value);
+  const flushAnswerDurabilityNowRef = useRef(attemptContext?.actions.flushAnswerDurabilityNow);
+
+  useEffect(() => {
+    onChangeRef.current = userOnChange;
+    controlledValueRef.current = inputProps.value;
+    flushAnswerDurabilityNowRef.current = attemptContext?.actions.flushAnswerDurabilityNow;
+  }, [attemptContext, inputProps.value, userOnChange]);
 
   useEffect(() => {
     const input = inputRef.current;
     if (!input) return;
+    latestDomValueRef.current = input.value;
 
     const maybeCommitDomValue = () => {
       // Protect against iPad/Safari edge cases where the DOM value has advanced,
       // but React onChange hasn't fired yet before backgrounding/pagehide.
-      if (typeof inputProps.onChange !== 'function') return;
-      if (typeof inputProps.value !== 'string') return;
+      if (typeof onChangeRef.current !== 'function') return;
+      if (typeof controlledValueRef.current !== 'string') return;
 
-      const domValue = input.value;
-      const controlledValue = inputProps.value;
+      const domValue = latestDomValueRef.current || input.value;
+      const controlledValue = controlledValueRef.current;
       if (domValue === controlledValue) {
         lastRescuedDomValueRef.current = null;
         return;
@@ -52,40 +66,69 @@ export function ProtectedInput({
 
       // Fire the parent's onChange with a minimal event-like object.
       // This keeps the controlled value in sync and allows downstream persistence to capture it.
-      (inputProps.onChange as unknown as (event: unknown) => void)({
+      (onChangeRef.current as unknown as (event: unknown) => void)({
         target: input,
         currentTarget: input,
         type: 'change',
       });
       lastRescuedDomValueRef.current = domValue;
-      attemptContext?.actions.flushAnswerDurabilityNow?.();
+      flushAnswerDurabilityNowRef.current?.();
+    };
+
+    const scheduleDeferredDomCommit = () => {
+      if (deferredRescueTimerRef.current !== null) {
+        window.clearTimeout(deferredRescueTimerRef.current);
+      }
+      deferredRescueTimerRef.current = window.setTimeout(() => {
+        deferredRescueTimerRef.current = null;
+        latestDomValueRef.current = input.value;
+        maybeCommitDomValue();
+      }, 0);
+    };
+
+    const handleNativeInput = () => {
+      latestDomValueRef.current = input.value;
+    };
+
+    const handleNativeChange = () => {
+      latestDomValueRef.current = input.value;
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'hidden') return;
+      latestDomValueRef.current = input.value;
       maybeCommitDomValue();
     };
 
     const handlePageHide = () => {
+      latestDomValueRef.current = input.value;
       maybeCommitDomValue();
     };
 
     const handleFreeze = () => {
+      latestDomValueRef.current = input.value;
       maybeCommitDomValue();
     };
 
     const handleFocusOut = () => {
+      latestDomValueRef.current = input.value;
       maybeCommitDomValue();
+      scheduleDeferredDomCommit();
     };
 
     const handleBlur = () => {
+      latestDomValueRef.current = input.value;
       maybeCommitDomValue();
+      scheduleDeferredDomCommit();
     };
 
     const handleBeforeUnload = () => {
+      latestDomValueRef.current = input.value;
       maybeCommitDomValue();
     };
 
+    input.addEventListener('input', handleNativeInput);
+    input.addEventListener('change', handleNativeChange);
     document.addEventListener('focusout', handleFocusOut, true);
     input.addEventListener('blur', handleBlur);
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -94,6 +137,12 @@ export function ProtectedInput({
     document.addEventListener('freeze', handleFreeze as EventListener);
 
     return () => {
+      if (deferredRescueTimerRef.current !== null) {
+        window.clearTimeout(deferredRescueTimerRef.current);
+        deferredRescueTimerRef.current = null;
+      }
+      input.removeEventListener('input', handleNativeInput);
+      input.removeEventListener('change', handleNativeChange);
       document.removeEventListener('focusout', handleFocusOut, true);
       input.removeEventListener('blur', handleBlur);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -101,7 +150,7 @@ export function ProtectedInput({
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('freeze', handleFreeze as EventListener);
     };
-  }, [attemptContext, inputProps.onChange, inputProps.value]);
+  }, []);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -127,6 +176,7 @@ export function ProtectedInput({
       const target = event.target as HTMLInputElement;
       const newValue = target.value;
       const previousValue = previousValueRef.current;
+      latestDomValueRef.current = newValue;
       
       // Check for large value changes without preceding keydown (suspected paste/autofill)
       const valueChange = Math.abs(newValue.length - previousValue.length);
@@ -167,9 +217,21 @@ export function ProtectedInput({
   return (
     <input
       ref={inputRef}
-      {...inputProps}
+      {...restInputProps}
+      onInput={(event) => {
+        latestDomValueRef.current = event.currentTarget.value;
+        userOnInput?.(event);
+      }}
+      onChange={(event) => {
+        latestDomValueRef.current = event.currentTarget.value;
+        userOnChange?.(event);
+      }}
+      onBlur={(event) => {
+        latestDomValueRef.current = event.currentTarget.value;
+        userOnBlur?.(event);
+      }}
       className={className}
-      autoComplete={security.preventAutofill ? 'off' : inputProps.autoComplete}
+      autoComplete={security.preventAutofill ? 'off' : restInputProps.autoComplete}
       spellCheck={!security.preventAutocorrect}
       autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
       autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}

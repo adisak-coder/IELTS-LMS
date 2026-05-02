@@ -148,6 +148,7 @@ interface BackendMutationBatchResponse {
 
 interface BackendHeartbeatResponse {
   attempt?: BackendStudentAttempt | null | undefined;
+  runtime?: unknown;
   refreshedAttemptCredential?: BackendAttemptCredential | null | undefined;
 }
 

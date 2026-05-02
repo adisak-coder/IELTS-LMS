@@ -6,6 +6,7 @@ import React, {
   useMemo,
   useRef,
   useReducer,
+  useState,
   type ReactNode,
 } from 'react';
 import {
@@ -222,6 +223,45 @@ function getRuntimeSectionExtensionMinutes(
 
   const section = runtimeSnapshot.sections.find((candidate) => candidate.sectionKey === sectionKey);
   return typeof section?.extensionMinutes === 'number' ? section.extensionMinutes : null;
+}
+
+function resolveRuntimeDisplayRemainingSeconds(options: {
+  runtimeBacked: boolean;
+  runtimeSnapshot: ExamSessionRuntime | null;
+  phase: ExamPhase;
+  fallbackSeconds: number;
+  clockOffsetMs: number;
+  nowMs: number;
+}): number | null {
+  if (!options.runtimeBacked || options.phase !== 'exam') {
+    return null;
+  }
+
+  const runtime = options.runtimeSnapshot;
+  if (!runtime || runtime.status !== 'live') {
+    return options.fallbackSeconds;
+  }
+
+  const sectionKey = runtime.currentSectionKey;
+  const activeSection = sectionKey
+    ? runtime.sections.find((section) => section.sectionKey === sectionKey)
+    : null;
+  if (!activeSection || activeSection.status !== 'live' || activeSection.pausedAt) {
+    return options.fallbackSeconds;
+  }
+
+  if (!runtime.currentSectionDeadlineAt) {
+    return options.fallbackSeconds;
+  }
+
+  const deadlineMs = Date.parse(runtime.currentSectionDeadlineAt);
+  if (!Number.isFinite(deadlineMs)) {
+    return options.fallbackSeconds;
+  }
+
+  const adjustedNowMs = options.nowMs + options.clockOffsetMs;
+  const remainingMs = Math.max(0, deadlineMs - adjustedNowMs);
+  return Math.max(0, Math.ceil(remainingMs / 1_000));
 }
 
 function deriveBlockingState(
@@ -847,6 +887,8 @@ export function StudentRuntimeProvider({
     runtimeReducer,
     createInitialRuntimeState(state, runtimeBacked, runtimeSnapshot, attemptSnapshot),
   );
+  const [clockOffsetMs, setClockOffsetMs] = useState(0);
+  const [derivedClockNowMs, setDerivedClockNowMs] = useState(() => Date.now());
   const lastHydratedAttemptRef = useRef<string | null>(
     attemptSnapshot
       ? `${attemptSnapshot.id}:${attemptSnapshot.updatedAt}:${getDroppedMutationMarker(attemptSnapshot.recovery.lastDroppedMutations) ?? ''}`
@@ -1044,6 +1086,43 @@ export function StudentRuntimeProvider({
   ]);
 
   useEffect(() => {
+    if (!runtimeBacked || !runtimeSnapshot?.serverNow) {
+      return;
+    }
+
+    const serverNowMs = Date.parse(runtimeSnapshot.serverNow);
+    if (!Number.isFinite(serverNowMs)) {
+      return;
+    }
+
+    const sampledOffsetMs = serverNowMs - Date.now();
+    setClockOffsetMs((previous) => {
+      if (!Number.isFinite(previous)) {
+        return sampledOffsetMs;
+      }
+      const drift = sampledOffsetMs - previous;
+      if (Math.abs(drift) > 5_000) {
+        return sampledOffsetMs;
+      }
+      return previous + drift * 0.25;
+    });
+  }, [runtimeBacked, runtimeSnapshot?.serverNow]);
+
+  useEffect(() => {
+    if (!runtimeBacked || runtimeState.phase !== 'exam') {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      setDerivedClockNowMs(Date.now());
+    }, 250);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [runtimeBacked, runtimeState.phase]);
+
+  useEffect(() => {
     if (
       runtimeBacked ||
       runtimeState.phase !== 'exam' ||
@@ -1091,8 +1170,18 @@ export function StudentRuntimeProvider({
     ],
   );
   const runtimeStatus = runtimeBacked ? runtimeSnapshot?.status ?? 'not_started' : null;
-  const displayTimeRemaining =
-    runtimeState.phase === 'exam' ? runtimeState.timeRemaining : undefined;
+  const displayTimeRemaining = runtimeState.phase === 'exam'
+    ? runtimeBacked
+      ? resolveRuntimeDisplayRemainingSeconds({
+          runtimeBacked,
+          runtimeSnapshot,
+          phase: runtimeState.phase,
+          fallbackSeconds: runtimeState.timeRemaining,
+          clockOffsetMs,
+          nowMs: derivedClockNowMs,
+        }) ?? runtimeState.timeRemaining
+      : runtimeState.timeRemaining
+    : undefined;
   const unansweredSubmissionPolicy = state.config.progression.unansweredSubmissionPolicy ?? 'confirm';
   const answeredSlots = useMemo(
     () => countAnsweredQuestions(allQuestions, runtimeState.answers),
@@ -1108,48 +1197,6 @@ export function StudentRuntimeProvider({
     (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening') &&
     hasUnanswered &&
     unansweredSubmissionPolicy !== 'allow';
-
-  useEffect(() => {
-    if (!runtimeBacked) {
-      return;
-    }
-
-    if (runtimeState.phase !== 'exam' || runtimeState.timeRemaining <= 0) {
-      return;
-    }
-
-    if (blocking.active) {
-      return;
-    }
-
-    if (runtimeStatus !== 'live') {
-      return;
-    }
-
-    const activeSection = runtimeSnapshot?.currentSectionKey
-      ? runtimeSnapshot.sections.find(
-          (section) => section.sectionKey === runtimeSnapshot.currentSectionKey,
-        )
-      : null;
-    if (activeSection?.status === 'paused') {
-      return;
-    }
-
-    const timerId = window.setInterval(() => {
-      dispatch({ type: 'tick' });
-    }, 1_000);
-
-    return () => {
-      window.clearInterval(timerId);
-    };
-  }, [
-    blocking.active,
-    runtimeBacked,
-    runtimeSnapshot,
-    runtimeState.phase,
-    runtimeState.timeRemaining,
-    runtimeStatus,
-  ]);
 
   const setPhase = useCallback((phase: ExamPhase) => {
     dispatch({ type: 'set_phase', phase });

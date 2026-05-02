@@ -364,6 +364,7 @@ export function useStudentSessionRouteData(
   const [schedule, setSchedule] = useState<ExamSchedule | null>(null);
   const [state, setState] = useState<ExamState | null>(null);
   const [runtimeSnapshot, setRuntimeSnapshot] = useState<ExamSessionRuntime | null>(null);
+  const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const candidateId = useMemo(() => normalizeWcodeCandidateId(studentId), [studentId]);
@@ -679,9 +680,55 @@ export function useStudentSessionRouteData(
     [attemptSnapshot?.id, refreshBackendSessionSnapshot, scheduleId],
   );
 
+  const handleRuntimeSnapshot = useCallback(
+    (payload: { scheduleId?: string; runtime: unknown }) => {
+      if (!scheduleId || !schedule) {
+        return;
+      }
+      if (payload.scheduleId && payload.scheduleId !== scheduleId) {
+        return;
+      }
+
+      try {
+        const mappedRuntime = mapBackendRuntime(
+          payload.runtime as Parameters<typeof mapBackendRuntime>[0],
+          schedule,
+        );
+        runtimeSnapshotRef.current = mappedRuntime;
+        setRuntimeSnapshot(mappedRuntime);
+
+        const runtimeRecord = payload.runtime as Record<string, unknown>;
+        const runtimeFreshness: LiveSnapshotFreshness = {
+          attempt: {
+            revision: appliedFreshnessRef.current?.attempt.revision ?? null,
+            updatedAtMs: appliedFreshnessRef.current?.attempt.updatedAtMs ?? null,
+          },
+          runtime: {
+            revision: parseFiniteNumber(runtimeRecord['revision']),
+            updatedAtMs: parseIsoTimestampMs(runtimeRecord['updatedAt']),
+          },
+        };
+        appliedFreshnessRef.current = mergeLiveSnapshotFreshness(
+          appliedFreshnessRef.current,
+          runtimeFreshness,
+          {
+            applyAttempt: false,
+            applyRuntime: true,
+          },
+        );
+      } catch {
+        // Ignore malformed snapshots and continue with pull-based refresh.
+      }
+    },
+    [schedule, scheduleId],
+  );
+
   useLiveUpdates({
     ...(scheduleId ? { scheduleId } : {}),
     ...(attemptSnapshot?.id ? { attemptId: attemptSnapshot.id } : {}),
+    ...(Number.isInteger(runtimeSnapshot?.revision)
+      ? { lastSeenRuntimeRevision: runtimeSnapshot?.revision as number }
+      : {}),
     enabled: Boolean(
       scheduleId &&
         candidateId &&
@@ -689,8 +736,29 @@ export function useStudentSessionRouteData(
         authStatus === 'authenticated' &&
         !error,
     ),
+    debounceMs: 0,
+    onConnected: () => {
+      setLiveSocketConnected(true);
+      void refreshBackendSessionSnapshot();
+    },
+    onDisconnected: () => {
+      setLiveSocketConnected(false);
+    },
+    onRuntimeSnapshot: handleRuntimeSnapshot,
     onEvent: handleLiveUpdate,
   });
+
+  useEffect(() => {
+    if (
+      !scheduleId ||
+      !candidateId ||
+      !isWcodeCandidateId(candidateId) ||
+      authStatus !== 'authenticated' ||
+      Boolean(error)
+    ) {
+      setLiveSocketConnected(false);
+    }
+  }, [authStatus, candidateId, error, scheduleId]);
 
   const loadStudentData = useCallback(async () => {
     if (!scheduleId) {
@@ -826,8 +894,16 @@ export function useStudentSessionRouteData(
     void loadStudentData();
   }, [loadStudentData]);
 
-  const pollIntervalMs = runtimeSnapshot?.status === 'live' ? 5_000 : 15_000;
-  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live' ? 8_000 : 25_000;
+  const pollIntervalMs = runtimeSnapshot?.status === 'live'
+    ? liveSocketConnected
+      ? 20_000
+      : 1_500
+    : 15_000;
+  const pollMaxIntervalMs = runtimeSnapshot?.status === 'live'
+    ? liveSocketConnected
+      ? 30_000
+      : 3_000
+    : 25_000;
 
   useAsyncPolling(
     async () => {

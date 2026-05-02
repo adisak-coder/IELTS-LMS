@@ -11,9 +11,14 @@ export interface LiveUpdateEvent {
 type LiveUpdateFrame =
   | { type: 'connected'; scheduleId?: string | null; attemptId?: string | null }
   | { type: 'error'; code?: string; message?: string }
+  | { type: 'runtime_snapshot'; scheduleId?: string | null; runtime?: unknown }
   | LiveUpdateEvent;
 
-function buildLiveUpdatesUrl(options: { scheduleId?: string; attemptId?: string }) {
+function buildLiveUpdatesUrl(options: {
+  scheduleId?: string;
+  attemptId?: string;
+  lastSeenRuntimeRevision?: number;
+}) {
   if (typeof window === 'undefined') {
     return null;
   }
@@ -28,6 +33,9 @@ function buildLiveUpdatesUrl(options: { scheduleId?: string; attemptId?: string 
   }
   if (options.attemptId) {
     url.searchParams.set('attemptId', options.attemptId);
+  }
+  if (Number.isInteger(options.lastSeenRuntimeRevision)) {
+    url.searchParams.set('lastSeenRuntimeRevision', String(options.lastSeenRuntimeRevision));
   }
 
   return url.toString();
@@ -51,8 +59,12 @@ function isLiveUpdateEvent(frame: unknown): frame is LiveUpdateEvent {
 export function useLiveUpdates(options: {
   scheduleId?: string;
   attemptId?: string;
+  lastSeenRuntimeRevision?: number;
   enabled?: boolean;
   debounceMs?: number;
+  onConnected?: () => void;
+  onDisconnected?: () => void;
+  onRuntimeSnapshot?: (payload: { scheduleId?: string; runtime: unknown }) => void;
   onEvent: (event: LiveUpdateEvent) => void;
 }) {
   const enabled = options.enabled ?? true;
@@ -64,15 +76,33 @@ export function useLiveUpdates(options: {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectAttemptRef = useRef(0);
   const shouldReconnectRef = useRef(true);
+  const onConnectedRef = useRef(options.onConnected);
+  const onDisconnectedRef = useRef(options.onDisconnected);
+  const onRuntimeSnapshotRef = useRef(options.onRuntimeSnapshot);
 
   useEffect(() => {
     onEventRef.current = options.onEvent;
   }, [options.onEvent]);
 
   useEffect(() => {
+    onConnectedRef.current = options.onConnected;
+  }, [options.onConnected]);
+
+  useEffect(() => {
+    onDisconnectedRef.current = options.onDisconnected;
+  }, [options.onDisconnected]);
+
+  useEffect(() => {
+    onRuntimeSnapshotRef.current = options.onRuntimeSnapshot;
+  }, [options.onRuntimeSnapshot]);
+
+  useEffect(() => {
     const url = buildLiveUpdatesUrl({
       ...(options.scheduleId ? { scheduleId: options.scheduleId } : {}),
       ...(options.attemptId ? { attemptId: options.attemptId } : {}),
+      ...(Number.isInteger(options.lastSeenRuntimeRevision)
+        ? { lastSeenRuntimeRevision: options.lastSeenRuntimeRevision }
+        : {}),
     });
     if (!enabled || !url) {
       return () => undefined;
@@ -100,6 +130,15 @@ export function useLiveUpdates(options: {
     };
 
     const flushDebounced = () => {
+      if (debounceMs <= 0) {
+        const event = lastEventRef.current;
+        lastEventRef.current = null;
+        if (event) {
+          onEventRef.current(event);
+        }
+        return;
+      }
+
       if (debounceTimerRef.current) {
         window.clearTimeout(debounceTimerRef.current);
       }
@@ -136,6 +175,18 @@ export function useLiveUpdates(options: {
           socketRef.current = null;
           return;
         }
+        if (type === 'runtime_snapshot') {
+          const runtime = (frame as { runtime?: unknown }).runtime;
+          if (!runtime) {
+            return;
+          }
+          const scheduleId = (frame as { scheduleId?: unknown }).scheduleId;
+          onRuntimeSnapshotRef.current?.({
+            runtime,
+            ...(typeof scheduleId === 'string' ? { scheduleId } : {}),
+          });
+          return;
+        }
       }
 
       if (!isLiveUpdateEvent(frame)) {
@@ -169,10 +220,12 @@ export function useLiveUpdates(options: {
 
       socket.onopen = () => {
         reconnectAttemptRef.current = 0;
+        onConnectedRef.current?.();
       };
       socket.onmessage = handleMessage;
       socket.onclose = () => {
         socketRef.current = null;
+        onDisconnectedRef.current?.();
         scheduleReconnect();
       };
       socket.onerror = () => {
@@ -197,5 +250,5 @@ export function useLiveUpdates(options: {
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [debounceMs, enabled, options.attemptId, options.scheduleId]);
+  }, [debounceMs, enabled, options.attemptId, options.lastSeenRuntimeRevision, options.scheduleId]);
 }

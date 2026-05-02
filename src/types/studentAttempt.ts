@@ -12,6 +12,7 @@ export interface StudentAnswerMutationMeta {
   slotIndex?: number | undefined;
   slotId?: string | undefined;
   slotCount?: number | undefined;
+  slotValue?: string | undefined;
 }
 
 export type AttemptSyncState =

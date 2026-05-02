@@ -826,6 +826,7 @@ impl SchedulingService {
         &self,
         runtime_row: RuntimeRow,
     ) -> Result<ExamSessionRuntime, SchedulingError> {
+        let server_now = Utc::now();
         let sections = sqlx::query_as::<_, RuntimeSectionRow>(
             "SELECT * FROM exam_session_runtime_sections WHERE runtime_id = ? ORDER BY section_order ASC",
         )
@@ -841,7 +842,7 @@ impl SchedulingService {
                 runtime_row.current_section_key.as_deref(),
                 runtime_row.active_section_key.as_deref(),
                 &sections,
-                Utc::now(),
+                server_now,
             )
         } else {
             None
@@ -852,6 +853,22 @@ impl SchedulingService {
         let is_overrun = computed_time
             .map(|computed| computed.is_overrun)
             .unwrap_or(runtime_row.is_overrun);
+        let current_section_deadline_at = runtime_row
+            .current_section_key
+            .as_deref()
+            .and_then(|section_key| {
+                sections
+                    .iter()
+                    .find(|section| section.section_key == section_key)
+            })
+            .and_then(|section| {
+                if section.status != SectionRuntimeStatus::Live || section.paused_at.is_some() {
+                    return None;
+                }
+
+                let remaining = i64::from(current_section_remaining_seconds.max(0));
+                Some(server_now + Duration::seconds(remaining))
+            });
 
         Ok(ExamSessionRuntime {
             id: runtime_row.id.to_string(),
@@ -864,6 +881,8 @@ impl SchedulingService {
             active_section_key: runtime_row.active_section_key,
             current_section_key: runtime_row.current_section_key,
             current_section_remaining_seconds,
+            current_section_deadline_at,
+            server_now,
             waiting_for_next_section: runtime_row.waiting_for_next_section,
             is_overrun,
             total_paused_seconds: runtime_row.total_paused_seconds,
@@ -1401,6 +1420,8 @@ fn build_not_started_runtime(
         active_section_key: None,
         current_section_key: None,
         current_section_remaining_seconds: 0,
+        current_section_deadline_at: None,
+        server_now: created_at,
         waiting_for_next_section: false,
         is_overrun: false,
         total_paused_seconds: 0,

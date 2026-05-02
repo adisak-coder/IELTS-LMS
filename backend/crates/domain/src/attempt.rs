@@ -205,6 +205,8 @@ pub struct StudentMutationBatchResponse {
 pub struct StudentHeartbeatResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attempt: Option<StudentAttempt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<crate::schedule::ExamSessionRuntime>,
     pub refreshed_attempt_credential: Option<crate::auth::IssueAttemptToken>,
 }
 

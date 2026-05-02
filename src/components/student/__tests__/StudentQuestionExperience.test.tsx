@@ -331,6 +331,52 @@ describe('student question experience', () => {
     );
   });
 
+  it('keeps prior slot edits when two slot changes happen before rerender', () => {
+    const onChange = vi.fn();
+    const question = {
+      id: 'sentence-1',
+      sentence: 'The library is open ____ and ____.',
+      blanks: [
+        { id: 'blank-1', correctAnswer: 'daily', position: 0 },
+        { id: 'blank-2', correctAnswer: 'late', position: 1 },
+      ],
+      answerRule: 'TWO_WORDS' as const,
+    };
+
+    const block: SentenceCompletionBlock = {
+      id: 'sentence-block-1',
+      type: 'SENTENCE_COMPLETION',
+      instruction: 'Complete the sentence.',
+      questions: [question],
+    };
+
+    render(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={7}
+        answer={['', '']}
+        onChange={onChange}
+      />,
+    );
+
+    const first = screen.getByRole('textbox', { name: 'Answer for question 7' });
+    const second = screen.getByRole('textbox', { name: 'Answer for question 8' });
+
+    fireEvent.change(first, { target: { value: 'wolf' } });
+    fireEvent.change(second, { target: { value: 'bird' } });
+
+    expect(onChange).toHaveBeenNthCalledWith(
+      2,
+      ['wolf', 'bird'],
+      expect.objectContaining({
+        slotIndex: 1,
+        slotId: 'sentence-block-1:1',
+        slotCount: 2,
+      }),
+    );
+  });
+
   it('renders table blanks inline and keeps row-major numbering stable', () => {
     const onChange = vi.fn();
     const block: TableCompletionBlock = {

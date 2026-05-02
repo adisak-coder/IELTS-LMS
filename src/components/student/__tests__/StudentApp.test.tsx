@@ -520,6 +520,168 @@ describe('StudentApp runtime-backed mode', () => {
     expect((screen.getByLabelText('Answer for question 1') as HTMLInputElement).value).toBe('LOCAL_TYPED');
   });
 
+  it('preserves sibling slot values during rapid multi-slot typing and focus switching', async () => {
+    const user = userEvent.setup();
+    const slotState: ExamState = {
+      ...state,
+      activeModule: 'reading',
+      reading: {
+        passages: [
+          {
+            id: 'p1',
+            title: 'Passage 1',
+            content: 'Seeded passage',
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SENTENCE_COMPLETION',
+                instruction: 'Complete the sentences.',
+                questions: [
+                  {
+                    id: 'q-slots',
+                    sentence: 'The ____ fox jumped over the ____ dog.',
+                    blanks: ['blank-1', 'blank-2'],
+                    correctAnswers: [['quick'], ['lazy']],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const attemptSnapshot: StudentAttempt = {
+      id: 'attempt-1',
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      phase: 'exam',
+      currentModule: 'reading',
+      currentQuestionId: 'q-slots:0',
+      answers: {},
+      writingAnswers: {},
+      flags: {},
+      violations: [],
+      proctorStatus: 'active',
+      proctorNote: null,
+      proctorUpdatedAt: null,
+      proctorUpdatedBy: null,
+      lastWarningId: null,
+      lastAcknowledgedWarningId: null,
+      integrity: {
+        preCheck: {
+          completedAt: '2026-01-01T00:00:00.000Z',
+          browserFamily: 'chrome',
+          browserVersion: 120,
+          screenDetailsSupported: true,
+          heartbeatReady: true,
+          acknowledgedSafariLimitation: false,
+          checks: [],
+        },
+        deviceFingerprintHash: null,
+        lastDisconnectAt: null,
+        lastReconnectAt: null,
+        lastHeartbeatAt: null,
+        lastHeartbeatStatus: 'idle',
+      },
+      recovery: {
+        lastRecoveredAt: null,
+        lastLocalMutationAt: null,
+        lastPersistedAt: null,
+        lastDroppedMutations: null,
+        pendingMutationCount: 0,
+        serverAcceptedThroughSeq: 0,
+        clientSessionId: null,
+        syncState: 'saved',
+      },
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const runtimeSnapshot: ExamSessionRuntime = {
+      id: 'runtime-1',
+      scheduleId: 'sched-1',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      cohortName: 'Cohort A',
+      deliveryMode: 'proctor_start',
+      status: 'live',
+      actualStartAt: '2026-01-01T00:00:00.000Z',
+      actualEndAt: null,
+      activeSectionKey: 'reading',
+      currentSectionKey: 'reading',
+      currentSectionRemainingSeconds: 1800,
+      waitingForNextSection: false,
+      isOverrun: false,
+      totalPausedSeconds: 0,
+      sections: [
+        {
+          sectionKey: 'reading',
+          label: 'Reading',
+          order: 1,
+          plannedDurationMinutes: 60,
+          gapAfterMinutes: 0,
+          status: 'live',
+          availableAt: '2026-01-01T00:00:00.000Z',
+          actualStartAt: '2026-01-01T00:00:00.000Z',
+          actualEndAt: null,
+          pausedAt: null,
+          accumulatedPausedSeconds: 0,
+          extensionMinutes: 0,
+          completionReason: undefined,
+          projectedStartAt: '2026-01-01T00:00:00.000Z',
+          projectedEndAt: '2026-01-01T01:00:00.000Z',
+        },
+      ],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    render(
+      <StudentAppWrapper
+        state={slotState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={runtimeSnapshot}
+      />,
+    );
+
+    const slotOne = screen.getByLabelText('Answer for question 1') as HTMLInputElement;
+    const slotTwo = screen.getByLabelText('Answer for question 2') as HTMLInputElement;
+
+    await user.type(slotOne, 'quick');
+    await user.click(slotTwo);
+    await user.type(slotTwo, 'lazy');
+
+    expect(slotOne.value).toBe('quick');
+    expect(slotTwo.value).toBe('lazy');
+
+    await waitFor(() => {
+      const persistedMutations = vi
+        .mocked(studentAttemptRepository.savePendingMutations)
+        .mock.calls.flatMap(([, mutations]) => mutations ?? []);
+      const mergedSlotMutation = persistedMutations.find((mutation) => {
+        if (mutation.type !== 'answer') {
+          return false;
+        }
+        const payload = mutation.payload as { questionId?: unknown; value?: unknown };
+        return (
+          payload.questionId === 'q-slots' &&
+          Array.isArray(payload.value) &&
+          payload.value[0] === 'quick' &&
+          payload.value[1] === 'lazy'
+        );
+      });
+      expect(mergedSlotMutation).toBeDefined();
+    });
+  });
+
   it('keeps local writing editor content stable during same-attempt refresh', async () => {
     const writingState: ExamState = {
       ...state,
