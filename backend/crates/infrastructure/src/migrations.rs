@@ -1,6 +1,6 @@
 use std::{
     borrow::Cow,
-    fs,
+    env, fs,
     path::{Path, PathBuf},
 };
 
@@ -9,6 +9,25 @@ use sqlx::{Executor, MySqlConnection, MySqlPool};
 const ROLE_MIGRATION: &str = "0001_roles.sql";
 const STARTUP_MIGRATIONS_LOCK_NAME: &str = "ielts_backend_startup_migrations_lock";
 const STARTUP_MIGRATIONS_LOCK_TIMEOUT_SECS: i32 = 300;
+const MIGRATION_HISTORY_GUARD_MODE_ENV: &str = "MIGRATION_HISTORY_GUARD_MODE";
+const REQUIRED_INDEX_GUARD_MODE_ENV: &str = "REQUIRED_INDEX_GUARD_MODE";
+
+const REQUIRED_INDEXES: &[(&str, &str)] = &[
+    (
+        "student_attempt_mutations",
+        "idx_student_attempt_mutations_attempt_mutation_id",
+    ),
+    (
+        "student_attempts",
+        "idx_student_attempts_schedule_submitted_id",
+    ),
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GuardMode {
+    Fail,
+    Warn,
+}
 
 pub async fn run_startup_migrations(
     pool: &MySqlPool,
@@ -33,7 +52,7 @@ async fn run_startup_migrations_on_connection(
     let migrations = load_migrations(migrations_dir).map_err(sqlx::Error::Io)?;
 
     ensure_schema_migrations_table(conn).await?;
-    maybe_backfill_schema_migrations(conn, &migrations).await?;
+    maybe_backfill_schema_migrations(conn).await?;
 
     // Note: Role management removed - MySQL uses standard user management
     // The 0001_roles.sql migration is now a no-op comment file
@@ -52,6 +71,8 @@ async fn run_startup_migrations_on_connection(
         execute_migration_statements(conn, sql.as_ref()).await?;
         record_migration(conn, &migration.filename).await?;
     }
+
+    verify_required_indexes(conn).await?;
 
     Ok(())
 }
@@ -114,10 +135,7 @@ async fn ensure_schema_migrations_table(conn: &mut MySqlConnection) -> Result<()
     Ok(())
 }
 
-async fn maybe_backfill_schema_migrations(
-    conn: &mut MySqlConnection,
-    migrations: &[MigrationFile],
-) -> Result<(), sqlx::Error> {
+async fn maybe_backfill_schema_migrations(conn: &mut MySqlConnection) -> Result<(), sqlx::Error> {
     let recorded_count: i64 = sqlx::query_scalar("select count(*) from schema_migrations")
         .fetch_one(&mut *conn)
         .await?;
@@ -131,26 +149,71 @@ async fn maybe_backfill_schema_migrations(
         return Ok(());
     }
 
-    // Drop all existing tables if schema exists without migration history
-    // Disable foreign key checks to allow dropping tables with dependencies
-    conn.execute("SET FOREIGN_KEY_CHECKS = 0").await?;
-
     let tables: Vec<String> = sqlx::query_scalar(
         "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name <> 'schema_migrations'"
     )
     .fetch_all(&mut *conn)
     .await?;
 
-    for table in &tables {
-        let drop_sql = format!("DROP TABLE IF EXISTS `{}`", table);
-        conn.execute(drop_sql.as_str()).await?;
+    let detail = format!(
+        "Unsafe migration bootstrap blocked: schema_migrations is empty but existing tables were found ({})",
+        tables.join(", ")
+    );
+    match guard_mode_from_env(MIGRATION_HISTORY_GUARD_MODE_ENV, GuardMode::Fail) {
+        GuardMode::Fail => Err(sqlx::Error::Protocol(detail)),
+        GuardMode::Warn => {
+            tracing::warn!(
+                mode = "warn",
+                env = MIGRATION_HISTORY_GUARD_MODE_ENV,
+                "MIGRATION_HISTORY_GUARD_MODE=warn allows startup despite missing migration history; {}",
+                detail
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn verify_required_indexes(conn: &mut MySqlConnection) -> Result<(), sqlx::Error> {
+    let mut missing = Vec::new();
+    for (table_name, index_name) in REQUIRED_INDEXES {
+        let exists: i64 = sqlx::query_scalar(
+            r#"
+            SELECT COUNT(*)
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = ?
+              AND index_name = ?
+            "#,
+        )
+        .bind(table_name)
+        .bind(index_name)
+        .fetch_one(&mut *conn)
+        .await?;
+        if exists == 0 {
+            missing.push(format!("{table_name}.{index_name}"));
+        }
     }
 
-    // Re-enable foreign key checks
-    conn.execute("SET FOREIGN_KEY_CHECKS = 1").await?;
+    if missing.is_empty() {
+        return Ok(());
+    }
 
-    // Return early since we dropped all tables and will run fresh migrations
-    Ok(())
+    let detail = format!(
+        "Required database indexes are missing: {}",
+        missing.join(", ")
+    );
+    match guard_mode_from_env(REQUIRED_INDEX_GUARD_MODE_ENV, GuardMode::Fail) {
+        GuardMode::Fail => Err(sqlx::Error::Protocol(detail)),
+        GuardMode::Warn => {
+            tracing::warn!(
+                mode = "warn",
+                env = REQUIRED_INDEX_GUARD_MODE_ENV,
+                "REQUIRED_INDEX_GUARD_MODE=warn allows startup despite missing indexes; {}",
+                detail
+            );
+            Ok(())
+        }
+    }
 }
 
 // Note: ensure_roles_if_possible removed - MySQL uses standard user management
@@ -369,11 +432,30 @@ fn resolve_default_migrations_dir(current_exe: Option<&Path>, manifest_dir: &Pat
         .join("migrations")
 }
 
+fn guard_mode_from_env(env_key: &str, default: GuardMode) -> GuardMode {
+    let Some(value) = env::var(env_key).ok() else {
+        return default;
+    };
+    guard_mode_from_value(&value)
+}
+
+fn guard_mode_from_value(value: &str) -> GuardMode {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("warn") {
+        GuardMode::Warn
+    } else {
+        GuardMode::Fail
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
-    use super::{resolve_default_migrations_dir, sanitize_migration_sql, split_sql_statements};
+    use super::{
+        guard_mode_from_env, guard_mode_from_value, resolve_default_migrations_dir,
+        sanitize_migration_sql, split_sql_statements, GuardMode,
+    };
 
     #[test]
     fn leaves_sql_unchanged() {
@@ -495,6 +577,19 @@ SELECT @q, @x;\n";
         );
         assert!(presence_sql.contains("SET @student_attempt_presence_attempt_id_type = ("));
         assert!(presence_sql.contains("SET @student_attempt_presence_schedule_id_type = ("));
+    }
+
+    #[test]
+    fn guard_mode_defaults_to_fail_when_env_missing() {
+        assert_eq!(
+            guard_mode_from_env("__UNKNOWN_GUARD_MODE_ENV__", GuardMode::Fail),
+            GuardMode::Fail
+        );
+    }
+
+    #[test]
+    fn guard_mode_parses_warn_case_insensitive() {
+        assert_eq!(guard_mode_from_value("WARN"), GuardMode::Warn);
     }
 
     fn column_type(sql: &str, table: &str, column: &str) -> Option<String> {

@@ -370,4 +370,33 @@ describe('gradingAnswerUtils', () => {
     expect(projected.canonical).not.toBe('hello, world, x, y');
     expect(projected.slots).toEqual(['hello, world', 'x', 'y']);
   });
+
+  test('sub-answer tree leaf descriptors resolve prompt and accepted answers', () => {
+    const descriptor = {
+      id: 'tree-block::tree::root-a::leaf-a',
+      blockId: 'tree-block',
+      groupId: 'p1',
+      groupLabel: 'Passage 1',
+      rootId: 'tree-block::tree::root::root-a',
+      rootNumber: 21,
+      numberLabel: '21.1',
+      isMulti: false,
+      correctCount: 1,
+      answerKey: 'tree-block::tree::root-a::leaf-a',
+      isSubAnswerTreeLeaf: true,
+      treePrompt: 'Leaf prompt',
+      treeAcceptedAnswers: ['cat', 'kitty'],
+      block: {
+        id: 'tree-block',
+        type: 'SHORT_ANSWER',
+        instruction: '',
+        questions: [],
+      },
+      question: null,
+    } as unknown as StudentQuestionDescriptor;
+
+    expect(getQuestionPrompt(descriptor)).toBe('Leaf prompt');
+    expect(getCorrectAnswerDisplay(descriptor)).toBe('cat | kitty');
+    expect(isStudentAnswerCorrect(descriptor, { [descriptor.id]: 'Kitty' })).toBe(true);
+  });
 });

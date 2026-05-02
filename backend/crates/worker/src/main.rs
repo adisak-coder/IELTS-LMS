@@ -5,7 +5,7 @@ use std::{
 
 use ielts_backend_infrastructure::{
     config::AppConfig,
-    database_monitor::{inspect_storage_budget, StorageBudgetLevel, StorageBudgetSnapshot},
+    database_monitor::{inspect_storage_budget, StorageBudgetLevel},
 };
 use ielts_backend_worker::jobs;
 use sqlx::mysql::MySqlPoolOptions;
@@ -53,17 +53,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let projection_interval =
         Duration::from_millis(config.grading_projection_interval_ms.max(1_000));
     let cycle_interval = fallback_interval.min(projection_interval);
+    let maintenance_interval = Duration::from_secs(config.worker_maintenance_interval_secs.max(60));
     let (shutdown_tx, _) = broadcast::channel(1);
     let maintenance_handle = spawn_maintenance_loop(
         pool.clone(),
         config.clone(),
-        fallback_interval,
+        maintenance_interval,
         shutdown_tx.subscribe(),
     );
 
     tracing::info!(
         legacy_poll_interval_ms = config.worker_poll_interval_ms,
         fallback_interval_secs = config.worker_fallback_interval_secs,
+        maintenance_interval_secs = config.worker_maintenance_interval_secs,
         grading_projection_interval_ms = config.grading_projection_interval_ms,
         cycle_interval_ms = cycle_interval.as_millis() as u64,
         max_connections = config.db_pool_max_connections,
@@ -101,7 +103,8 @@ async fn run_outbox_cycle(
     trigger: WorkerTrigger,
     cycle_started: Instant,
 ) -> Result<(), sqlx::Error> {
-    let outbox = drain_outbox_until_empty(pool.clone(), &config.live_mode_notify_channel).await?;
+    let outbox =
+        drain_outbox_until_empty(pool.clone(), config, &config.live_mode_notify_channel).await?;
     let projection = match jobs::grading_projection::run_once(pool.clone(), config).await {
         Ok(report) => report,
         Err(error) => {
@@ -120,40 +123,6 @@ async fn run_outbox_cycle(
             }
         }
     };
-    let storage_budget = match inspect_storage_budget(
-        pool,
-        config.storage_budget_thresholds.clone(),
-    )
-    .await
-    {
-        Ok(snapshot) => snapshot,
-        Err(error) => {
-            tracing::warn!(error = %error, "storage budget probe failed; defaulting to normal budget for this cycle");
-            fallback_storage_budget_snapshot()
-        }
-    };
-    let retention = match jobs::retention::run_once_with_config_and_budget(
-        pool.clone(),
-        config,
-        storage_budget.level,
-    )
-    .await
-    {
-        Ok(report) => report,
-        Err(error) => {
-            tracing::warn!(error = %error, "retention cycle failed; continuing worker cycle");
-            jobs::retention::RetentionRunReport::default()
-        }
-    };
-    let media = match jobs::media::run_once(pool.clone()).await {
-        Ok(report) => report,
-        Err(error) => {
-            tracing::warn!(error = %error, "media cleanup failed; continuing worker cycle");
-            jobs::media::MediaRunReport::default()
-        }
-    };
-    log_storage_budget_snapshot(&storage_budget);
-
     tracing::info!(
         trigger = trigger.as_str(),
         cycle_duration_ms = cycle_started.elapsed().as_millis() as u64,
@@ -171,19 +140,7 @@ async fn run_outbox_cycle(
         grading_projection_lag_seconds = projection.lag_seconds,
         grading_projection_failures_total = projection.failures_total,
         grading_projection_duration_ms = projection.duration_ms,
-        retention_total_rows = retention.total_rows(),
-        retention_cache_rows = retention.cache_rows,
-        retention_idempotency_rows = retention.idempotency_rows,
-        retention_user_sessions_rows = retention.user_sessions_rows,
-        retention_heartbeat_rows = retention.heartbeat_rows,
-        retention_mutation_rows = retention.mutation_rows,
-        retention_outbox_rows = retention.outbox_rows,
-        retention_duration_ms = retention.duration_ms,
-        media_total_rows = media.total_rows(),
-        media_orphaned_rows = media.orphaned_rows,
-        media_deleted_rows = media.deleted_rows,
-        media_duration_ms = media.duration_ms,
-        "worker pass complete"
+        "outbox + projection pass complete"
     );
 
     Ok(())
@@ -242,6 +199,8 @@ async fn run_maintenance_cycle(
         retention_heartbeat_rows = retention.heartbeat_rows,
         retention_mutation_rows = retention.mutation_rows,
         retention_outbox_rows = retention.outbox_rows,
+        retention_distributed_rate_limit_rows = retention.distributed_rate_limit_rows,
+        retention_live_update_rows = retention.live_update_rows,
         retention_duration_ms = retention.duration_ms,
         media_total_rows = media.total_rows(),
         media_orphaned_rows = media.orphaned_rows,
@@ -255,13 +214,14 @@ async fn run_maintenance_cycle(
 
 async fn drain_outbox_until_empty(
     pool: sqlx::MySqlPool,
+    config: &AppConfig,
     notify_channel: &str,
 ) -> Result<jobs::outbox::OutboxRunReport, sqlx::Error> {
     let started = Instant::now();
     let mut total = jobs::outbox::OutboxRunReport::default();
 
     for batch_index in 0..MAX_OUTBOX_BATCHES_PER_CYCLE {
-        let batch = jobs::outbox::run_once(pool.clone(), notify_channel).await?;
+        let batch = jobs::outbox::run_once(pool.clone(), config, notify_channel).await?;
         total.claimed += batch.claimed;
         total.published += batch.published;
         total.wakeups_notified += batch.wakeups_notified;
@@ -310,14 +270,6 @@ fn log_storage_budget_snapshot(
             largest_relations = ?snapshot.largest_relations,
             "storage budget critical threshold reached"
         ),
-    }
-}
-
-fn fallback_storage_budget_snapshot() -> StorageBudgetSnapshot {
-    StorageBudgetSnapshot {
-        total_bytes: 0,
-        level: StorageBudgetLevel::Normal,
-        largest_relations: Vec::new(),
     }
 }
 

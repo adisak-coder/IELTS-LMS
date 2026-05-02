@@ -571,6 +571,9 @@ fn app_state(pool: sqlx::MySqlPool) -> AppState {
         live_updates: LiveUpdateHub::new(),
         telemetry: Telemetry::new(),
         rate_limiter: RateLimiter::new(RateLimitConfig::new(1000, 60)),
+        distributed_rate_limiter: None,
+        live_update_bus: None,
+        instance_id: "test-instance".to_owned(),
     }
 }
 

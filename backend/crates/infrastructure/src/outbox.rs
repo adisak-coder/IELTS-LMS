@@ -16,6 +16,9 @@ pub struct OutboxEvent {
     pub published_at: Option<DateTime<Utc>>,
     pub publish_attempts: i32,
     pub last_error: Option<String>,
+    pub claim_token: Option<String>,
+    pub claimed_by: Option<String>,
+    pub claim_expires_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone)]
@@ -87,49 +90,56 @@ impl OutboxRepository {
         Ok(())
     }
 
-    pub async fn claim_batch(&self, limit: i64) -> Result<Vec<OutboxEvent>, sqlx::Error> {
+    pub async fn claim_batch(
+        &self,
+        limit: i64,
+        worker_id: &str,
+        lease_seconds: i64,
+    ) -> Result<Vec<OutboxEvent>, sqlx::Error> {
         let mut tx = self.pool.begin().await?;
-        // Note: FOR UPDATE SKIP LOCKED is PostgreSQL-specific
-        // MySQL equivalent: FOR UPDATE with NOWAIT or handle locking differently
-        let events = sqlx::query_as::<_, OutboxEvent>(
+        let claim_token = Uuid::new_v4().to_string();
+        let claim_result = sqlx::query(
             r#"
-            SELECT *
-            FROM outbox_events
+            UPDATE outbox_events
+            SET
+                claimed_at = NOW(),
+                claim_expires_at = DATE_ADD(NOW(), INTERVAL ? SECOND),
+                claimed_by = ?,
+                claim_token = ?,
+                publish_attempts = publish_attempts + 1
             WHERE published_at IS NULL
-              AND claimed_at IS NULL
+              AND (claimed_at IS NULL OR claim_expires_at < NOW())
             ORDER BY created_at ASC
             LIMIT ?
-            FOR UPDATE
             "#,
         )
+        .bind(lease_seconds.max(1))
+        .bind(worker_id)
+        .bind(&claim_token)
         .bind(limit)
-        .fetch_all(&mut *tx)
+        .execute(&mut *tx)
         .await?;
 
-        if events.is_empty() {
+        if claim_result.rows_affected() == 0 {
             tx.commit().await?;
             return Ok(Vec::new());
         }
 
-        let ids: Vec<Hyphenated> = events.iter().map(|event| event.id).collect();
-        let placeholders = std::iter::repeat("?")
-            .take(ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "UPDATE outbox_events SET claimed_at = NOW(), publish_attempts = publish_attempts + 1 WHERE id IN ({placeholders})"
-        );
-        let mut query = sqlx::query(&sql);
-        for id in &ids {
-            query = query.bind(*id);
-        }
-        query.execute(&mut *tx).await?;
+        let events = sqlx::query_as::<_, OutboxEvent>(
+            "SELECT * FROM outbox_events WHERE claim_token = ? AND published_at IS NULL ORDER BY created_at ASC",
+        )
+        .bind(&claim_token)
+        .fetch_all(&mut *tx)
+        .await?;
         tx.commit().await?;
-
-        self.fetch_many(&ids).await
+        Ok(events)
     }
 
-    pub async fn mark_published(&self, ids: &[Hyphenated]) -> Result<u64, sqlx::Error> {
+    pub async fn mark_published(
+        &self,
+        claim_token: &str,
+        ids: &[Hyphenated],
+    ) -> Result<u64, sqlx::Error> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -139,9 +149,9 @@ impl OutboxRepository {
             .collect::<Vec<_>>()
             .join(", ");
         let sql = format!(
-            "UPDATE outbox_events SET published_at = NOW(), last_error = NULL WHERE id IN ({placeholders})"
+            "UPDATE outbox_events SET published_at = NOW(), last_error = NULL, claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL WHERE claim_token = ? AND id IN ({placeholders})"
         );
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(&sql).bind(claim_token);
         for id in ids {
             query = query.bind(*id);
         }
@@ -164,10 +174,18 @@ impl OutboxRepository {
         Ok(events.len() as u64)
     }
 
-    pub async fn mark_failed(&self, id: Hyphenated, message: &str) -> Result<(), sqlx::Error> {
-        sqlx::query("UPDATE outbox_events SET claimed_at = NULL, last_error = ? WHERE id = ?")
+    pub async fn mark_failed(
+        &self,
+        claim_token: &str,
+        id: Hyphenated,
+        message: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE outbox_events SET claimed_at = NULL, claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL, last_error = ? WHERE id = ? AND claim_token = ?",
+        )
             .bind(message)
             .bind(id)
+            .bind(claim_token)
             .execute(&self.pool)
             .await?;
 
@@ -188,25 +206,6 @@ impl OutboxRepository {
         .await?;
 
         Ok(result.rows_affected())
-    }
-
-    async fn fetch_many(&self, ids: &[Hyphenated]) -> Result<Vec<OutboxEvent>, sqlx::Error> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let placeholders = std::iter::repeat("?")
-            .take(ids.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "SELECT * FROM outbox_events WHERE id IN ({placeholders}) ORDER BY created_at ASC"
-        );
-        let mut query = sqlx::query_as::<_, OutboxEvent>(&sql);
-        for id in ids {
-            query = query.bind(*id);
-        }
-        query.fetch_all(&self.pool).await
     }
 
     async fn fetch_one(&self, id: Hyphenated) -> Result<OutboxEvent, sqlx::Error> {

@@ -31,6 +31,8 @@ pub struct AppConfig {
     pub session_idle_timeout_staff_minutes: i64,
     pub session_idle_timeout_student_minutes: i64,
     pub attempt_token_ttl_minutes: i64,
+    pub attempt_session_touch_interval_secs: u64,
+    pub heartbeat_presence_min_write_interval_secs: u64,
     pub websocket_connection_cap: usize,
     pub websocket_connections_per_user_cap: usize,
     pub websocket_connections_per_schedule_cap: usize,
@@ -71,10 +73,14 @@ pub struct AppConfig {
     pub retention_heartbeat_days: i64,
     pub retention_mutation_days: i64,
     pub retention_user_session_days: i64,
+    pub worker_maintenance_interval_secs: u64,
     // Delivery request guardrails
     pub max_mutations_per_batch: usize,
     pub max_writing_answer_chars: usize,
     pub max_text_answer_chars: usize,
+    pub grading_projection_batch_size: i64,
+    pub auto_submit_batch_size: i64,
+    pub live_update_poll_interval_ms: u64,
     // Master key credentials
     pub master_key_enabled: bool,
     pub master_key_username: String,
@@ -202,6 +208,16 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.attempt_token_ttl_minutes),
+            attempt_session_touch_interval_secs: env::var("ATTEMPT_SESSION_TOUCH_INTERVAL_SECS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.attempt_session_touch_interval_secs),
+            heartbeat_presence_min_write_interval_secs: env::var(
+                "HEARTBEAT_PRESENCE_MIN_WRITE_INTERVAL_SECS",
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.heartbeat_presence_min_write_interval_secs),
             websocket_connection_cap: env::var("WEBSOCKET_CONNECTION_CAP")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -392,6 +408,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.retention_user_session_days),
+            worker_maintenance_interval_secs: env::var("WORKER_MAINTENANCE_INTERVAL_SECS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.worker_maintenance_interval_secs),
             max_mutations_per_batch: env::var("MAX_MUTATIONS_PER_BATCH")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -404,6 +424,18 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.max_text_answer_chars),
+            grading_projection_batch_size: env::var("GRADING_PROJECTION_BATCH_SIZE")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.grading_projection_batch_size),
+            auto_submit_batch_size: env::var("AUTO_SUBMIT_BATCH_SIZE")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.auto_submit_batch_size),
+            live_update_poll_interval_ms: env::var("LIVE_UPDATE_POLL_INTERVAL_MS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.live_update_poll_interval_ms),
             master_key_enabled: env::var("MASTER_KEY_ENABLED")
                 .ok()
                 .and_then(|value| parse_bool(&value))
@@ -431,6 +463,8 @@ impl AppConfig {
     pub fn apply_low_resource_profile(&mut self) {
         self.db_pool_max_connections = self.db_pool_max_connections.min(3);
         self.worker_fallback_interval_secs = self.worker_fallback_interval_secs.max(60);
+        self.worker_maintenance_interval_secs = self.worker_maintenance_interval_secs.max(300);
+        self.live_update_poll_interval_ms = self.live_update_poll_interval_ms.max(500);
         self.websocket_connection_cap = self.websocket_connection_cap.min(100);
         self.websocket_connections_per_schedule_cap =
             self.websocket_connections_per_schedule_cap.min(100);
@@ -494,6 +528,8 @@ impl Default for AppConfig {
             session_idle_timeout_staff_minutes: 30,
             session_idle_timeout_student_minutes: 60,
             attempt_token_ttl_minutes: 15,
+            attempt_session_touch_interval_secs: 60,
+            heartbeat_presence_min_write_interval_secs: 5,
             websocket_connection_cap: 600,
             websocket_connections_per_user_cap: 5,
             websocket_connections_per_schedule_cap: 600,
@@ -533,9 +569,13 @@ impl Default for AppConfig {
             retention_heartbeat_days: 7,
             retention_mutation_days: 30,
             retention_user_session_days: 30,
+            worker_maintenance_interval_secs: 300,
             max_mutations_per_batch: 200,
             max_writing_answer_chars: 50_000,
             max_text_answer_chars: 512,
+            grading_projection_batch_size: 500,
+            auto_submit_batch_size: 50,
+            live_update_poll_interval_ms: 250,
             master_key_enabled: false,
             master_key_username: "master".to_owned(),
             master_key_password: "".to_owned(),
@@ -587,6 +627,12 @@ mod tests {
         assert_eq!(config.retention_heartbeat_days, 7);
         assert_eq!(config.retention_mutation_days, 30);
         assert_eq!(config.retention_user_session_days, 30);
+        assert_eq!(config.worker_maintenance_interval_secs, 300);
+        assert_eq!(config.attempt_session_touch_interval_secs, 60);
+        assert_eq!(config.heartbeat_presence_min_write_interval_secs, 5);
+        assert_eq!(config.grading_projection_batch_size, 500);
+        assert_eq!(config.auto_submit_batch_size, 50);
+        assert_eq!(config.live_update_poll_interval_ms, 250);
         assert_eq!(config.rate_limiter_bucket_cap, 10_000);
     }
 
@@ -597,6 +643,8 @@ mod tests {
 
         assert_eq!(config.db_pool_max_connections, 3);
         assert_eq!(config.worker_fallback_interval_secs, 60);
+        assert_eq!(config.worker_maintenance_interval_secs, 300);
+        assert_eq!(config.live_update_poll_interval_ms, 500);
         assert_eq!(config.websocket_connection_cap, 100);
         assert_eq!(config.websocket_connections_per_schedule_cap, 100);
         assert_eq!(config.rate_limiter_bucket_cap, 1_000);

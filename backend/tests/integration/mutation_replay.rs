@@ -3,6 +3,7 @@ mod mysql;
 
 use chrono::{Duration, TimeZone, Utc};
 use serde_json::json;
+use sqlx::query_scalar;
 use uuid::Uuid;
 
 use ielts_backend_application::{
@@ -289,6 +290,54 @@ async fn operation_mutations_reject_stale_revision_and_preserve_field_scope() {
     let second_attempt = second.attempt.expect("full response attempt");
     assert_eq!(second_attempt.answers["q1"], "ALPHA");
     assert_eq!(second_attempt.answers["q2"], "BRAVO");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn bootstrap_is_idempotent_under_concurrent_race_for_same_student() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service_a = DeliveryService::new(database.pool().clone());
+    let service_b = DeliveryService::new(database.pool().clone());
+
+    let req = StudentBootstrapRequest {
+        student_key: student_key(schedule_id, "alice"),
+        candidate_id: "alice".to_owned(),
+        candidate_name: "Alice Roe".to_owned(),
+        candidate_email: "alice@example.com".to_owned(),
+        email: Some("alice@example.com".to_owned()),
+        wcode: Some("W123456".to_owned()),
+        client_session_id: Uuid::new_v4().to_string(),
+    };
+
+    let (left, right) = tokio::join!(
+        service_a.bootstrap(schedule_id, req.clone()),
+        service_b.bootstrap(schedule_id, req)
+    );
+    let left_attempt_id = left
+        .expect("left bootstrap")
+        .attempt
+        .expect("left attempt")
+        .id;
+    let right_attempt_id = right
+        .expect("right bootstrap")
+        .attempt
+        .expect("right attempt")
+        .id;
+
+    assert_eq!(left_attempt_id, right_attempt_id);
+
+    let attempt_count: i64 = query_scalar(
+        "SELECT COUNT(*) FROM student_attempts WHERE schedule_id = ? AND student_key = ?",
+    )
+    .bind(schedule_id.to_string())
+    .bind(student_key(schedule_id, "alice"))
+    .fetch_one(database.pool())
+    .await
+    .expect("count attempt rows");
+    assert_eq!(attempt_count, 1);
 
     database.shutdown().await;
 }

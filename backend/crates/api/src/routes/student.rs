@@ -32,9 +32,10 @@ use crate::{
 };
 
 fn delivery_service(state: &AppState) -> DeliveryService {
-    DeliveryService::with_idempotency_usable_hours(
+    DeliveryService::with_runtime_tuning(
         state.db_pool(),
         state.config.retention_idempotency_usable_hours,
+        state.config.heartbeat_presence_min_write_interval_secs,
     )
 }
 
@@ -391,7 +392,10 @@ pub async fn bootstrap_student_session(
             .config
             .rate_limit_student_bootstrap_per_user_window_secs,
     );
-    match state.rate_limiter.check_with_config(&key, &config).await {
+    match state
+        .check_exam_rate_limit("student.bootstrap", &key, &config)
+        .await
+    {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
@@ -486,7 +490,10 @@ pub async fn apply_mutation_batch(
         state.config.rate_limit_mutation_per_attempt_window_secs,
     )
     .with_burst(50); // Allow burst for reconnect replay
-    match state.rate_limiter.check_with_config(&key, &config).await {
+    match state
+        .check_exam_rate_limit("student.mutation_batch", &key, &config)
+        .await
+    {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
@@ -570,8 +577,7 @@ pub async fn apply_mutation_batch(
 
     if contains_violation {
         state
-            .live_updates
-            .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
                 kind: "schedule_roster".to_owned(),
                 id: schedule_id.to_string(),
                 revision: 0,
@@ -615,7 +621,10 @@ pub async fn record_heartbeat(
         state.config.rate_limit_heartbeat_per_attempt_window_secs,
     )
     .with_burst(20); // Small burst allowance
-    match state.rate_limiter.check_with_config(&key, &config).await {
+    match state
+        .check_exam_rate_limit("student.heartbeat", &key, &config)
+        .await
+    {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
@@ -665,8 +674,7 @@ pub async fn record_heartbeat(
             _ => "student_network",
         };
         state
-            .live_updates
-            .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
                 kind: "schedule_alert".to_owned(),
                 id: schedule_id.to_string(),
                 revision: 0,
@@ -703,7 +711,10 @@ pub async fn record_audit(
         state.config.rate_limit_audit_per_attempt_window_secs,
     )
     .with_burst(30);
-    match state.rate_limiter.check_with_config(&key, &config).await {
+    match state
+        .check_exam_rate_limit("student.audit", &key, &config)
+        .await
+    {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
@@ -747,6 +758,16 @@ pub async fn record_audit(
     }
     let payload_value = Value::Object(payload_map);
 
+    let map_db_error = |err: sqlx::Error| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATABASE_ERROR",
+            &err.to_string(),
+        )
+    };
+
+    let mut tx = state.db_pool().begin().await.map_err(map_db_error)?;
+
     sqlx::query(
         r#"
         INSERT INTO session_audit_logs (
@@ -761,17 +782,12 @@ pub async fn record_audit(
     .bind(&req.action_type)
     .bind(&attempt_id)
     .bind(payload_value.clone())
-    .execute(&state.db_pool())
+    .execute(tx.as_mut())
     .await
-    .map_err(|err| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DATABASE_ERROR",
-            &err.to_string(),
-        )
-    })?;
+    .map_err(map_db_error)?;
 
     if req.action_type == "VIOLATION_DETECTED" {
+        let violation_id = violation_business_id_from_payload(&payload_value)?;
         let violation_type = payload_value
             .get("violationType")
             .and_then(Value::as_str)
@@ -790,52 +806,58 @@ pub async fn record_audit(
         if let (Some(violation_type), Some(severity)) = (violation_type, severity) {
             let allowed = matches!(severity.as_str(), "low" | "medium" | "high" | "critical");
             if allowed {
-                let violation_id = Uuid::new_v4();
-                sqlx::query(
+                let event_id = Uuid::new_v4();
+                let insert_result = sqlx::query(
                     r#"
                     INSERT INTO student_violation_events (
-                        id, schedule_id, attempt_id, violation_type, severity, description, payload, created_at
+                        id, schedule_id, attempt_id, violation_id, violation_type, severity, description, payload, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                    ON DUPLICATE KEY UPDATE id = id
                     "#,
                 )
-                .bind(violation_id.to_string())
+                .bind(event_id.to_string())
                 .bind(schedule_id.to_string())
                 .bind(&attempt_id)
+                .bind(&violation_id)
                 .bind(&violation_type)
                 .bind(&severity)
                 .bind(&description)
                 .bind(payload_value.clone())
-                .execute(&state.db_pool())
+                .execute(tx.as_mut())
                 .await
-                .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?;
+                .map_err(map_db_error)?;
 
-                let violation_json = json!({
-                    "id": violation_id,
-                    "type": violation_type,
-                    "severity": severity,
-                    "timestamp": client_timestamp.unwrap_or_else(Utc::now),
-                    "description": description
-                });
-                sqlx::query(
-                    r#"
-                    UPDATE student_attempts
-                    SET
-                        violations_snapshot = JSON_MERGE_PRESERVE(COALESCE(violations_snapshot, JSON_ARRAY()), ?),
-                        updated_at = NOW(),
-                        revision = revision + 1
-                    WHERE id = ? AND schedule_id = ?
-                    "#,
-                )
-                .bind(violation_json)
-                .bind(&attempt_id)
-                .bind(schedule_id.to_string())
-                .execute(&state.db_pool())
-                .await
-                .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?;
+                if insert_result.rows_affected() == 1 {
+                    let violation_json = json!({
+                        "id": violation_id,
+                        "type": violation_type,
+                        "severity": severity,
+                        "timestamp": client_timestamp.unwrap_or_else(Utc::now),
+                        "description": description
+                    });
+                    sqlx::query(
+                        r#"
+                        UPDATE student_attempts
+                        SET
+                            violations_snapshot = JSON_MERGE_PRESERVE(COALESCE(violations_snapshot, JSON_ARRAY()), ?),
+                            updated_at = NOW(),
+                            revision = revision + 1
+                        WHERE id = ? AND schedule_id = ?
+                        "#,
+                    )
+                    .bind(violation_json)
+                    .bind(&attempt_id)
+                    .bind(schedule_id.to_string())
+                    .execute(tx.as_mut())
+                    .await
+                    .map_err(map_db_error)?;
+                }
             }
         }
     }
+
+    tx.commit().await.map_err(map_db_error)?;
 
     let publish_alert = matches!(
         req.action_type.as_str(),
@@ -850,8 +872,7 @@ pub async fn record_audit(
     );
     if publish_alert {
         state
-            .live_updates
-            .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
                 kind: "schedule_alert".to_owned(),
                 id: schedule_id.to_string(),
                 revision: 0,
@@ -887,7 +908,10 @@ pub async fn submit_student_session(
         state.config.rate_limit_submit_per_attempt,
         state.config.rate_limit_submit_per_attempt_window_secs,
     );
-    match state.rate_limiter.check_with_config(&key, &config).await {
+    match state
+        .check_exam_rate_limit("student.submit", &key, &config)
+        .await
+    {
         RateLimitResult::Allowed { .. } => {}
         RateLimitResult::Denied { retry_after } => {
             return Err(ApiError::new(
@@ -1123,6 +1147,27 @@ fn map_auth_error(error: ielts_backend_application::auth::AuthError) -> ApiError
     }
 }
 
+fn violation_business_id_from_payload(payload: &Value) -> Result<String, ApiError> {
+    let Some(raw) = payload.get("violationId").and_then(Value::as_str) else {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "payload.violationId is required for VIOLATION_DETECTED.",
+        ));
+    };
+
+    let violation_id = raw.trim();
+    if violation_id.is_empty() {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "VALIDATION_ERROR",
+            "payload.violationId must not be empty.",
+        ));
+    }
+
+    Ok(violation_id.to_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1230,5 +1275,32 @@ mod tests {
         headers.insert("Idempotency-Key", "submit-1".parse().unwrap());
         let result = require_idempotency_key(&headers, "submit");
         assert_eq!(result.unwrap(), "submit-1");
+    }
+
+    #[test]
+    fn violation_business_id_from_payload_requires_field() {
+        let payload = json!({
+            "violationType": "TAB_SWITCH"
+        });
+        let err = violation_business_id_from_payload(&payload).unwrap_err();
+        assert_eq!(err.code, "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn violation_business_id_from_payload_rejects_blank() {
+        let payload = json!({
+            "violationId": "   "
+        });
+        let err = violation_business_id_from_payload(&payload).unwrap_err();
+        assert_eq!(err.code, "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn violation_business_id_from_payload_accepts_value() {
+        let payload = json!({
+            "violationId": "vio-123"
+        });
+        let id = violation_business_id_from_payload(&payload).unwrap();
+        assert_eq!(id, "vio-123");
     }
 }

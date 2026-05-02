@@ -138,8 +138,7 @@ pub async fn apply_runtime_command(
     };
     let runtime = service.apply_runtime_command(&ctx, id, req).await?;
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_runtime".to_owned(),
             id: id.to_string(),
             revision: i64::from(runtime.revision),

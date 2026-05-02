@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  countAnsweredQuestions,
+  countQuestionSlots,
   createInitialExamState,
   getQuestionNumberLabel,
   getStudentQuestionsForModule,
@@ -63,5 +65,68 @@ describe('student question descriptors (student exam core logic)', () => {
     expect(questions[1]?.answerIndex).toBe(1);
     expect(getQuestionNumberLabel(questions, questions[0].id)).toBe('1');
     expect(getQuestionNumberLabel(questions, questions[1].id)).toBe('2');
+  });
+
+  it('builds sub-answer tree leaf descriptors with dot labels and root completion counting', () => {
+    const state = createInitialExamState('Exam', 'Academic');
+    state.reading.passages[0].blocks = [
+      {
+        id: 'short-tree-1',
+        type: 'SHORT_ANSWER',
+        instruction: 'Tree mode block',
+        insertedImages: [],
+        subAnswerModeEnabled: true,
+        answerTree: [
+          {
+            id: 'root-a',
+            label: 'Root A',
+            children: [
+              { id: 'leaf-a', label: 'Leaf A', acceptedAnswers: ['cat'], required: true },
+              { id: 'leaf-b', label: 'Leaf B', acceptedAnswers: ['dog'], required: true },
+            ],
+          },
+        ],
+        questions: [],
+      },
+    ] as any;
+
+    const questions = getStudentQuestionsForModule(state, 'reading');
+    expect(questions.map((question) => question.numberLabel)).toEqual(['1.1', '1.2']);
+    expect(questions.every((question) => question.rootNumber === 1)).toBe(true);
+
+    const answerMap = {
+      [questions[0].id]: 'cat',
+      [questions[1].id]: '',
+    };
+    expect(countAnsweredQuestions(questions, answerMap)).toBe(0);
+
+    answerMap[questions[1].id] = 'dog';
+    expect(countAnsweredQuestions(questions, answerMap)).toBe(1);
+  });
+
+  it('excludes optional-only tree roots from total and answered counts', () => {
+    const state = createInitialExamState('Exam', 'Academic');
+    state.reading.passages[0].blocks = [
+      {
+        id: 'short-tree-optional',
+        type: 'SHORT_ANSWER',
+        instruction: 'Tree mode optional-only',
+        insertedImages: [],
+        subAnswerModeEnabled: true,
+        answerTree: [
+          {
+            id: 'root-a',
+            label: 'Root A',
+            children: [{ id: 'leaf-a', label: 'Leaf A', acceptedAnswers: ['cat'], required: false }],
+          },
+        ],
+        questions: [],
+      },
+    ] as any;
+
+    const questions = getStudentQuestionsForModule(state, 'reading');
+    expect(questions).toHaveLength(1);
+    expect(countQuestionSlots(questions)).toBe(0);
+    expect(countAnsweredQuestions(questions, { [questions[0].id]: 'cat' })).toBe(0);
   });
 });

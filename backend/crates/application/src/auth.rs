@@ -615,10 +615,16 @@ impl AuthService {
             return Err(AuthError::Unauthorized);
         }
         sqlx::query(
-            "UPDATE attempt_sessions SET last_seen_at = NOW(), expires_at = ? WHERE id = ?",
+            r#"
+            UPDATE attempt_sessions
+            SET last_seen_at = NOW(), expires_at = ?
+            WHERE id = ?
+              AND last_seen_at <= DATE_SUB(NOW(), INTERVAL ? SECOND)
+            "#,
         )
         .bind(Utc::now() + Duration::minutes(self.config.attempt_token_ttl_minutes))
         .bind(&session.id)
+        .bind(self.config.attempt_session_touch_interval_secs.max(1))
         .execute(&self.pool)
         .await?;
         Ok(AttemptAuthorization { session, claims })

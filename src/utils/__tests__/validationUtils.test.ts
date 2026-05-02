@@ -173,4 +173,70 @@ describe('validateQuestionBlock - placeholder/blanks alignment', () => {
 
     expect(errors.some((error) => error.field.includes('insertedImages'))).toBe(false);
   });
+
+  it('rejects tree mode required leaves with empty accepted answers', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-tree-1',
+      type: 'SHORT_ANSWER',
+      instruction: 'Tree mode',
+      subAnswerModeEnabled: true,
+      answerTree: [
+        {
+          id: 'root-1',
+          label: 'Root',
+          children: [{ id: 'leaf-1', label: 'Leaf', acceptedAnswers: [], required: true }],
+        },
+      ],
+      questions: [],
+    } as any);
+
+    expect(
+      errors.some((error) =>
+        error.message.includes('must define at least one accepted answer'),
+      ),
+    ).toBe(true);
+  });
+
+  it('rejects duplicate tree node ids', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-tree-2',
+      type: 'SHORT_ANSWER',
+      instruction: 'Tree mode',
+      subAnswerModeEnabled: true,
+      answerTree: [
+        {
+          id: 'root-1',
+          label: 'Root',
+          children: [
+            { id: 'dup', label: 'Leaf A', acceptedAnswers: ['a'] },
+            { id: 'dup', label: 'Leaf B', acceptedAnswers: ['b'] },
+          ],
+        },
+      ],
+      questions: [],
+    } as any);
+
+    expect(errors.some((error) => error.message.includes('Duplicate node id'))).toBe(true);
+  });
+
+  it('keeps legacy validation behavior when sub-answer mode is disabled', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-tree-3',
+      type: 'SHORT_ANSWER',
+      instruction: 'Legacy mode',
+      subAnswerModeEnabled: false,
+      answerTree: [],
+      questions: [
+        {
+          id: 'q-1',
+          prompt: 'Prompt',
+          correctAnswer: 'cat',
+          acceptedAnswers: ['cat'],
+          answerRule: 'ONE_WORD',
+        },
+      ],
+    } as any);
+
+    expect(errors).toHaveLength(0);
+  });
 });

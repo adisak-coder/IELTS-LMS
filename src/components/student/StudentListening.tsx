@@ -20,6 +20,7 @@ import { useSplitPaneResize } from './useSplitPaneResize';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { getInsertedImages, supportsInsertedImages } from '../../utils/insertedImages';
 import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
+import { SubAnswerTreeQuestionList } from './SubAnswerTreeQuestionList';
 
 interface StudentListeningProps {
   state: ExamState;
@@ -537,6 +538,10 @@ export function StudentListening({
             {activePart.blocks.map((block) => {
               const blockQuestions = allQuestions.filter((question) => question.blockId === block.id);
               const singleBlockQuestion = blockQuestions.length === 1 ? blockQuestions[0] : undefined;
+              const treeQuestions = blockQuestions.filter((question) => question.isSubAnswerTreeLeaf);
+              const rootNumbers = Array.from(new Set(blockQuestions.map((question) => question.rootNumber))).sort(
+                (left, right) => left - right,
+              );
               let blockStartQ = 1;
               for (const p of state.listening.parts) {
                 for (const b of p.blocks) {
@@ -545,13 +550,16 @@ export function StudentListening({
                 }
                 if (p.blocks.some(b => b.id === block.id)) break;
               }
-              const blockEndQ = blockStartQ + getBlockQuestionCount(block) - 1;
+              const numberedBlockStart = rootNumbers[0] ?? blockStartQ;
+              const numberedBlockEnd =
+                rootNumbers[rootNumbers.length - 1] ??
+                blockStartQ + getBlockQuestionCount(block) - 1;
 
               return (
                 <div key={block.id} className={`${answerCompact ? 'space-y-3 mb-3 md:mb-4' : 'space-y-4 md:space-y-6 mb-4 md:mb-6'}`}>
                   <div className={answerCompact ? 'mb-2' : 'mb-3 md:mb-4'}>
                     <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
-                      Questions {formatQuestionRange(blockStartQ, blockEndQ)}
+                      Questions {formatQuestionRange(numberedBlockStart, numberedBlockEnd)}
                     </h3>
                     {renderBlockInstruction(block.instruction)}
                     {renderBlockInsertedImages(block)}
@@ -559,7 +567,19 @@ export function StudentListening({
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8'}>
-                    {('questions' in block) ? (
+                    {treeQuestions.length > 0 ? (
+                      <SubAnswerTreeQuestionList
+                        questions={treeQuestions}
+                        answers={answers}
+                        currentQuestionId={currentQuestionId}
+                        flags={flags}
+                        tabletMode={isTabletMode}
+                        onAnswerChange={onAnswerChange}
+                        {...(onToggleFlag ? { onToggleFlag } : {})}
+                      />
+                    ) : null}
+                    {treeQuestions.length === 0 ? (
+                    ('questions' in block) ? (
                       block.questions.map((q, qIdx) => {
                         const questionEntries = blockQuestions.filter((entry) => entry.question?.id === q.id);
                         const firstEntry = questionEntries[0];
@@ -691,7 +711,8 @@ export function StudentListening({
                           }
                         />
                       </div>
-                    )}
+                    )
+                    ) : null}
                   </div>
                 </div>
               );

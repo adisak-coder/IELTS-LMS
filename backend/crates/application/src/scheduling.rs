@@ -483,19 +483,6 @@ impl SchedulingService {
         ctx: &ActorContext,
         schedule_id: Uuid,
     ) -> Result<ExamSessionRuntime, SchedulingError> {
-        if sqlx::query_scalar::<_, Hyphenated>(
-            "SELECT id FROM exam_session_runtimes WHERE schedule_id = ?",
-        )
-        .bind(schedule_id.to_string())
-        .fetch_optional(&self.pool)
-        .await?
-        .is_some()
-        {
-            return Err(SchedulingError::Conflict(
-                "Runtime already exists for this schedule.".to_owned(),
-            ));
-        }
-
         let context = self.load_schedule_context(schedule_id).await?;
         let runtime_id = Uuid::new_v4();
         let now = Utc::now();
@@ -503,7 +490,7 @@ impl SchedulingService {
 
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query(
+        let runtime_insert = sqlx::query(
             r#"
             INSERT INTO exam_session_runtimes (
                 id, schedule_id, exam_id, status, plan_snapshot, actual_start_at, actual_end_at,
@@ -523,7 +510,16 @@ impl SchedulingService {
         .bind(context.plan.first().map(|entry| entry.section_key.clone()))
         .bind(context.plan.first().map(|entry| entry.duration_minutes * 60).unwrap_or(0))
         .execute(&mut *tx)
-        .await?;
+        .await;
+
+        if let Err(err) = runtime_insert {
+            if is_mysql_duplicate_key(&err) {
+                return Err(SchedulingError::Conflict(
+                    "Runtime already exists for this schedule.".to_owned(),
+                ));
+            }
+            return Err(SchedulingError::Database(err));
+        }
 
         for (index, entry) in context.plan.iter().enumerate() {
             let projected_start = context.schedule.start_time

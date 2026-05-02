@@ -19,6 +19,7 @@ import type {
   SentenceCompletionQuestion,
   ShortAnswerQuestion,
   SingleMCQBlock,
+  SubAnswerTreeNode,
   TFNGQuestion,
 } from '../types';
 import type { ExamEntity, ExamStatus } from '../types/domain';
@@ -31,6 +32,7 @@ import {
 } from '../utils/builderEnhancements';
 import { getCanonicalTableCells, normalizeExamStateTableCompletionBlocks } from '../utils/tableCompletion';
 import { replaceWritingTaskContents } from '../utils/writingTaskUtils';
+import { flattenSubAnswerTree, hasSubAnswerTreeMode } from '../utils/subAnswerTree';
 
 const MODULE_ORDER: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'];
 
@@ -50,10 +52,19 @@ export interface StudentQuestionDescriptor {
   blockId: string;
   groupId: string;
   groupLabel: string;
+  rootId: string;
+  rootNumber: number;
+  numberLabel: string;
   isMulti: boolean;
   correctCount: number;
   answerKey: string;
   answerIndex?: number;
+  isSubAnswerTreeLeaf?: boolean;
+  treeRequired?: boolean;
+  rootLeafQuestionIds?: string[];
+  rootLabel?: string;
+  treePrompt?: string;
+  treeAcceptedAnswers?: string[];
   block: QuestionBlock;
   question:
     | TFNGQuestion
@@ -363,12 +374,24 @@ export function getStudentQuestionsForModule(
   state: ExamState,
   moduleType: ModuleType,
 ): StudentQuestionDescriptor[] {
+  let nextRootNumber = 1;
+  const append = (
+    questions: StudentQuestionDescriptor[],
+    block: QuestionBlock,
+    groupId: string,
+    groupLabel: string,
+  ) => {
+    const built = buildStudentQuestionDescriptors(block, groupId, groupLabel, nextRootNumber);
+    questions.push(...built.descriptors);
+    nextRootNumber = built.nextRootNumber;
+  };
+
   if (moduleType === 'reading') {
     const questions: StudentQuestionDescriptor[] = [];
 
     state.reading.passages.forEach((passage) => {
       passage.blocks.forEach((block) => {
-        questions.push(...buildStudentQuestionDescriptors(block, passage.id, passage.title));
+        append(questions, block, passage.id, passage.title);
       });
     });
 
@@ -380,7 +403,7 @@ export function getStudentQuestionsForModule(
 
     state.listening.parts.forEach((part) => {
       part.blocks.forEach((block) => {
-        questions.push(...buildStudentQuestionDescriptors(block, part.id, part.title));
+        append(questions, block, part.id, part.title);
       });
     });
 
@@ -401,54 +424,86 @@ export function countAnsweredQuestions(
   questions: StudentQuestionDescriptor[],
   answers: Record<string, unknown>,
 ): number {
-  return questions.reduce((count, question) => {
-    return count + getAnsweredSlotCount(question, answers);
-  }, 0);
+  const byRoot = new Map<string, StudentQuestionDescriptor[]>();
+  questions.forEach((question) => {
+    const bucket = byRoot.get(question.rootId);
+    if (bucket) {
+      bucket.push(question);
+    } else {
+      byRoot.set(question.rootId, [question]);
+    }
+  });
+
+  let answeredRoots = 0;
+  byRoot.forEach((rootQuestions) => {
+    if (!shouldCountRoot(rootQuestions)) {
+      return;
+    }
+    const treeLeaves = rootQuestions.filter((question) => question.isSubAnswerTreeLeaf);
+    if (treeLeaves.length > 0) {
+      const requiredLeaves = treeLeaves.filter((question) => question.treeRequired !== false);
+      const allRequiredAnswered = requiredLeaves.every(
+        (leaf) => getAnsweredSlotCount(leaf, answers) > 0,
+      );
+      if (allRequiredAnswered) {
+        answeredRoots += 1;
+      }
+      return;
+    }
+
+    const anyAnswered = rootQuestions.some(
+      (question) => getAnsweredSlotCount(question, answers) > 0,
+    );
+    if (anyAnswered) {
+      answeredRoots += 1;
+    }
+  });
+
+  return answeredRoots;
 }
 
 export function countQuestionSlots(questions: StudentQuestionDescriptor[]): number {
-  return questions.reduce(
-    (count, question) => count + (question.isMulti ? question.correctCount : 1),
-    0,
-  );
+  const byRoot = new Map<string, StudentQuestionDescriptor[]>();
+  questions.forEach((question) => {
+    const bucket = byRoot.get(question.rootId);
+    if (bucket) {
+      bucket.push(question);
+    } else {
+      byRoot.set(question.rootId, [question]);
+    }
+  });
+
+  let total = 0;
+  byRoot.forEach((rootQuestions) => {
+    if (shouldCountRoot(rootQuestions)) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function shouldCountRoot(rootQuestions: StudentQuestionDescriptor[]): boolean {
+  const treeLeaves = rootQuestions.filter((question) => question.isSubAnswerTreeLeaf);
+  if (treeLeaves.length === 0) {
+    return true;
+  }
+  return treeLeaves.some((leaf) => leaf.treeRequired !== false);
 }
 
 export function getQuestionStartNumber(
   questions: StudentQuestionDescriptor[],
   questionId: string,
 ): number | null {
-  let current = 1;
-
-  for (const question of questions) {
-    if (question.id === questionId) {
-      return current;
-    }
-    current += question.isMulti ? question.correctCount : 1;
-  }
-
-  return null;
+  const question = questions.find((candidate) => candidate.id === questionId);
+  return question?.rootNumber ?? null;
 }
 
 export function getQuestionNumberLabel(
   questions: StudentQuestionDescriptor[],
   questionId: string,
 ): string {
-  const start = getQuestionStartNumber(questions, questionId);
-  if (start === null) {
-    return '';
-  }
-
   const question = questions.find((candidate) => candidate.id === questionId);
-  if (!question) {
-    return '';
-  }
-
-  if (question.isMulti) {
-    const end = start + question.correctCount - 1;
-    return end === start ? `${start}` : `${start}-${end}`;
-  }
-
-  return `${start}`;
+  return question?.numberLabel ?? '';
 }
 
 export function getQuestionAnswer(
@@ -507,133 +562,234 @@ function buildStudentQuestionDescriptors(
   block: QuestionBlock,
   groupId: string,
   groupLabel: string,
-): StudentQuestionDescriptor[] {
+  startRootNumber: number,
+): { descriptors: StudentQuestionDescriptor[]; nextRootNumber: number } {
+  const treeBlock = block as QuestionBlock & {
+    answerTree?: SubAnswerTreeNode[];
+    subAnswerModeEnabled?: boolean;
+  };
+
+  if (hasSubAnswerTreeMode(treeBlock)) {
+    const flattened = flattenSubAnswerTree(block.id, treeBlock.answerTree, startRootNumber);
+    const rootLookup = new Map(flattened.roots.map((root) => [root.rootId, root] as const));
+    return {
+      descriptors: flattened.leaves.map((leaf) => ({
+        id: leaf.id,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        rootId: leaf.rootId,
+        rootNumber: leaf.rootNumber,
+        numberLabel: leaf.numberLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: leaf.id,
+        isSubAnswerTreeLeaf: true,
+        treeRequired: leaf.required,
+        rootLeafQuestionIds: rootLookup.get(leaf.rootId)?.leafQuestionIds ?? [],
+        rootLabel: rootLookup.get(leaf.rootId)?.rootLabel ?? leaf.rootLabel,
+        treePrompt: leaf.prompt,
+        treeAcceptedAnswers: leaf.acceptedAnswers,
+        block,
+        question: null,
+      })),
+      nextRootNumber: flattened.nextRootNumber,
+    };
+  }
+
+  const descriptors: StudentQuestionDescriptor[] = [];
   switch (block.type) {
     case 'TFNG':
     case 'CLOZE':
     case 'MATCHING':
     case 'MAP':
     case 'SHORT_ANSWER':
-      return block.questions.map((question) => ({
-        id: question.id,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: question.id,
-        block,
-        question,
-      }));
+      block.questions.forEach((question) => {
+        descriptors.push({
+          id: question.id,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          rootId: question.id,
+          rootNumber: 0,
+          numberLabel: '',
+          isMulti: false,
+          correctCount: 1,
+          answerKey: question.id,
+          block,
+          question,
+        });
+      });
+      break;
 
     case 'SENTENCE_COMPLETION':
-      return block.questions.flatMap((question) =>
-        question.blanks.map((blank, blankIndex) => ({
-          id: `${question.id}:${blank.id}`,
-          blockId: block.id,
-          groupId,
-          groupLabel,
-          isMulti: false,
-          correctCount: 1,
-          answerKey: question.id,
-          answerIndex: blankIndex,
-          block,
-          question,
-        })),
-      );
+      block.questions.forEach((question) => {
+        question.blanks.forEach((blank, blankIndex) => {
+          const id = `${question.id}:${blank.id}`;
+          descriptors.push({
+            id,
+            blockId: block.id,
+            groupId,
+            groupLabel,
+            rootId: id,
+            rootNumber: 0,
+            numberLabel: '',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: question.id,
+            answerIndex: blankIndex,
+            block,
+            question,
+          });
+        });
+      });
+      break;
 
     case 'NOTE_COMPLETION':
-      return block.questions.flatMap((question) =>
-        question.blanks.map((blank, blankIndex) => ({
-          id: `${question.id}:${blank.id}`,
+      block.questions.forEach((question) => {
+        question.blanks.forEach((blank, blankIndex) => {
+          const id = `${question.id}:${blank.id}`;
+          descriptors.push({
+            id,
+            blockId: block.id,
+            groupId,
+            groupLabel,
+            rootId: id,
+            rootNumber: 0,
+            numberLabel: '',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: question.id,
+            answerIndex: blankIndex,
+            block,
+            question,
+          });
+        });
+      });
+      break;
+
+    case 'MULTI_MCQ':
+      descriptors.push(buildMultiQuestionDescriptor(block, groupId, groupLabel));
+      break;
+
+    case 'SINGLE_MCQ':
+      descriptors.push(buildSingleQuestionDescriptor(block, groupId, groupLabel));
+      break;
+
+    case 'DIAGRAM_LABELING':
+      block.labels.forEach((label, labelIndex) => {
+        const id = `${block.id}:${label.id}`;
+        descriptors.push({
+          id,
           blockId: block.id,
           groupId,
           groupLabel,
+          rootId: id,
+          rootNumber: 0,
+          numberLabel: '',
           isMulti: false,
           correctCount: 1,
-          answerKey: question.id,
-          answerIndex: blankIndex,
+          answerKey: block.id,
+          answerIndex: labelIndex,
           block,
-          question,
-        })),
-      );
-
-    case 'MULTI_MCQ':
-      return [buildMultiQuestionDescriptor(block, groupId, groupLabel)];
-
-    case 'SINGLE_MCQ':
-      return [buildSingleQuestionDescriptor(block, groupId, groupLabel)];
-
-    case 'DIAGRAM_LABELING':
-      return block.labels.map((label, labelIndex) => ({
-        id: `${block.id}:${label.id}`,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: block.id,
-        answerIndex: labelIndex,
-        block,
-        question: null,
-      }));
+          question: null,
+        });
+      });
+      break;
 
     case 'FLOW_CHART':
-      return block.steps.map((step, stepIndex) => ({
-        id: `${block.id}:${step.id}`,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: block.id,
-        answerIndex: stepIndex,
-        block,
-        question: null,
-      }));
+      block.steps.forEach((step, stepIndex) => {
+        const id = `${block.id}:${step.id}`;
+        descriptors.push({
+          id,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          rootId: id,
+          rootNumber: 0,
+          numberLabel: '',
+          isMulti: false,
+          correctCount: 1,
+          answerKey: block.id,
+          answerIndex: stepIndex,
+          block,
+          question: null,
+        });
+      });
+      break;
 
     case 'TABLE_COMPLETION':
-      return getCanonicalTableCells(block).map((cell, cellIndex) => ({
-        id: `${block.id}:${cell.id}`,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: block.id,
-        answerIndex: cellIndex,
-        block,
-        question: null,
-      }));
+      getCanonicalTableCells(block).forEach((cell, cellIndex) => {
+        const id = `${block.id}:${cell.id}`;
+        descriptors.push({
+          id,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          rootId: id,
+          rootNumber: 0,
+          numberLabel: '',
+          isMulti: false,
+          correctCount: 1,
+          answerKey: block.id,
+          answerIndex: cellIndex,
+          block,
+          question: null,
+        });
+      });
+      break;
 
     case 'CLASSIFICATION':
-      return block.items.map((item, itemIndex) => ({
-        id: `${block.id}:${item.id}`,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: block.id,
-        answerIndex: itemIndex,
-        block,
-        question: null,
-      }));
+      block.items.forEach((item, itemIndex) => {
+        const id = `${block.id}:${item.id}`;
+        descriptors.push({
+          id,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          rootId: id,
+          rootNumber: 0,
+          numberLabel: '',
+          isMulti: false,
+          correctCount: 1,
+          answerKey: block.id,
+          answerIndex: itemIndex,
+          block,
+          question: null,
+        });
+      });
+      break;
 
     case 'MATCHING_FEATURES':
-      return block.features.map((feature, featureIndex) => ({
-        id: `${block.id}:${feature.id}`,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: block.id,
-        answerIndex: featureIndex,
-        block,
-        question: null,
-      }));
+      block.features.forEach((feature, featureIndex) => {
+        const id = `${block.id}:${feature.id}`;
+        descriptors.push({
+          id,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          rootId: id,
+          rootNumber: 0,
+          numberLabel: '',
+          isMulti: false,
+          correctCount: 1,
+          answerKey: block.id,
+          answerIndex: featureIndex,
+          block,
+          question: null,
+        });
+      });
+      break;
   }
+
+  let nextRootNumber = startRootNumber;
+  descriptors.forEach((descriptor) => {
+    descriptor.rootNumber = nextRootNumber;
+    descriptor.numberLabel = String(nextRootNumber);
+    nextRootNumber += 1;
+  });
+
+  return { descriptors, nextRootNumber };
 }
 
 function buildMultiQuestionDescriptor(
@@ -650,6 +806,9 @@ function buildMultiQuestionDescriptor(
     blockId: block.id,
     groupId,
     groupLabel,
+    rootId: block.id,
+    rootNumber: 0,
+    numberLabel: '',
     isMulti: true,
     correctCount: Math.max(1, requiredSelections),
     answerKey: block.id,
@@ -668,6 +827,9 @@ function buildSingleQuestionDescriptor(
     blockId: block.id,
     groupId,
     groupLabel,
+    rootId: block.id,
+    rootNumber: 0,
+    numberLabel: '',
     isMulti: false,
     correctCount: 1,
     answerKey: block.id,

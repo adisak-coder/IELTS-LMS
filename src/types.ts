@@ -27,6 +27,14 @@ export type QuestionType =
 export type TFNGMode = 'TFNG' | 'YNNG';
 export type AnswerRule = 'ONE_WORD' | 'TWO_WORDS' | 'THREE_WORDS';
 
+export interface SubAnswerTreeNode {
+  id: string;
+  label: string;
+  acceptedAnswers?: string[];
+  children?: SubAnswerTreeNode[];
+  required?: boolean;
+}
+
 export interface TFNGQuestion {
   id: string;
   statement: string;
@@ -187,6 +195,8 @@ export interface ClozeBlock extends BaseQuestionBlock {
   type: 'CLOZE';
   answerRule: AnswerRule;
   questions: ClozeQuestion[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface MatchingBlock extends BaseQuestionBlock {
@@ -200,6 +210,8 @@ export interface MapBlock extends BaseQuestionBlock {
   assetUrl: string;
   referenceImagePlacement?: ReferenceImagePlacement;
   questions: MapQuestion[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface MultiMCQBlock extends BaseQuestionBlock {
@@ -226,6 +238,8 @@ export interface ShortAnswerQuestion {
 export interface ShortAnswerBlock extends BaseQuestionBlock {
   type: 'SHORT_ANSWER';
   questions: ShortAnswerQuestion[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface SentenceBlank {
@@ -245,6 +259,8 @@ export interface SentenceCompletionQuestion {
 export interface SentenceCompletionBlock extends BaseQuestionBlock {
   type: 'SENTENCE_COMPLETION';
   questions: SentenceCompletionQuestion[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface DiagramLabel {
@@ -260,6 +276,8 @@ export interface DiagramLabelingBlock extends BaseQuestionBlock {
   imageUrl: string;
   referenceImagePlacement?: ReferenceImagePlacement;
   labels: DiagramLabel[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface FlowChartStep {
@@ -271,6 +289,8 @@ export interface FlowChartStep {
 export interface FlowChartBlock extends BaseQuestionBlock {
   type: 'FLOW_CHART';
   steps: FlowChartStep[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface TableCell {
@@ -287,6 +307,8 @@ export interface TableCompletionBlock extends BaseQuestionBlock {
   rows: string[][];
   cells: TableCell[];
   answerRule: AnswerRule;
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface NoteBlank {
@@ -306,6 +328,8 @@ export interface NoteCompletionQuestion {
 export interface NoteCompletionBlock extends BaseQuestionBlock {
   type: 'NOTE_COMPLETION';
   questions: NoteCompletionQuestion[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface ClassificationItem {
@@ -318,6 +342,8 @@ export interface ClassificationBlock extends BaseQuestionBlock {
   type: 'CLASSIFICATION';
   categories: string[];
   items: ClassificationItem[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export interface MatchingFeature {
@@ -330,6 +356,8 @@ export interface MatchingFeaturesBlock extends BaseQuestionBlock {
   type: 'MATCHING_FEATURES';
   features: MatchingFeature[];
   options: string[];
+  subAnswerModeEnabled?: boolean;
+  answerTree?: SubAnswerTreeNode[];
 }
 
 export type QuestionBlock =

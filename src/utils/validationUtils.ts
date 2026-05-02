@@ -19,12 +19,14 @@ import {
   ClassificationBlock,
   ClassificationItem,
   MatchingFeaturesBlock,
-  MatchingFeature
+  MatchingFeature,
+  SubAnswerTreeNode,
 } from '../types';
 import { countBlankPlaceholders } from './blankPlaceholders';
 import { resolveAcceptedAnswers } from './acceptedAnswers';
 import { analyzeTablePlaceholders, getCanonicalTableCells } from './tableCompletion';
 import { getInsertedImages, supportsInsertedImages } from './insertedImages';
+import { hasSubAnswerTreeMode, validateSubAnswerTree } from './subAnswerTree';
 
 export interface ValidationError {
   field: string;
@@ -33,6 +35,18 @@ export interface ValidationError {
 
 export function validateQuestionBlock(block: QuestionBlock): ValidationError[] {
   const errors: ValidationError[] = [];
+
+  if (hasSubAnswerTreeMode(block)) {
+    const tree = (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree;
+    errors.push(
+      ...validateSubAnswerTree(tree).map((issue) => ({
+        field: issue.field,
+        message: issue.message,
+      })),
+    );
+    errors.push(...validateInsertedImageSet(block));
+    return errors;
+  }
 
   // Type-specific validation
   switch (block.type) {

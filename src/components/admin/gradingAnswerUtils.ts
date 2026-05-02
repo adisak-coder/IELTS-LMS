@@ -106,6 +106,10 @@ function lookupHeadingText(
 }
 
 export function getQuestionPrompt(descriptor: StudentQuestionDescriptor): string {
+  if (descriptor.isSubAnswerTreeLeaf) {
+    return descriptor.treePrompt || descriptor.numberLabel || descriptor.id;
+  }
+
   const { block, question, answerIndex } = descriptor;
   switch (block.type) {
     case 'TFNG':
@@ -155,6 +159,10 @@ export function getQuestionPrompt(descriptor: StudentQuestionDescriptor): string
 }
 
 export function getCorrectAnswerValue(descriptor: StudentQuestionDescriptor): unknown {
+  if (descriptor.isSubAnswerTreeLeaf) {
+    return descriptor.treeAcceptedAnswers?.[0] ?? null;
+  }
+
   const { block, question, answerIndex } = descriptor;
 
   switch (block.type) {
@@ -242,6 +250,10 @@ export function getCorrectAnswerDisplay(descriptor: StudentQuestionDescriptor): 
 }
 
 function getAcceptedAnswersForDescriptor(descriptor: StudentQuestionDescriptor): string[] | null {
+  if (descriptor.isSubAnswerTreeLeaf) {
+    return descriptor.treeAcceptedAnswers ?? null;
+  }
+
   const { block, question, answerIndex } = descriptor;
 
   switch (block.type) {

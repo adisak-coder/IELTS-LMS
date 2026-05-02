@@ -939,14 +939,15 @@ impl ProctoringService {
         sqlx::query(
             r#"
             INSERT INTO student_violation_events (
-                id, schedule_id, attempt_id, violation_type, severity, description, payload, created_at
+                id, schedule_id, attempt_id, violation_id, violation_type, severity, description, payload, created_at
             )
-            VALUES (?, ?, ?, 'PROCTOR_WARNING', 'medium', ?, ?, NOW())
+            VALUES (?, ?, ?, ?, 'PROCTOR_WARNING', 'medium', ?, ?, NOW())
             "#,
         )
         .bind(warning_id.to_string())
         .bind(schedule_id.to_string())
         .bind(attempt_id.to_string())
+        .bind(warning_id.to_string())
         .bind(&description)
         .bind(json!({ "message": description }))
         .execute(&mut *tx)

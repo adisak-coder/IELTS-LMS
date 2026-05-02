@@ -1,8 +1,8 @@
 import React from 'react';
 import { Flag, X } from 'lucide-react';
 import {
+  countAnsweredQuestions,
   countQuestionSlots,
-  getAnsweredSlotCount,
   getQuestionNumberLabel,
   isQuestionAnswered,
   isQuestionFullyAnswered,
@@ -28,10 +28,7 @@ export function QuestionNavigator({
   onClose,
 }: QuestionNavigatorProps) {
   const totalQuestions = countQuestionSlots(questions);
-  const answeredCount = questions.reduce(
-    (count, question) => count + getAnsweredSlotCount(question, answers),
-    0,
-  );
+  const answeredCount = countAnsweredQuestions(questions, answers);
   const flaggedCount = Object.values(flags).filter(Boolean).length;
 
   const groups = questions.reduce<Record<string, StudentQuestionDescriptor[]>>((result, question) => {

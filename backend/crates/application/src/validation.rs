@@ -419,6 +419,10 @@ fn validate_question_block(
         .and_then(|t| t.as_str())
         .unwrap_or("unknown");
 
+    if let Some(root_count) = validate_sub_answer_tree_block(block_obj, &field_prefix, result) {
+        return root_count;
+    }
+
     match block_type {
         "SINGLE_MCQ" => validate_single_mcq(block_obj, &field_prefix, result),
         "SHORT_ANSWER" => validate_short_answer(block_obj, &field_prefix, result),
@@ -438,6 +442,115 @@ fn validate_question_block(
             0
         }
     }
+}
+
+fn validate_sub_answer_tree_block(
+    block: &serde_json::Map<String, serde_json::Value>,
+    field_prefix: &str,
+    result: &mut ValidationResult,
+) -> Option<i32> {
+    let enabled = block
+        .get("subAnswerModeEnabled")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+
+    let roots = block.get("answerTree").and_then(|value| value.as_array());
+    let Some(roots) = roots else {
+        result.add_error(
+            format!("{}.answerTree", field_prefix),
+            "Sub-answer mode requires answerTree.",
+        );
+        return Some(0);
+    };
+    if roots.is_empty() {
+        result.add_error(
+            format!("{}.answerTree", field_prefix),
+            "Sub-answer tree requires at least one root node.",
+        );
+        return Some(0);
+    }
+
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut leaf_count = 0i32;
+    for (root_index, root) in roots.iter().enumerate() {
+        let mut stack: Vec<(&serde_json::Value, usize)> = vec![(root, 1)];
+        while let Some((node, depth)) = stack.pop() {
+            let Some(node_obj) = node.as_object() else {
+                continue;
+            };
+            let node_id = node_obj
+                .get("id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_owned();
+            if node_id.is_empty() {
+                result.add_error(
+                    format!("{}.answerTree[{}].id", field_prefix, root_index),
+                    "Every sub-answer node must have an id.",
+                );
+            } else if !seen_ids.insert(node_id.clone()) {
+                result.add_error(
+                    format!("{}.answerTree[{}].id", field_prefix, root_index),
+                    "Sub-answer node ids must be unique within the block.",
+                );
+            }
+
+            if depth > 10 {
+                result.add_error(
+                    format!("{}.answerTree[{}]", field_prefix, root_index),
+                    "Sub-answer tree depth cannot exceed 10.",
+                );
+            }
+
+            let children = node_obj.get("children").and_then(|value| value.as_array());
+            let is_leaf = children.map(|value| value.is_empty()).unwrap_or(true);
+            if is_leaf {
+                leaf_count += 1;
+                let required = node_obj
+                    .get("required")
+                    .and_then(|value| value.as_bool())
+                    .unwrap_or(true);
+                if required {
+                    let has_accepted = node_obj
+                        .get("acceptedAnswers")
+                        .and_then(|value| value.as_array())
+                        .is_some_and(|values| {
+                            values.iter().any(|item| {
+                                item.as_str()
+                                    .map(|answer| !answer.trim().is_empty())
+                                    .unwrap_or(false)
+                            })
+                        });
+                    if !has_accepted {
+                        result.add_error(
+                            format!("{}.answerTree[{}].acceptedAnswers", field_prefix, root_index),
+                            "Required leaf nodes must define at least one accepted answer.",
+                        );
+                    }
+                }
+                continue;
+            }
+
+            if let Some(children) = children {
+                for child in children {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+    }
+
+    if leaf_count == 0 {
+        result.add_error(
+            format!("{}.answerTree", field_prefix),
+            "Sub-answer tree must contain at least one leaf node.",
+        );
+    }
+
+    Some(roots.len() as i32)
 }
 
 fn validate_single_mcq(

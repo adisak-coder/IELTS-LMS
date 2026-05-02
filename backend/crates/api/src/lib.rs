@@ -21,7 +21,7 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 
 use crate::{
-    live_updates::spawn_postgres_listener, router::build_router,
+    live_updates::spawn_live_update_listener, router::build_router,
     runtime_auto_advance::spawn_runtime_auto_advance, state::AppState,
 };
 
@@ -36,7 +36,12 @@ pub async fn run() -> std::io::Result<()> {
     let state = AppState::from_config(config)
         .await
         .map_err(std::io::Error::other)?;
-    let _live_updates = spawn_postgres_listener(state.config.clone(), state.live_updates.clone());
+    let _live_updates = spawn_live_update_listener(
+        state.config.clone(),
+        state.live_updates.clone(),
+        state.live_update_bus.clone(),
+        state.instance_id.clone(),
+    );
     let _runtime_auto_advance = spawn_runtime_auto_advance(state.clone());
     spawn_rate_limiter_cleanup(state.rate_limiter.clone());
     let app = build_router(state);

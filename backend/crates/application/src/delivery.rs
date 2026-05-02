@@ -11,6 +11,7 @@ use ielts_backend_domain::{
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
     auth::sha256_hex,
+    config::AppConfig,
     idempotency::{IdempotencyRecord, IdempotencyRepository},
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -21,6 +22,8 @@ use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
 use crate::scheduling::SchedulingService;
+
+const AUTO_SUBMIT_EVENT_FAMILY: &str = "auto_submit_schedule_attempts_requested";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryConflictReason {
@@ -134,17 +137,28 @@ impl DeliveryError {
 pub struct DeliveryService {
     pool: MySqlPool,
     idempotency_usable_hours: i64,
+    heartbeat_presence_min_write_interval_secs: u64,
 }
 
 impl DeliveryService {
     pub fn new(pool: MySqlPool) -> Self {
-        Self::with_idempotency_usable_hours(pool, 72)
+        Self::with_runtime_tuning(pool, 72, 5)
     }
 
     pub fn with_idempotency_usable_hours(pool: MySqlPool, idempotency_usable_hours: i64) -> Self {
+        Self::with_runtime_tuning(pool, idempotency_usable_hours, 5)
+    }
+
+    pub fn with_runtime_tuning(
+        pool: MySqlPool,
+        idempotency_usable_hours: i64,
+        heartbeat_presence_min_write_interval_secs: u64,
+    ) -> Self {
         Self {
             pool,
             idempotency_usable_hours: idempotency_usable_hours.max(1),
+            heartbeat_presence_min_write_interval_secs: heartbeat_presence_min_write_interval_secs
+                .max(1),
         }
     }
 
@@ -255,38 +269,28 @@ impl DeliveryService {
             )
             .await?;
 
-        let mut integrity = ensure_object(attempt.integrity.clone());
-        integrity.insert("preCheck".to_owned(), req.pre_check);
-        integrity.insert(
-            "deviceFingerprintHash".to_owned(),
-            req.device_fingerprint_hash
-                .map(Value::String)
-                .unwrap_or(Value::Null),
-        );
-        integrity.insert(
-            "clientSessionId".to_owned(),
-            Value::String(req.client_session_id.to_string()),
-        );
-        integrity.insert(
-            "lastHeartbeatStatus".to_owned(),
-            Value::String("idle".to_owned()),
-        );
-
-        let phase = determine_phase(runtime.as_ref(), true, attempt.submitted_at.is_some());
-
         let updated = self
-            .update_attempt(
-                attempt.id,
-                phase,
-                attempt.current_module.clone(),
-                attempt.current_question_id.clone(),
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-                attempt.violations_snapshot.clone(),
-                Value::Object(integrity),
-                merge_recovery(
-                    attempt.recovery.clone(),
+            .update_attempt_integrity_recovery_phase_with_retry(&attempt.id, |latest| {
+                let mut integrity = ensure_object(latest.integrity.clone());
+                integrity.insert("preCheck".to_owned(), req.pre_check.clone());
+                integrity.insert(
+                    "deviceFingerprintHash".to_owned(),
+                    req.device_fingerprint_hash
+                        .clone()
+                        .map(Value::String)
+                        .unwrap_or(Value::Null),
+                );
+                integrity.insert(
+                    "clientSessionId".to_owned(),
+                    Value::String(req.client_session_id.to_string()),
+                );
+                integrity.insert(
+                    "lastHeartbeatStatus".to_owned(),
+                    Value::String("idle".to_owned()),
+                );
+                let next_integrity = Value::Object(integrity);
+                let next_recovery = merge_recovery(
+                    latest.recovery.clone(),
                     json!({
                         "lastRecoveredAt": Value::Null,
                         "lastPersistedAt": Value::Null,
@@ -294,10 +298,13 @@ impl DeliveryService {
                         "syncState": "idle",
                         "serverAcceptedThroughSeq": 0
                     }),
-                ),
-                attempt.final_submission.clone(),
-                attempt.submitted_at,
-            )
+                );
+                let phase = determine_phase(runtime.as_ref(), true, latest.submitted_at.is_some());
+                let changed = next_integrity != latest.integrity
+                    || next_recovery != latest.recovery
+                    || phase != latest.phase;
+                Ok((phase, next_integrity, next_recovery, changed))
+            })
             .await?;
 
         sqlx::query(
@@ -353,43 +360,45 @@ impl DeliveryService {
             .and_then(|value| value.get("completedAt"))
             .and_then(Value::as_str)
             .is_some();
-        let phase = determine_phase(
-            runtime.as_ref(),
-            has_precheck,
-            attempt.submitted_at.is_some(),
-        );
-        let client_session_id_value = Value::String(req.client_session_id.to_string());
-        let mut integrity = ensure_object(attempt.integrity.clone());
-        integrity.insert(
-            "clientSessionId".to_owned(),
-            client_session_id_value.clone(),
-        );
-        let next_integrity = Value::Object(integrity);
-        let next_recovery = merge_recovery(
-            attempt.recovery.clone(),
-            json!({ "clientSessionId": req.client_session_id }),
-        );
-        let needs_client_session_id_in_integrity = next_integrity != attempt.integrity;
-        let needs_client_session_id_in_recovery = next_recovery != attempt.recovery;
+        let phase = determine_phase(runtime.as_ref(), has_precheck, attempt.submitted_at.is_some());
+        let client_session_id = req.client_session_id.to_string();
 
         let attempt = if attempt.phase != phase
-            || needs_client_session_id_in_integrity
-            || needs_client_session_id_in_recovery
+            || attempt
+                .integrity
+                .get("clientSessionId")
+                .and_then(Value::as_str)
+                != Some(client_session_id.as_str())
+            || attempt
+                .recovery
+                .get("clientSessionId")
+                .and_then(Value::as_str)
+                != Some(client_session_id.as_str())
         {
-            self.update_attempt(
-                attempt.id,
-                phase,
-                attempt.current_module.clone(),
-                attempt.current_question_id.clone(),
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-                attempt.violations_snapshot.clone(),
-                next_integrity,
-                next_recovery,
-                attempt.final_submission.clone(),
-                attempt.submitted_at,
-            )
+            self.update_attempt_integrity_recovery_phase_with_retry(&attempt.id, |latest| {
+                let has_precheck = latest
+                    .integrity
+                    .get("preCheck")
+                    .and_then(|value| value.get("completedAt"))
+                    .and_then(Value::as_str)
+                    .is_some();
+                let phase =
+                    determine_phase(runtime.as_ref(), has_precheck, latest.submitted_at.is_some());
+                let mut integrity = ensure_object(latest.integrity.clone());
+                integrity.insert(
+                    "clientSessionId".to_owned(),
+                    Value::String(client_session_id.clone()),
+                );
+                let next_integrity = Value::Object(integrity);
+                let next_recovery = merge_recovery(
+                    latest.recovery.clone(),
+                    json!({ "clientSessionId": client_session_id.clone() }),
+                );
+                let changed = phase != latest.phase
+                    || next_integrity != latest.integrity
+                    || next_recovery != latest.recovery;
+                Ok((phase, next_integrity, next_recovery, changed))
+            })
             .await?
         } else {
             attempt
@@ -569,7 +578,7 @@ impl DeliveryService {
             .and_then(|gate| gate.current_section_key.as_deref());
 
         let version = self
-            .load_version(attempt.published_version_id.clone())
+            .load_version_on_connection(tx.as_mut(), attempt.published_version_id.clone())
             .await?;
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
@@ -1042,55 +1051,60 @@ impl DeliveryService {
                 &req.client_session_id,
                 "ok",
                 None,
+                false,
             )
             .await?;
             return Ok(attempt);
         }
 
-        let mut integrity = ensure_object(attempt.integrity.clone());
-        integrity.insert(
-            "lastHeartbeatAt".to_owned(),
-            Value::String(now.to_rfc3339()),
-        );
-        integrity.insert(
-            "lastHeartbeatStatus".to_owned(),
-            Value::String(match req.event_type.as_str() {
-                "disconnect" | "lost" => "lost".to_owned(),
-                _ => "ok".to_owned(),
-            }),
-        );
-        integrity.insert(
-            "clientSessionId".to_owned(),
-            Value::String(req.client_session_id.to_string()),
-        );
-        if req.event_type == "disconnect" || req.event_type == "lost" {
-            integrity.insert(
-                "lastDisconnectAt".to_owned(),
-                Value::String(now.to_rfc3339()),
-            );
-        }
-        if req.event_type == "reconnect" {
-            integrity.insert(
-                "lastReconnectAt".to_owned(),
-                Value::String(now.to_rfc3339()),
-            );
-        }
-
+        let client_session_id = req.client_session_id.to_string();
         let updated = self
-            .update_attempt(
-                attempt.id,
-                attempt.phase.clone(),
-                attempt.current_module.clone(),
-                attempt.current_question_id.clone(),
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-                attempt.violations_snapshot.clone(),
-                Value::Object(integrity),
-                attempt.recovery.clone(),
-                attempt.final_submission.clone(),
-                attempt.submitted_at,
-            )
+            .update_attempt_integrity_recovery_phase_with_retry(&attempt.id, |latest| {
+                let mut integrity = ensure_object(latest.integrity.clone());
+                integrity.insert(
+                    "lastHeartbeatAt".to_owned(),
+                    Value::String(now.to_rfc3339()),
+                );
+                integrity.insert(
+                    "lastHeartbeatStatus".to_owned(),
+                    Value::String(match req.event_type.as_str() {
+                        "disconnect" | "lost" => "lost".to_owned(),
+                        _ => "ok".to_owned(),
+                    }),
+                );
+                integrity.insert(
+                    "clientSessionId".to_owned(),
+                    Value::String(client_session_id.clone()),
+                );
+                if req.event_type == "disconnect" || req.event_type == "lost" {
+                    integrity.insert(
+                        "lastDisconnectAt".to_owned(),
+                        Value::String(now.to_rfc3339()),
+                    );
+                }
+                if req.event_type == "reconnect" {
+                    integrity.insert(
+                        "lastReconnectAt".to_owned(),
+                        Value::String(now.to_rfc3339()),
+                    );
+                }
+                let next_integrity = Value::Object(integrity);
+                let changed = next_integrity != latest.integrity
+                    || latest
+                        .recovery
+                        .get("clientSessionId")
+                        .and_then(Value::as_str)
+                        != Some(client_session_id.as_str());
+                let next_recovery = if changed {
+                    merge_recovery(
+                        latest.recovery.clone(),
+                        json!({ "clientSessionId": client_session_id.clone() }),
+                    )
+                } else {
+                    latest.recovery.clone()
+                };
+                Ok((latest.phase.clone(), next_integrity, next_recovery, changed))
+            })
             .await?;
 
         let heartbeat_status = match req.event_type.as_str() {
@@ -1103,6 +1117,7 @@ impl DeliveryService {
             &req.client_session_id,
             heartbeat_status,
             Some(req.event_type.as_str()),
+            true,
         )
         .await?;
 
@@ -1164,9 +1179,11 @@ impl DeliveryService {
         client_session_id: &str,
         heartbeat_status: &str,
         transition: Option<&str>,
+        force_touch: bool,
     ) -> Result<(), DeliveryError> {
         let set_disconnect = transition == Some("disconnect") || transition == Some("lost");
         let set_reconnect = transition == Some("reconnect");
+        let min_interval_secs = self.heartbeat_presence_min_write_interval_secs.max(1);
 
         sqlx::query(
             r#"
@@ -1184,11 +1201,19 @@ impl DeliveryService {
             ON DUPLICATE KEY UPDATE
                 schedule_id = VALUES(schedule_id),
                 client_session_id = VALUES(client_session_id),
-                last_heartbeat_at = VALUES(last_heartbeat_at),
+                last_heartbeat_at = IF(
+                    ? OR TIMESTAMPDIFF(SECOND, last_heartbeat_at, NOW()) >= ?,
+                    VALUES(last_heartbeat_at),
+                    last_heartbeat_at
+                ),
                 last_heartbeat_status = VALUES(last_heartbeat_status),
                 last_disconnect_at = IF(?, NOW(), last_disconnect_at),
                 last_reconnect_at = IF(?, NOW(), last_reconnect_at),
-                updated_at = NOW()
+                updated_at = IF(
+                    ? OR TIMESTAMPDIFF(SECOND, last_heartbeat_at, NOW()) >= ?,
+                    NOW(),
+                    updated_at
+                )
             "#,
         )
         .bind(attempt_id)
@@ -1197,8 +1222,12 @@ impl DeliveryService {
         .bind(heartbeat_status)
         .bind(set_disconnect)
         .bind(set_reconnect)
+        .bind(force_touch)
+        .bind(min_interval_secs)
         .bind(set_disconnect)
         .bind(set_reconnect)
+        .bind(force_touch)
+        .bind(min_interval_secs)
         .execute(&self.pool)
         .await?;
 
@@ -1371,7 +1400,7 @@ impl DeliveryService {
         }
 
         let version = self
-            .load_version(attempt.published_version_id.clone())
+            .load_version_on_connection(tx.as_mut(), attempt.published_version_id.clone())
             .await?;
         let unanswered_submission_policy = version
             .config_snapshot
@@ -1531,9 +1560,9 @@ impl DeliveryService {
         let now = Utc::now();
 
         let attempt_id = Uuid::new_v4();
-        sqlx::query(
+        let insert_result = sqlx::query(
             r#"
-            INSERT INTO student_attempts (
+            INSERT IGNORE INTO student_attempts (
                 id, schedule_id, registration_id, wcode, student_key, organization_id, exam_id, published_version_id,
                 exam_title, candidate_id, candidate_name, candidate_email, phase, current_module,
                 answers, writing_answers, flags, violations_snapshot, integrity, recovery,
@@ -1573,11 +1602,20 @@ impl DeliveryService {
             "lastLocalMutationAt": null,
             "lastPersistedAt": null,
             "pendingMutationCount": 0,
-            "syncState": "idle",
-            "serverAcceptedThroughSeq": 0
-        }))
+                "syncState": "idle",
+                "serverAcceptedThroughSeq": 0
+            }))
         .execute(&self.pool)
         .await?;
+
+        if insert_result.rows_affected() == 0 {
+            return self
+                .load_attempt_by_student_key(schedule.id.clone(), student_key)
+                .await?
+                .ok_or(DeliveryError::Internal(
+                    "Attempt insert was a duplicate but no row was found.".to_owned(),
+                ));
+        }
 
         sqlx::query(
             r#"
@@ -1667,6 +1705,92 @@ impl DeliveryService {
             .map_err(DeliveryError::from)
     }
 
+    async fn update_attempt_integrity_recovery_phase_with_retry<F>(
+        &self,
+        attempt_id: &str,
+        mut builder: F,
+    ) -> Result<StudentAttempt, DeliveryError>
+    where
+        F: FnMut(&StudentAttempt) -> Result<(String, Value, Value, bool), DeliveryError>,
+    {
+        const MAX_RETRIES: usize = 3;
+        for retry in 0..MAX_RETRIES {
+            let latest = self
+                .load_attempt_by_id(attempt_id.to_owned())
+                .await?
+                .ok_or(DeliveryError::NotFound)?;
+            let (phase, integrity, recovery, changed) = builder(&latest)?;
+
+            if !changed {
+                return Ok(latest);
+            }
+
+            if let Some(updated) = self
+                .update_attempt_integrity_recovery_phase_if_revision(
+                    &latest.id,
+                    latest.revision,
+                    &phase,
+                    &integrity,
+                    &recovery,
+                )
+                .await?
+            {
+                return Ok(updated);
+            }
+
+            let _ = retry;
+        }
+
+        Err(DeliveryError::conflict_with_context(
+            DeliveryConflictReason::BaseRevisionMismatch,
+            "Attempt update conflicted with a concurrent write.",
+            None,
+            None,
+            None,
+        ))
+    }
+
+    async fn update_attempt_integrity_recovery_phase_if_revision(
+        &self,
+        attempt_id: &str,
+        expected_revision: i32,
+        phase: &str,
+        integrity: &Value,
+        recovery: &Value,
+    ) -> Result<Option<StudentAttempt>, DeliveryError> {
+        let result = sqlx::query(
+            r#"
+            UPDATE student_attempts
+            SET
+                phase = ?,
+                integrity = ?,
+                recovery = ?,
+                updated_at = NOW(),
+                revision = revision + 1
+            WHERE id = ?
+              AND revision = ?
+            "#,
+        )
+        .bind(phase)
+        .bind(integrity)
+        .bind(recovery)
+        .bind(attempt_id)
+        .bind(expected_revision)
+        .execute(&self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+
+        let updated =
+            sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
+                .bind(attempt_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(updated)
+    }
+
     async fn load_schedule(&self, schedule_id: Uuid) -> Result<ExamSchedule, DeliveryError> {
         sqlx::query_as::<_, ExamSchedule>("SELECT * FROM exam_schedules WHERE id = ?")
             .bind(schedule_id.to_string())
@@ -1683,6 +1807,20 @@ impl DeliveryService {
             .fetch_optional(&self.pool)
             .await?
             .ok_or(DeliveryError::NotFound)
+    }
+
+    async fn load_version_on_connection(
+        &self,
+        conn: &mut MySqlConnection,
+        version_id: String,
+    ) -> Result<ExamVersion, DeliveryError> {
+        sqlx::query_as::<_, ExamVersion>(
+            "SELECT id, CAST(exam_id AS CHAR) as exam_id, version_number, CAST(parent_version_id AS CHAR) as parent_version_id, content_snapshot, config_snapshot, validation_snapshot, CAST(created_by AS CHAR) as created_by, created_at, publish_notes, is_draft, is_published, revision FROM exam_versions WHERE id = ?"
+        )
+        .bind(&version_id)
+        .fetch_optional(conn)
+        .await?
+        .ok_or(DeliveryError::NotFound)
     }
 
     async fn load_runtime(
@@ -1949,61 +2087,127 @@ pub(crate) async fn auto_submit_schedule_attempts_in_tx(
     schedule_id: Uuid,
     completion_reason: &str,
 ) -> Result<(), DeliveryError> {
-    let pending_attempts = sqlx::query_as::<_, StudentAttempt>(
-        "SELECT * FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL FOR UPDATE",
+    let configured_batch_size = AppConfig::from_env().auto_submit_batch_size.max(1);
+    let pending_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL",
     )
     .bind(schedule_id.to_string())
-    .fetch_all(&mut *connection)
+    .fetch_one(&mut *connection)
     .await?;
-
-    if pending_attempts.is_empty() {
+    if pending_count == 0 {
         return Ok(());
     }
 
-    let now = Utc::now();
-    for attempt in pending_attempts {
-        let submission_id = format!("submission-{}", Uuid::new_v4().simple());
-        let final_submission = json!({
-            "submissionId": submission_id,
-            "submittedAt": now,
-            "answers": attempt.answers,
-            "writingAnswers": attempt.writing_answers,
-            "flags": attempt.flags,
-            "completionReason": completion_reason,
-            "autoSubmission": true
-        });
-        let recovery = merge_recovery(
-            attempt.recovery.clone(),
-            json!({
-                "lastPersistedAt": now,
-                "pendingMutationCount": 0,
-                "syncState": "saved"
-            }),
-        );
-
-        sqlx::query(
-            r#"
-            UPDATE student_attempts
-            SET
-                phase = ?,
-                recovery = ?,
-                final_submission = ?,
-                submitted_at = ?,
-                updated_at = NOW(),
-                revision = revision + 1
-            WHERE id = ?
-            "#,
+    let event_id = Uuid::new_v4().hyphenated().to_string();
+    sqlx::query(
+        r#"
+        INSERT INTO outbox_events (
+            id, aggregate_kind, aggregate_id, revision, event_family, payload, created_at, publish_attempts
         )
-        .bind("post-exam")
-        .bind(recovery)
-        .bind(&final_submission)
-        .bind(now)
-        .bind(&attempt.id)
-        .execute(&mut *connection)
-        .await?;
-    }
+        VALUES (?, ?, ?, ?, ?, ?, NOW(), 0)
+        "#,
+    )
+    .bind(event_id)
+    .bind("schedule_runtime")
+    .bind(schedule_id.to_string())
+    .bind(0_i64)
+    .bind(AUTO_SUBMIT_EVENT_FAMILY)
+    .bind(json!({
+        "scheduleId": schedule_id,
+        "completionReason": completion_reason,
+        "batchSize": configured_batch_size,
+    }))
+    .execute(&mut *connection)
+    .await?;
 
     Ok(())
+}
+
+pub async fn finalize_pending_schedule_attempts(
+    pool: &MySqlPool,
+    schedule_id: Uuid,
+    completion_reason: &str,
+    batch_size: i64,
+) -> Result<u64, DeliveryError> {
+    let batch_size = batch_size.max(1);
+    let mut total_finalized = 0_u64;
+
+    loop {
+        let mut tx = pool.begin().await?;
+        let pending_attempt_ids = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL ORDER BY id ASC LIMIT ? FOR UPDATE SKIP LOCKED",
+        )
+        .bind(schedule_id.to_string())
+        .bind(batch_size)
+        .fetch_all(tx.as_mut())
+        .await?;
+
+        if pending_attempt_ids.is_empty() {
+            tx.commit().await?;
+            break;
+        }
+
+        let mut query = QueryBuilder::<MySql>::new("SELECT * FROM student_attempts WHERE id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for id in &pending_attempt_ids {
+                separated.push_bind(id);
+            }
+        }
+        query.push(") ORDER BY id ASC");
+        let pending_attempts = query
+            .build_query_as::<StudentAttempt>()
+            .fetch_all(tx.as_mut())
+            .await?;
+
+        let now = Utc::now();
+        for attempt in pending_attempts {
+            let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+            let final_submission = json!({
+                "submissionId": submission_id,
+                "submittedAt": now,
+                "answers": attempt.answers,
+                "writingAnswers": attempt.writing_answers,
+                "flags": attempt.flags,
+                "completionReason": completion_reason,
+                "autoSubmission": true
+            });
+            let recovery = merge_recovery(
+                attempt.recovery.clone(),
+                json!({
+                    "lastPersistedAt": now,
+                    "pendingMutationCount": 0,
+                    "syncState": "saved"
+                }),
+            );
+
+            sqlx::query(
+                r#"
+                UPDATE student_attempts
+                SET
+                    phase = ?,
+                    recovery = ?,
+                    final_submission = ?,
+                    submitted_at = ?,
+                    updated_at = NOW(),
+                    revision = revision + 1
+                WHERE id = ?
+                "#,
+            )
+            .bind("post-exam")
+            .bind(recovery)
+            .bind(&final_submission)
+            .bind(now)
+            .bind(&attempt.id)
+            .execute(tx.as_mut())
+            .await?;
+            total_finalized += 1;
+        }
+
+        tx.commit().await?;
+    }
+
+    Ok(total_finalized)
 }
 
 #[derive(sqlx::FromRow)]
@@ -2228,6 +2432,12 @@ enum AnswerConstraint {
 struct AnswerSchema {
     constraints: HashMap<String, AnswerConstraint>,
     sections: HashMap<String, String>,
+    completion_roots: Vec<CompletionRootRule>,
+}
+
+#[derive(Debug, Clone)]
+struct CompletionRootRule {
+    required_leaf_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2281,6 +2491,27 @@ fn answered_slots_for_constraint(constraint: &AnswerConstraint, value: Option<&V
 }
 
 fn compute_answer_completion(schema: &AnswerSchema, answers: &Value) -> AnswerCompletion {
+    if !schema.completion_roots.is_empty() {
+        let mut answered_roots = 0usize;
+        for root in &schema.completion_roots {
+            if root.required_leaf_ids.is_empty() {
+                continue;
+            }
+            let all_required_answered = root.required_leaf_ids.iter().all(|leaf_id| {
+                answers
+                    .get(leaf_id)
+                    .is_some_and(is_answered_value)
+            });
+            if all_required_answered {
+                answered_roots += 1;
+            }
+        }
+        return AnswerCompletion {
+            answered_slots: answered_roots,
+            total_slots: schema.completion_roots.len(),
+        };
+    }
+
     let mut total_slots = 0usize;
     let mut answered_slots = 0usize;
 
@@ -2320,6 +2551,7 @@ fn build_writing_task_ids(config_snapshot: &Value) -> HashSet<String> {
 fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, DeliveryError> {
     let mut constraints: HashMap<String, AnswerConstraint> = HashMap::new();
     let mut sections: HashMap<String, String> = HashMap::new();
+    let mut completion_roots: Vec<CompletionRootRule> = Vec::new();
 
     if let Some(passages) = content_snapshot
         .get("reading")
@@ -2330,6 +2562,13 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
             if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
                 for block in blocks {
                     index_block(block, "reading", &mut constraints, &mut sections)?;
+                    index_tree_completion_roots(
+                        block,
+                        "reading",
+                        &mut constraints,
+                        &mut sections,
+                        &mut completion_roots,
+                    )?;
                 }
             }
         }
@@ -2344,6 +2583,13 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
             if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
                 for block in blocks {
                     index_block(block, "listening", &mut constraints, &mut sections)?;
+                    index_tree_completion_roots(
+                        block,
+                        "listening",
+                        &mut constraints,
+                        &mut sections,
+                        &mut completion_roots,
+                    )?;
                 }
             }
         }
@@ -2352,7 +2598,72 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
     Ok(AnswerSchema {
         constraints,
         sections,
+        completion_roots,
     })
+}
+
+fn index_tree_completion_roots(
+    block: &Value,
+    section_key: &str,
+    constraints: &mut HashMap<String, AnswerConstraint>,
+    sections: &mut HashMap<String, String>,
+    completion_roots: &mut Vec<CompletionRootRule>,
+) -> Result<(), DeliveryError> {
+    let enabled = block
+        .get("subAnswerModeEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return Ok(());
+    }
+
+    let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+        return Ok(());
+    };
+
+    let Some(roots) = block.get("answerTree").and_then(Value::as_array) else {
+        return Ok(());
+    };
+
+    for root in roots {
+        let Some(root_id) = root.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut required_leaf_ids = Vec::new();
+        let mut stack: Vec<(&Value, usize)> = vec![(root, 1)];
+        while let Some((node, depth)) = stack.pop() {
+            if depth > 10 {
+                return Err(DeliveryError::Validation(
+                    "Sub-answer tree depth cannot exceed 10.".to_owned(),
+                ));
+            }
+            let children = node.get("children").and_then(Value::as_array);
+            let is_leaf = children.map(|items| items.is_empty()).unwrap_or(true);
+            if is_leaf {
+                let Some(node_id) = node.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let leaf_id = format!("{block_id}::tree::{root_id}::{node_id}");
+                constraints.insert(leaf_id.clone(), AnswerConstraint::Text);
+                register_section(sections, &leaf_id, section_key)?;
+                let required = node.get("required").and_then(Value::as_bool).unwrap_or(true);
+                if required {
+                    required_leaf_ids.push(leaf_id);
+                }
+                continue;
+            }
+            if let Some(children) = children {
+                for child in children {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+        if !required_leaf_ids.is_empty() {
+            completion_roots.push(CompletionRootRule { required_leaf_ids });
+        }
+    }
+
+    Ok(())
 }
 
 fn index_block(
@@ -2361,6 +2672,10 @@ fn index_block(
     constraints: &mut HashMap<String, AnswerConstraint>,
     sections: &mut HashMap<String, String>,
 ) -> Result<(), DeliveryError> {
+    if is_sub_answer_tree_mode(block) {
+        return Ok(());
+    }
+
     let Some(block_type) = block.get("type").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -2570,6 +2885,17 @@ fn index_block(
     }
 
     Ok(())
+}
+
+fn is_sub_answer_tree_mode(block: &Value) -> bool {
+    block
+        .get("subAnswerModeEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        && block
+            .get("answerTree")
+            .and_then(Value::as_array)
+            .is_some_and(|roots| !roots.is_empty())
 }
 
 fn matching_heading_value(index: usize) -> String {
@@ -3951,6 +4277,7 @@ mod tests {
                 ),
             )]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
+            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = ["task-1".to_owned()].into_iter().collect();
 
@@ -4056,6 +4383,7 @@ mod tests {
                 AnswerConstraint::ArrayText { max_len: 10 },
             )]),
             sections: HashMap::from_iter([(question_id.clone(), "listening".to_owned())]),
+            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = HashSet::new();
 
@@ -4139,6 +4467,7 @@ mod tests {
                 AnswerConstraint::ArrayText { max_len: 10 },
             )]),
             sections: HashMap::from_iter([(question_id.clone(), "listening".to_owned())]),
+            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = HashSet::new();
 
@@ -4237,6 +4566,7 @@ mod tests {
         let answer_schema = AnswerSchema {
             constraints: HashMap::from_iter([("q1".to_owned(), AnswerConstraint::Text)]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
+            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = ["task1".to_owned()].into_iter().collect();
         let mut answers = json!({});
@@ -4291,6 +4621,7 @@ mod tests {
                 ("sentence-1".to_owned(), "reading".to_owned()),
                 ("sentence-1:blank-1".to_owned(), "reading".to_owned()),
             ]),
+            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = HashSet::new();
         let mut answers = json!({});
@@ -4471,6 +4802,7 @@ mod tests {
                 ),
             ]),
             sections: HashMap::new(),
+            completion_roots: Vec::new(),
         };
 
         let answers = json!({
@@ -4486,6 +4818,84 @@ mod tests {
     }
 
     #[test]
+    fn build_answer_schema_indexes_tree_leaf_ids_and_completion_roots() {
+        let schema = build_answer_schema(&json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "tree-block",
+                        "type": "SHORT_ANSWER",
+                        "subAnswerModeEnabled": true,
+                        "answerTree": [{
+                            "id": "root-a",
+                            "label": "Root A",
+                            "children": [
+                                { "id": "leaf-a", "label": "Leaf A", "acceptedAnswers": ["cat"], "required": true },
+                                { "id": "leaf-b", "label": "Leaf B", "acceptedAnswers": ["dog"], "required": true }
+                            ]
+                        }]
+                    }]
+                }]
+            }
+        }))
+        .expect("schema");
+
+        assert!(schema
+            .constraints
+            .contains_key("tree-block::tree::root-a::leaf-a"));
+        assert!(schema
+            .constraints
+            .contains_key("tree-block::tree::root-a::leaf-b"));
+        assert_eq!(
+            schema
+                .sections
+                .get("tree-block::tree::root-a::leaf-a")
+                .map(String::as_str),
+            Some("reading")
+        );
+        assert_eq!(schema.completion_roots.len(), 1);
+        let mut required = schema.completion_roots[0].required_leaf_ids.clone();
+        required.sort();
+        assert_eq!(
+            required,
+            vec![
+                "tree-block::tree::root-a::leaf-a".to_owned(),
+                "tree-block::tree::root-a::leaf-b".to_owned(),
+            ],
+        );
+    }
+
+    #[test]
+    fn compute_answer_completion_uses_root_rules_for_tree_mode() {
+        let schema = AnswerSchema {
+            constraints: HashMap::new(),
+            sections: HashMap::new(),
+            completion_roots: vec![
+                CompletionRootRule {
+                    required_leaf_ids: vec![
+                        "tree-block::tree::root-a::leaf-a".to_owned(),
+                        "tree-block::tree::root-a::leaf-b".to_owned(),
+                    ],
+                },
+                CompletionRootRule {
+                    required_leaf_ids: vec!["tree-block::tree::root-b::leaf-c".to_owned()],
+                },
+            ],
+        };
+
+        let completion = compute_answer_completion(
+            &schema,
+            &json!({
+                "tree-block::tree::root-a::leaf-a": "cat",
+                "tree-block::tree::root-a::leaf-b": "dog",
+                "tree-block::tree::root-b::leaf-c": ""
+            }),
+        );
+        assert_eq!(completion.total_slots, 2);
+        assert_eq!(completion.answered_slots, 1);
+    }
+
+    #[test]
     fn submit_final_snapshot_validation_accepts_known_answers_writing_and_flags() {
         let schema = AnswerSchema {
             constraints: HashMap::from_iter([(
@@ -4493,6 +4903,7 @@ mod tests {
                 AnswerConstraint::Enum(HashSet::from_iter(["A".to_owned(), "B".to_owned()])),
             )]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
+            completion_roots: Vec::new(),
         };
         let writing_task_ids = HashSet::from_iter(["task1".to_owned()]);
 
@@ -4516,6 +4927,7 @@ mod tests {
         let schema = AnswerSchema {
             constraints: HashMap::from_iter([("q1".to_owned(), AnswerConstraint::Text)]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
+            completion_roots: Vec::new(),
         };
 
         let err = validate_final_answers_snapshot(Some(&json!({ "q-missing": "A" })), &schema)

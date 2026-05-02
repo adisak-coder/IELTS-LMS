@@ -78,6 +78,7 @@ pub async fn run_once(
         .run_projection_cycle(GradingProjectionRequest {
             watermark: state.watermark,
             bootstrap_after,
+            batch_size: Some(config.grading_projection_batch_size.max(1)),
         })
         .await
         .map_err(grading_error_to_sqlx)?;

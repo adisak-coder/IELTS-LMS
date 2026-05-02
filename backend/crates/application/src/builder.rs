@@ -153,7 +153,7 @@ impl BuilderService {
         .bind(req.visibility)
         .bind(&req.organization_id)
         .bind(ctx.actor_id.to_string())
-        .bind(1)
+        .bind(4)
         .bind(0)
         .execute(&self.pool)
         .await?;

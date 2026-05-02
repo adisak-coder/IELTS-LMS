@@ -2,7 +2,6 @@
 mod mysql;
 
 use serde_json::json;
-use std::time::Duration;
 
 use ielts_backend_infrastructure::outbox::OutboxRepository;
 
@@ -17,6 +16,7 @@ const INFRA_MIGRATIONS: &[&str] = &[
     "0008_grading_results.sql",
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
+    "0017_production_hardening.sql",
 ];
 
 // These tests use PostgreSQL-specific LISTEN/NOTIFY mechanism which doesn't exist in MySQL.
@@ -40,13 +40,17 @@ async fn outbox_rows_can_be_claimed_and_marked_published() {
         .expect("enqueue outbox event");
     assert_eq!(created.aggregate_kind, "schedule_runtime");
 
-    let claimed = repository.claim_batch(10).await.expect("claim batch");
+    let claimed = repository
+        .claim_batch(10, "test-worker", 60)
+        .await
+        .expect("claim batch");
     assert_eq!(claimed.len(), 1);
     assert_eq!(claimed[0].id, created.id);
     assert_eq!(claimed[0].publish_attempts, 1);
+    let claim_token = claimed[0].claim_token.clone().expect("claim token");
 
     let published = repository
-        .mark_published(&[created.id])
+        .mark_published(&claim_token, &[created.id])
         .await
         .expect("mark published");
     assert_eq!(published, 1);

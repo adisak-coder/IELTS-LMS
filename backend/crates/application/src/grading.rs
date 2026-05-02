@@ -35,6 +35,7 @@ pub enum GradingError {
 pub struct GradingProjectionRequest {
     pub watermark: Option<DateTime<Utc>>,
     pub bootstrap_after: Option<DateTime<Utc>>,
+    pub batch_size: Option<i64>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1105,7 +1106,11 @@ impl GradingService {
     ) -> Result<GradingProjectionReport, GradingError> {
         let schedule_sync = self.sync_sessions_from_schedules(request.watermark).await?;
         let submission_sync = self
-            .sync_submissions_from_attempts(request.watermark, request.bootstrap_after)
+            .sync_submissions_from_attempts(
+                request.watermark,
+                request.bootstrap_after,
+                request.batch_size.unwrap_or(500).max(1),
+            )
             .await?;
         let mut affected_schedule_ids = schedule_sync.affected_schedule_ids;
         affected_schedule_ids.extend(submission_sync.affected_schedule_ids.clone());
@@ -1252,6 +1257,7 @@ impl GradingService {
         &self,
         watermark: Option<DateTime<Utc>>,
         bootstrap_after: Option<DateTime<Utc>>,
+        batch_size: i64,
     ) -> Result<SubmissionSyncReport, GradingError> {
         let attempts = if let Some(watermark) = watermark {
             sqlx::query_as::<_, AttemptSubmissionRow>(
@@ -1273,12 +1279,14 @@ impl GradingService {
                 FROM student_attempts a
                 JOIN exam_schedules s ON s.id = a.schedule_id
                 JOIN exam_versions v ON v.id = a.published_version_id
-                WHERE a.final_submission IS NOT NULL
+                WHERE a.submitted_at IS NOT NULL
                   AND a.updated_at >= ?
-                ORDER BY a.updated_at ASC
+                ORDER BY a.updated_at ASC, a.id ASC
+                LIMIT ?
                 "#,
             )
             .bind(watermark)
+            .bind(batch_size)
             .fetch_all(&self.pool)
             .await?
         } else if let Some(bootstrap_after) = bootstrap_after {
@@ -1301,12 +1309,14 @@ impl GradingService {
                 FROM student_attempts a
                 JOIN exam_schedules s ON s.id = a.schedule_id
                 JOIN exam_versions v ON v.id = a.published_version_id
-                WHERE a.final_submission IS NOT NULL
+                WHERE a.submitted_at IS NOT NULL
                   AND a.updated_at >= ?
-                ORDER BY a.updated_at ASC
+                ORDER BY a.updated_at ASC, a.id ASC
+                LIMIT ?
                 "#,
             )
             .bind(bootstrap_after)
+            .bind(batch_size)
             .fetch_all(&self.pool)
             .await?
         } else {
@@ -1329,10 +1339,12 @@ impl GradingService {
                 FROM student_attempts a
                 JOIN exam_schedules s ON s.id = a.schedule_id
                 JOIN exam_versions v ON v.id = a.published_version_id
-                WHERE a.final_submission IS NOT NULL
-                ORDER BY a.updated_at ASC
+                WHERE a.submitted_at IS NOT NULL
+                ORDER BY a.updated_at ASC, a.id ASC
+                LIMIT ?
                 "#,
             )
+            .bind(batch_size)
             .fetch_all(&self.pool)
             .await?
         };
@@ -2014,6 +2026,10 @@ fn index_objective_block_sections(
     section_key: &str,
     sections: &mut HashMap<String, String>,
 ) {
+    if register_sub_answer_tree_sections(block, section_key, sections) {
+        return;
+    }
+
     let Some(block_type) = block.get("type").and_then(Value::as_str) else {
         return;
     };
@@ -2066,6 +2082,58 @@ fn index_objective_block_sections(
         }
         _ => {}
     }
+}
+
+fn register_sub_answer_tree_sections(
+    block: &Value,
+    section_key: &str,
+    sections: &mut HashMap<String, String>,
+) -> bool {
+    let enabled = block
+        .get("subAnswerModeEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return false;
+    }
+
+    let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(roots) = block.get("answerTree").and_then(Value::as_array) else {
+        return false;
+    };
+    if roots.is_empty() {
+        return false;
+    }
+
+    for root in roots {
+        let Some(root_id) = root.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut stack: Vec<&Value> = vec![root];
+        while let Some(node) = stack.pop() {
+            let children = node.get("children").and_then(Value::as_array);
+            let is_leaf = children.map(|items| items.is_empty()).unwrap_or(true);
+            if is_leaf {
+                if let Some(node_id) = node.get("id").and_then(Value::as_str) {
+                    register_answer_section(
+                        sections,
+                        &format!("{block_id}::tree::{root_id}::{node_id}"),
+                        section_key,
+                    );
+                }
+                continue;
+            }
+            if let Some(children) = children {
+                for child in children {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+
+    true
 }
 
 fn register_question_array_sections(
@@ -2228,6 +2296,52 @@ mod tests {
         assert_eq!(
             filter_answers_for_section(&answers, &answer_sections, "reading"),
             json!({ "reading-q1": "B" })
+        );
+    }
+
+    #[test]
+    fn objective_sections_include_tree_leaf_answer_ids() {
+        let answers = json!({
+            "tree-reading::tree::root-a::leaf-a": "cat",
+            "tree-listening::tree::root-b::leaf-x": "dog"
+        });
+        let content_snapshot = json!({
+            "listening": {
+                "parts": [{
+                    "blocks": [{
+                        "id": "tree-listening",
+                        "type": "SHORT_ANSWER",
+                        "subAnswerModeEnabled": true,
+                        "answerTree": [{
+                            "id": "root-b",
+                            "children": [{ "id": "leaf-x", "acceptedAnswers": ["dog"] }]
+                        }]
+                    }]
+                }]
+            },
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "tree-reading",
+                        "type": "SHORT_ANSWER",
+                        "subAnswerModeEnabled": true,
+                        "answerTree": [{
+                            "id": "root-a",
+                            "children": [{ "id": "leaf-a", "acceptedAnswers": ["cat"] }]
+                        }]
+                    }]
+                }]
+            }
+        });
+
+        let answer_sections = build_objective_answer_sections(&content_snapshot);
+        assert_eq!(
+            filter_answers_for_section(&answers, &answer_sections, "reading"),
+            json!({ "tree-reading::tree::root-a::leaf-a": "cat" })
+        );
+        assert_eq!(
+            filter_answers_for_section(&answers, &answer_sections, "listening"),
+            json!({ "tree-listening::tree::root-b::leaf-x": "dog" })
         );
     }
 }

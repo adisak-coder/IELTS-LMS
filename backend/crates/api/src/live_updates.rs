@@ -5,10 +5,11 @@ use std::{
         atomic::{AtomicI64, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
 
 use ielts_backend_domain::schedule::LiveUpdateEvent;
-use ielts_backend_infrastructure::config::AppConfig;
+use ielts_backend_infrastructure::{config::AppConfig, live_update_bus::LiveUpdateBusRepository};
 // MySQL doesn't support LISTEN/NOTIFY like PostgreSQL, so PgListener is not available
 // use sqlx::postgres::PgListener;
 use tokio::sync::broadcast;
@@ -232,14 +233,44 @@ impl LiveUpdateHub {
     }
 }
 
-pub fn spawn_postgres_listener(
-    _config: AppConfig,
-    _hub: LiveUpdateHub,
+pub fn spawn_live_update_listener(
+    config: AppConfig,
+    hub: LiveUpdateHub,
+    bus: Option<LiveUpdateBusRepository>,
+    instance_id: String,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    // MySQL doesn't support LISTEN/NOTIFY like PostgreSQL
-    // Live updates would need to be implemented using a different mechanism (e.g., Redis pub/sub)
-    // For now, return None to disable this feature in MySQL mode
-    None
+    let Some(bus) = bus else {
+        return None;
+    };
+
+    let poll_interval_ms = config.live_update_poll_interval_ms.max(50);
+    Some(tokio::spawn(async move {
+        let mut cursor = match bus.latest_sequence_id().await {
+            Ok(sequence_id) => sequence_id,
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to read latest live update sequence id");
+                0
+            }
+        };
+        let mut interval = tokio::time::interval(Duration::from_millis(poll_interval_ms));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        interval.tick().await;
+
+        loop {
+            interval.tick().await;
+            match bus.poll_after(cursor, 200, &instance_id).await {
+                Ok(events) => {
+                    for envelope in events {
+                        cursor = cursor.max(envelope.sequence_id);
+                        hub.publish(envelope.event);
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "live update poll failed");
+                }
+            }
+        }
+    }))
 }
 
 #[cfg(test)]

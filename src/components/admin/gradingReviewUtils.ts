@@ -18,6 +18,7 @@ import {
   isStudentAnswerCorrect,
 } from './gradingAnswerUtils';
 import { htmlToPlainText } from '../../utils/htmlText';
+import { evaluateSubAnswerRootUnordered } from '../../utils/subAnswerTree';
 
 export type GradingExportSection = 'reading' | 'listening' | 'writing';
 
@@ -33,12 +34,15 @@ export interface ExportSessionContext {
 
 export interface ObjectiveTracebackItem {
   numberLabel: string;
+  rootNumberLabel: string;
   questionId: string;
+  rootId: string;
   prompt: string;
   studentAnswer: string;
   studentAnswerSlots?: string[] | undefined;
   correctAnswer: string;
   correctness: boolean | null;
+  rootCorrectness: boolean | null;
   awardedScore: number | null;
   maxScore: number | null;
   answerKey: string;
@@ -62,7 +66,9 @@ export const READING_EXPORT_COLUMNS: CsvColumn[] = [
   { key: 'section', label: 'Section' },
   { key: 'groupLabel', label: 'Passage / Part' },
   { key: 'questionNumber', label: 'Question Number' },
+  { key: 'rootQuestionNumber', label: 'Root Question Number' },
   { key: 'questionId', label: 'Question ID' },
+  { key: 'rootQuestionId', label: 'Root Question ID' },
   { key: 'prompt', label: 'Prompt' },
   { key: 'studentAnswer', label: 'Student Answer' },
   { key: 'correctAnswer', label: 'Correct Answer' },
@@ -218,28 +224,88 @@ function buildQuestionResultMap(results: ObjectiveQuestionResult[] | undefined):
   return new Map((results ?? []).map((result) => [result.questionId, result] as const));
 }
 
+function buildTreeRootCorrectnessLookup(
+  descriptors: StudentQuestionDescriptor[],
+  answerMap: Record<string, unknown>,
+): Map<string, { leafCorrectness: boolean; rootCorrect: boolean }> {
+  const lookup = new Map<string, { leafCorrectness: boolean; rootCorrect: boolean }>();
+  const treeLeaves = descriptors.filter((descriptor) => descriptor.isSubAnswerTreeLeaf);
+  const leavesByRoot = new Map<string, StudentQuestionDescriptor[]>();
+
+  treeLeaves.forEach((leaf) => {
+    const bucket = leavesByRoot.get(leaf.rootId);
+    if (bucket) {
+      bucket.push(leaf);
+    } else {
+      leavesByRoot.set(leaf.rootId, [leaf]);
+    }
+  });
+
+  leavesByRoot.forEach((leaves) => {
+    const evaluated = evaluateSubAnswerRootUnordered(
+      leaves.map((leaf) => ({
+        id: leaf.id,
+        rootId: leaf.rootId,
+        rootNodeId: leaf.rootId,
+        rootLabel: leaf.rootLabel ?? leaf.rootId,
+        rootNumber: leaf.rootNumber,
+        numberLabel: leaf.numberLabel,
+        nodeId: leaf.id,
+        prompt: leaf.treePrompt ?? leaf.id,
+        acceptedAnswers: leaf.treeAcceptedAnswers ?? [],
+        required: leaf.treeRequired !== false,
+        depth: 1,
+      })),
+      answerMap,
+    );
+
+    leaves.forEach((leaf) => {
+      lookup.set(leaf.id, {
+        leafCorrectness: Boolean(evaluated.leafCorrectness[leaf.id]),
+        rootCorrect: evaluated.rootCorrect,
+      });
+    });
+  });
+
+  return lookup;
+}
+
 function buildTracebackItem(
   descriptor: StudentQuestionDescriptor,
   descriptors: StudentQuestionDescriptor[],
   answerMap: Record<string, unknown>,
   results: Map<string, ObjectiveQuestionResult>,
+  treeRootCorrectnessByLeafId: Map<string, { leafCorrectness: boolean; rootCorrect: boolean }>,
 ): ObjectiveTracebackItem {
   const questionResult = results.get(descriptor.id);
-  const computedCorrectness = isStudentAnswerCorrect(descriptor, answerMap);
-  const correctness = questionResult?.isCorrect ?? computedCorrectness;
-  const awardedScore =
-    questionResult?.awardedScore ?? (computedCorrectness === null ? null : computedCorrectness ? 1 : 0);
-  const maxScore = questionResult?.maxScore ?? (computedCorrectness === null ? null : 1);
+  const treeOverride = treeRootCorrectnessByLeafId.get(descriptor.id);
+  const computedCorrectness = treeOverride
+    ? treeOverride.leafCorrectness
+    : isStudentAnswerCorrect(descriptor, answerMap);
+  const correctness = treeOverride
+    ? treeOverride.leafCorrectness
+    : questionResult?.isCorrect ?? computedCorrectness;
+  const awardedScore = treeOverride
+    ? treeOverride.leafCorrectness
+      ? 1
+      : 0
+    : questionResult?.awardedScore ?? (computedCorrectness === null ? null : computedCorrectness ? 1 : 0);
+  const maxScore = treeOverride
+    ? 1
+    : questionResult?.maxScore ?? (computedCorrectness === null ? null : 1);
   const rawStudentAnswer = getStudentAnswerRawProjection(descriptor, answerMap);
 
   return {
     numberLabel: getQuestionNumberLabel(descriptors, descriptor.id),
+    rootNumberLabel: String(descriptor.rootNumber),
     questionId: descriptor.id,
+    rootId: descriptor.rootId,
     prompt: getQuestionPrompt(descriptor),
     studentAnswer: rawStudentAnswer.canonical,
     studentAnswerSlots: rawStudentAnswer.slots ?? undefined,
     correctAnswer: getCorrectAnswerDisplay(descriptor),
     correctness,
+    rootCorrectness: treeOverride ? treeOverride.rootCorrect : correctness,
     awardedScore,
     maxScore,
     answerKey: descriptor.answerKey,
@@ -258,6 +324,10 @@ export function buildQuestionTracebackGroups(
   const descriptors = getStudentQuestionsForModule(examState, moduleType);
   const answerMap = extractObjectiveAnswerMap(sectionSubmission.answers);
   const results = buildQuestionResultMap(sectionSubmission.autoGradingResults?.questionResults);
+  const treeRootCorrectnessByLeafId = buildTreeRootCorrectnessLookup(
+    descriptors,
+    answerMap,
+  );
   const groups = new Map<string, ObjectiveTracebackGroup>();
 
   for (const descriptor of descriptors) {
@@ -272,7 +342,15 @@ export function buildQuestionTracebackGroups(
     }
     const group = groups.get(groupId);
     if (!group) continue;
-    group.items.push(buildTracebackItem(descriptor, descriptors, answerMap, results));
+    group.items.push(
+      buildTracebackItem(
+        descriptor,
+        descriptors,
+        answerMap,
+        results,
+        treeRootCorrectnessByLeafId,
+      ),
+    );
   }
 
   return Array.from(groups.values());
@@ -340,7 +418,9 @@ export function buildObjectiveExportRows({
         section: moduleType,
         groupLabel: group.groupLabel,
         questionNumber: item.numberLabel,
+        rootQuestionNumber: item.rootNumberLabel,
         questionId: item.questionId,
+        rootQuestionId: item.rootId,
         prompt: item.prompt,
         studentAnswer: item.studentAnswer,
         correctAnswer: item.correctAnswer,
@@ -366,20 +446,41 @@ function getQuestionColumnLabel(descriptor: StudentQuestionDescriptor, descripto
 }
 
 function countCorrectAnswers(groups: ObjectiveTracebackGroup[]): number {
-  return groups.reduce(
-    (count, group) => count + group.items.filter((item) => item.correctness === true).length,
-    0,
-  );
+  const byRoot = new Map<string, boolean | null>();
+  groups.forEach((group) => {
+    group.items.forEach((item) => {
+      if (!byRoot.has(item.rootId)) {
+        byRoot.set(item.rootId, item.rootCorrectness);
+      }
+    });
+  });
+  return Array.from(byRoot.values()).filter((correct) => correct === true).length;
 }
 
 function sumAwardedScores(groups: ObjectiveTracebackGroup[]): number | '' {
-  const scores = groups.flatMap((group) => group.items.map((item) => item.awardedScore));
+  const byRoot = new Map<string, number | null>();
+  groups.forEach((group) => {
+    group.items.forEach((item) => {
+      if (!byRoot.has(item.rootId)) {
+        byRoot.set(item.rootId, item.rootCorrectness === null ? null : item.rootCorrectness ? 1 : 0);
+      }
+    });
+  });
+  const scores = Array.from(byRoot.values());
   if (scores.every((score) => score === null)) return '';
   return scores.reduce<number>((total, score) => total + (score ?? 0), 0);
 }
 
 function sumMaxScores(groups: ObjectiveTracebackGroup[]): number | '' {
-  const scores = groups.flatMap((group) => group.items.map((item) => item.maxScore));
+  const byRoot = new Map<string, number | null>();
+  groups.forEach((group) => {
+    group.items.forEach((item) => {
+      if (!byRoot.has(item.rootId)) {
+        byRoot.set(item.rootId, item.rootCorrectness === null ? null : 1);
+      }
+    });
+  });
+  const scores = Array.from(byRoot.values());
   if (scores.every((score) => score === null)) return '';
   return scores.reduce<number>((total, score) => total + (score ?? 0), 0);
 }

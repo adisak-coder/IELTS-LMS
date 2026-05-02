@@ -321,6 +321,61 @@ describe('gradingReviewUtils', () => {
     expect(exportData.rows[0]?.['answer:mcq-block-1']).toBe(groups[0]?.items[0]?.studentAnswer);
   });
 
+  test('uses root-only scoring for sub-answer tree mode with unordered leaf matching', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'tree-block-1',
+            type: 'SHORT_ANSWER',
+            instruction: 'Tree mode',
+            subAnswerModeEnabled: true,
+            answerTree: [
+              {
+                id: 'root-a',
+                label: 'Root A',
+                children: [
+                  { id: 'leaf-a', label: 'Leaf A', acceptedAnswers: ['cat'], required: true },
+                  { id: 'leaf-b', label: 'Leaf B', acceptedAnswers: ['dog'], required: true },
+                ],
+              },
+            ],
+            questions: [],
+          } as any,
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ];
+
+    const answers = {
+      'tree-block-1::tree::root-a::leaf-a': 'dog',
+      'tree-block-1::tree::root-a::leaf-b': 'cat',
+    };
+    const sectionSubmission = createSectionSubmission('sub-1', 'reading', answers, []);
+
+    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
+    expect(groups[0]?.items).toHaveLength(2);
+    expect(groups[0]?.items[0]?.rootCorrectness).toBe(true);
+    expect(groups[0]?.items[1]?.rootCorrectness).toBe(true);
+
+    const exportData = buildWideObjectiveExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
+      examState,
+      moduleType: 'reading',
+    });
+
+    expect(exportData.rows[0]?.totalScore).toBe(1);
+    expect(exportData.rows[0]?.maxScore).toBe(1);
+    expect(exportData.rows[0]?.correctCount).toBe(1);
+  });
+
   test('prefers stored objective correctness when it differs from the raw answer', () => {
     const examState = createInitialExamState('Exam', 'Academic');
     examState.reading.passages = [

@@ -6,7 +6,7 @@ import {
   SingleMCQBlock, ShortAnswerBlock, SentenceCompletionBlock, DiagramLabelingBlock,
   FlowChartBlock, TableCompletionBlock, NoteCompletionBlock, ClassificationBlock,
   MatchingFeaturesBlock, ShortAnswerQuestion, SentenceCompletionQuestion,
-  NoteCompletionQuestion, ClassificationItem, MatchingFeature
+  NoteCompletionQuestion, ClassificationItem, MatchingFeature, SubAnswerTreeNode
 } from '../types';
 import { createDefaultConfig, normalizeExamConfig } from '../constants/examDefaults';
 import { hydrateExamState } from '../services/examAdapterService';
@@ -17,8 +17,14 @@ import {
   getInsertedImages,
   supportsInsertedImages,
 } from './insertedImages';
+import { hasSubAnswerTreeMode, validateSubAnswerTree } from './subAnswerTree';
 
 export const getBlockQuestionCount = (block: QuestionBlock): number => {
+  if (hasSubAnswerTreeMode(block)) {
+    const roots = (block as QuestionBlock & { answerTree?: unknown[] }).answerTree;
+    return Array.isArray(roots) ? roots.length : 0;
+  }
+
   switch (block.type) {
     case 'TFNG':
       return block.questions.length;
@@ -546,6 +552,22 @@ const validateInsertedImages = (block: QuestionBlock): ValidationError[] => {
 
 export const validateBlock = (block: QuestionBlock): BlockValidation => {
   let errors: ValidationError[] = [];
+
+  if (hasSubAnswerTreeMode(block)) {
+    const tree = (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree;
+    errors = validateSubAnswerTree(tree).map((issue) => ({
+      blockId: block.id,
+      field: issue.field,
+      message: issue.message,
+      type: 'error',
+    }));
+    errors.push(...validateInsertedImages(block));
+    return {
+      blockId: block.id,
+      isValid: errors.filter((error) => error.type === 'error').length === 0,
+      errors,
+    };
+  }
   
   switch (block.type) {
     case 'TFNG':

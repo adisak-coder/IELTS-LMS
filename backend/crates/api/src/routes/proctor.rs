@@ -152,8 +152,7 @@ pub async fn end_section_now(
         .telemetry
         .observe_db_operation("proctor.end_section_now", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_runtime".to_owned(),
             id: schedule_id.to_string(),
             revision: i64::from(runtime.revision),
@@ -180,8 +179,7 @@ pub async fn extend_section(
         .telemetry
         .observe_db_operation("proctor.extend_section", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_runtime".to_owned(),
             id: schedule_id.to_string(),
             revision: i64::from(runtime.revision),
@@ -208,8 +206,7 @@ pub async fn complete_exam(
         .telemetry
         .observe_db_operation("proctor.complete_exam", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_runtime".to_owned(),
             id: schedule_id.to_string(),
             revision: i64::from(runtime.revision),
@@ -238,16 +235,14 @@ pub async fn warn_attempt(
         .telemetry
         .observe_db_operation("proctor.warn_attempt", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_roster".to_owned(),
             id: schedule_id.to_string(),
             revision: 0,
             event: "attempt_changed".to_owned(),
         });
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "attempt".to_owned(),
             id: attempt_id.to_string(),
             revision: 0,
@@ -276,16 +271,14 @@ pub async fn pause_attempt(
         .telemetry
         .observe_db_operation("proctor.pause_attempt", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_roster".to_owned(),
             id: schedule_id.to_string(),
             revision: 0,
             event: "attempt_changed".to_owned(),
         });
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "attempt".to_owned(),
             id: attempt_id.to_string(),
             revision: 0,
@@ -314,16 +307,14 @@ pub async fn resume_attempt(
         .telemetry
         .observe_db_operation("proctor.resume_attempt", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_roster".to_owned(),
             id: schedule_id.to_string(),
             revision: 0,
             event: "attempt_changed".to_owned(),
         });
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "attempt".to_owned(),
             id: attempt_id.to_string(),
             revision: 0,
@@ -352,16 +343,14 @@ pub async fn terminate_attempt(
         .telemetry
         .observe_db_operation("proctor.terminate_attempt", started.elapsed());
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_roster".to_owned(),
             id: schedule_id.to_string(),
             revision: 0,
             event: "attempt_changed".to_owned(),
         });
     state
-        .live_updates
-        .publish(ielts_backend_domain::schedule::LiveUpdateEvent {
+        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "attempt".to_owned(),
             id: attempt_id.to_string(),
             revision: 0,

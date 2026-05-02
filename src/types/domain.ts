@@ -17,7 +17,7 @@ import type {
  * Schema version for migration support.
  * Increment this when making breaking changes to the data model.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * Exam lifecycle states with proper workflow
@@ -294,6 +294,7 @@ export interface ExamSessionRuntime {
   totalPausedSeconds: number;
   sections: SectionRuntimeState[];
   proctorPresence?: ProctorPresence[] | undefined;
+  revision?: number | null | undefined;
   createdAt: string;
   updatedAt: string;
 }

@@ -27,7 +27,7 @@ pub fn spawn_runtime_auto_advance(state: AppState) -> Option<tokio::task::JoinHa
             match service.auto_advance_expired_sections(250).await {
                 Ok(outcomes) => {
                     for outcome in outcomes {
-                        state.live_updates.publish(LiveUpdateEvent {
+                        state.publish_live_update(LiveUpdateEvent {
                             kind: "schedule_runtime".to_owned(),
                             id: outcome.schedule_id.to_string(),
                             revision: outcome.runtime_revision,

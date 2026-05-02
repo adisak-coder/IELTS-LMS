@@ -1,8 +1,8 @@
 import React from 'react';
 import { Button } from '../ui/Button';
 import {
+  countAnsweredQuestions,
   countQuestionSlots,
-  getAnsweredSlotCount,
   getQuestionNumberLabel,
   isQuestionAnswered,
   type StudentQuestionDescriptor,
@@ -51,10 +51,7 @@ export function StudentFooter({
   }));
 
   const totalQuestions = countQuestionSlots(questions);
-  const answeredCount = questions.reduce(
-    (count, question) => count + getAnsweredSlotCount(question, answers),
-    0,
-  );
+  const answeredCount = countAnsweredQuestions(questions, answers);
   const hasUnanswered = totalQuestions > 0 && answeredCount < totalQuestions;
 
   return (
@@ -92,14 +89,16 @@ export function StudentFooter({
           );
           const partNumber = index + 1;
           const firstQuestionId = groupQuestions[0]?.id ?? null;
-          const groupAnsweredSlots = groupQuestions.reduce(
-            (count, question) => count + getAnsweredSlotCount(question, answers),
-            0,
+          const groupRootIds = Array.from(
+            new Set(groupQuestions.map((question) => question.rootId)),
           );
-          const groupTotalSlots = groupQuestions.reduce(
-            (count, question) => count + (question.isMulti ? question.correctCount : 1),
-            0,
-          );
+          const groupAnsweredSlots = groupRootIds.filter((rootId) =>
+            groupQuestions.some(
+              (question) =>
+                question.rootId === rootId && isQuestionAnswered(question, answers),
+            ),
+          ).length;
+          const groupTotalSlots = groupRootIds.length;
           const groupProgressPct =
             groupTotalSlots > 0 ? (groupAnsweredSlots / groupTotalSlots) * 100 : 0;
 

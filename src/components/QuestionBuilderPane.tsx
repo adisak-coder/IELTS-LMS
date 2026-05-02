@@ -18,6 +18,7 @@ import { MatchingFeaturesBlock } from './blocks/MatchingFeaturesBlock';
 import { getBlockQuestionCount } from '../utils/examUtils';
 import { QuestionBankLibrary } from './builder/QuestionBankLibrary';
 import { QuestionDetailModal } from './builder/QuestionDetailModal';
+import { SubAnswerTreeEditor } from './builder/SubAnswerTreeEditor';
 import { questionBankService } from '../services/questionBankService';
 import { cloneQuestionBlockWithNewIds } from '../utils/cloneExamContent';
 import { createId } from '../utils/idUtils';
@@ -38,6 +39,19 @@ const INLINE_ADD_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
   'SINGLE_MCQ',
   'SHORT_ANSWER',
   'SENTENCE_COMPLETION',
+]);
+
+const SUB_ANSWER_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
+  'CLOZE',
+  'MAP',
+  'SHORT_ANSWER',
+  'SENTENCE_COMPLETION',
+  'DIAGRAM_LABELING',
+  'FLOW_CHART',
+  'TABLE_COMPLETION',
+  'NOTE_COMPLETION',
+  'CLASSIFICATION',
+  'MATCHING_FEATURES',
 ]);
 
 export function QuestionBuilderPane({
@@ -627,6 +641,34 @@ export function QuestionBuilderPane({
         className={`cursor-pointer transition-all ${isSelected ? 'ring-2 ring-green-500 ring-offset-2' : 'hover:ring-2 hover:ring-gray-300 hover:ring-offset-1'}`}
       >
         {blockContent}
+        {SUB_ANSWER_SUPPORTED_BLOCK_TYPES.has(block.type) ? (
+          <SubAnswerTreeEditor
+            block={block}
+            startNumber={startNum}
+            enabled={Boolean(
+              (block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled,
+            )}
+            onToggle={(enabled) => {
+              updateBlock({
+                ...(block as QuestionBlock & {
+                  subAnswerModeEnabled?: boolean;
+                  answerTree?: unknown;
+                }),
+                subAnswerModeEnabled: enabled,
+              } as QuestionBlock);
+            }}
+            onChangeTree={(nextTree) => {
+              updateBlock({
+                ...(block as QuestionBlock & {
+                  subAnswerModeEnabled?: boolean;
+                  answerTree?: unknown;
+                }),
+                subAnswerModeEnabled: true,
+                answerTree: nextTree,
+              } as QuestionBlock);
+            }}
+          />
+        ) : null}
         {INLINE_ADD_SUPPORTED_BLOCK_TYPES.has(block.type) ? (
           <button
             onClick={(e) => {

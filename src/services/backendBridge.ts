@@ -406,7 +406,7 @@ export function mapBackendExamEntity(payload: BackendExamEntity): ExamEntity {
     totalQuestions: payload.totalQuestions ?? undefined,
     totalReadingQuestions: payload.totalReadingQuestions ?? undefined,
     totalListeningQuestions: payload.totalListeningQuestions ?? undefined,
-    schemaVersion: payload.schemaVersion ?? 1,
+    schemaVersion: payload.schemaVersion ?? 4,
   };
 }
 
