@@ -19,9 +19,19 @@ interface SentenceCompletionBlockProps {
   deleteBlock: (blockId: string) => void;
   moveBlock: (blockId: string, direction: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
-export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }: SentenceCompletionBlockProps) {
+export function SentenceCompletionBlock({
+  block,
+  startNum,
+  endNum,
+  updateBlock,
+  deleteBlock,
+  moveBlock,
+  errors = [],
+  onAddSubAnswerAtSlot,
+}: SentenceCompletionBlockProps) {
   const updateInstruction = (instruction: string) => {
     updateBlock({ ...block, instruction });
   };
@@ -97,6 +107,11 @@ export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, 
     if (blanks <= 1) return `${start}`;
     return `${start}–${end}`;
   };
+
+  const getQuestionSlotOffset = (questionIndex: number) =>
+    block.questions
+      .slice(0, questionIndex)
+      .reduce((count, question) => count + question.blanks.length, 0);
 
   return (
     <div className="bg-white border border-gray-200 rounded-sm shadow-sm p-6">
@@ -217,9 +232,27 @@ export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, 
                   </div>
                   {question.blanks.length > 0 ? (
                     <div className="space-y-2">
-                      {question.blanks.map((blank, blankIndex) => (
+                      {question.blanks.map((blank, blankIndex) => {
+                        const slotOffset = getQuestionSlotOffset(index) + blankIndex;
+                        return (
                         <div key={blank.id} className="flex items-center gap-2">
-                          <span className="text-xs text-gray-500 w-16 self-start pt-1">Blank {blankIndex + 1}:</span>
+                          <div className="flex w-16 items-start justify-between pt-1">
+                            <span className="text-xs text-gray-500">Blank {blankIndex + 1}:</span>
+                            {onAddSubAnswerAtSlot ? (
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onAddSubAnswerAtSlot(slotOffset);
+                                }}
+                                className="rounded-full border border-gray-300 bg-white p-0.5 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                                title="Add sub-answer"
+                                aria-label={`Add sub-answer to question ${startNum + slotOffset}.1`}
+                              >
+                                <Plus size={10} />
+                              </button>
+                            ) : null}
+                          </div>
                           <div className="flex-1">
                             <AcceptedAnswersEditor
                               value={resolveAcceptedAnswers(blank)}
@@ -230,7 +263,8 @@ export function SentenceCompletionBlock({ block, startNum, endNum, updateBlock, 
                             />
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ) : (
                     <p className="text-xs text-gray-400 italic">No blanks added yet</p>

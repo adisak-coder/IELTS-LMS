@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { QuestionBlock, QuestionType, TFNGBlock as TFNGBlockType, ClozeBlock as ClozeBlockType, MatchingBlock as MatchingBlockType, MapBlock as MapBlockType, MultiMCQBlock as MultiMCQBlockType, SingleMCQBlock as SingleMCQBlockType, ShortAnswerBlock as ShortAnswerBlockType, SentenceCompletionBlock as SentenceCompletionBlockType, DiagramLabelingBlock as DiagramLabelingBlockType, FlowChartBlock as FlowChartBlockType, TableCompletionBlock as TableCompletionBlockType, NoteCompletionBlock as NoteCompletionBlockType, ClassificationBlock as ClassificationBlockType, MatchingFeaturesBlock as MatchingFeaturesBlockType, QuestionBankItem } from '../types';
+import { QuestionBlock, QuestionType, TFNGBlock as TFNGBlockType, ClozeBlock as ClozeBlockType, MatchingBlock as MatchingBlockType, MapBlock as MapBlockType, MultiMCQBlock as MultiMCQBlockType, SingleMCQBlock as SingleMCQBlockType, ShortAnswerBlock as ShortAnswerBlockType, SentenceCompletionBlock as SentenceCompletionBlockType, DiagramLabelingBlock as DiagramLabelingBlockType, FlowChartBlock as FlowChartBlockType, TableCompletionBlock as TableCompletionBlockType, NoteCompletionBlock as NoteCompletionBlockType, ClassificationBlock as ClassificationBlockType, MatchingFeaturesBlock as MatchingFeaturesBlockType, QuestionBankItem, SubAnswerTreeNode } from '../types';
 import { Plus, X, Search, Library } from 'lucide-react';
 import { TFNGBlock } from './blocks/TFNGBlock';
 import { ClozeBlock } from './blocks/ClozeBlock';
@@ -22,6 +22,10 @@ import { SubAnswerTreeEditor } from './builder/SubAnswerTreeEditor';
 import { questionBankService } from '../services/questionBankService';
 import { cloneQuestionBlockWithNewIds } from '../utils/cloneExamContent';
 import { createId } from '../utils/idUtils';
+import {
+  appendSubAnswerLeafAtSlot,
+  SUB_ANSWER_SUPPORTED_BLOCK_TYPES,
+} from '../utils/subAnswerTreeSlots';
 
 interface BlockWithNumbers {
   block: QuestionBlock;
@@ -39,19 +43,6 @@ const INLINE_ADD_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
   'SINGLE_MCQ',
   'SHORT_ANSWER',
   'SENTENCE_COMPLETION',
-]);
-
-const SUB_ANSWER_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
-  'CLOZE',
-  'MAP',
-  'SHORT_ANSWER',
-  'SENTENCE_COMPLETION',
-  'DIAGRAM_LABELING',
-  'FLOW_CHART',
-  'TABLE_COMPLETION',
-  'NOTE_COMPLETION',
-  'CLASSIFICATION',
-  'MATCHING_FEATURES',
 ]);
 
 export function QuestionBuilderPane({
@@ -432,6 +423,21 @@ export function QuestionBuilderPane({
     const { block, startNum, endNum } = item;
     const blockErrors = getBlockErrors(block.id);
     const isSelected = selectedBlockId === block.id;
+    const addSubAnswerToSlot = (slotIndex: number) => {
+      updateBlock({
+        ...(block as QuestionBlock & {
+          subAnswerModeEnabled?: boolean;
+          answerTree?: unknown;
+        }),
+        subAnswerModeEnabled: true,
+        answerTree: appendSubAnswerLeafAtSlot(
+          block,
+          startNum,
+          (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
+          slotIndex,
+        ),
+      } as QuestionBlock);
+    };
 
     let blockContent;
     switch (block.type) {
@@ -460,6 +466,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -488,6 +495,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -530,6 +538,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -544,6 +553,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -558,6 +568,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -572,6 +583,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -586,6 +598,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -600,6 +613,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -614,6 +628,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -628,6 +643,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -666,6 +682,7 @@ export function QuestionBuilderPane({
                 answerTree: nextTree,
               } as QuestionBlock);
             }}
+            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         ) : null}
         {blockContent}

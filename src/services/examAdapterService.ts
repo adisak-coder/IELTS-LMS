@@ -32,7 +32,8 @@ import {
 } from '../utils/builderEnhancements';
 import { getCanonicalTableCells, normalizeExamStateTableCompletionBlocks } from '../utils/tableCompletion';
 import { replaceWritingTaskContents } from '../utils/writingTaskUtils';
-import { flattenSubAnswerTree, hasSubAnswerTreeMode, normalizeSubAnswerTree } from '../utils/subAnswerTree';
+import { flattenSubAnswerTree, hasSubAnswerTreeMode } from '../utils/subAnswerTree';
+import { healSubAnswerTreeForBlock } from '../utils/subAnswerTreeSlots';
 
 const MODULE_ORDER: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'];
 
@@ -570,7 +571,7 @@ function buildStudentQuestionDescriptors(
   };
 
   if (hasSubAnswerTreeMode(treeBlock)) {
-    const normalizedTree = normalizeSubAnswerTree(treeBlock.answerTree);
+    const normalizedTree = healSubAnswerTreeForBlock(block, startRootNumber, treeBlock.answerTree);
     const flattened = flattenSubAnswerTree(block.id, normalizedTree, startRootNumber);
     const rootLookup = new Map(flattened.roots.map((root) => [root.rootId, root] as const));
     return {

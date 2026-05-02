@@ -14,9 +14,19 @@ interface Props {
   deleteBlock: (id: string) => void;
   moveBlock: (id: string, dir: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
-export const MapLabelingBlock: React.FC<Props> = ({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }) => {
+export const MapLabelingBlock: React.FC<Props> = ({
+  block,
+  startNum,
+  endNum,
+  updateBlock,
+  deleteBlock,
+  moveBlock,
+  errors = [],
+  onAddSubAnswerAtSlot,
+}) => {
   const [showMenu, setShowMenu] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
@@ -279,12 +289,28 @@ export const MapLabelingBlock: React.FC<Props> = ({ block, startNum, endNum, upd
                 {getFieldError(`questions[${i}].correctAnswer`) && (
                   <p className="text-xs text-red-600 col-span-full mt-1 flex items-center gap-1"><AlertCircle size={10} /> {getFieldError(`questions[${i}].correctAnswer`)!.message}</p>
                 )}
-                <button 
-                  onClick={() => removeHotspot(q.id)} 
-                  className="text-gray-400 hover:text-red-700 opacity-0 group-hover/item:opacity-100 transition-all p-1.5 hover:bg-red-50 rounded-sm"
-                >
-                  <Trash2 size={16} />
-                </button>
+                <div className="flex items-center gap-1 opacity-0 transition-all group-hover/item:opacity-100">
+                  {onAddSubAnswerAtSlot ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAddSubAnswerAtSlot(i);
+                      }}
+                      className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                      title="Add sub-answer"
+                      aria-label={`Add sub-answer to question ${startNum + i}.1`}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  ) : null}
+                  <button
+                    onClick={() => removeHotspot(q.id)}
+                    className="p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-700 rounded-sm"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
             ))}
           </div>

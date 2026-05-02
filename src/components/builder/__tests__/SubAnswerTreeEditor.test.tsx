@@ -86,6 +86,7 @@ describe('SubAnswerTreeEditor', () => {
   it('creates new roots and leaves with empty labels', () => {
     render(<Harness initialTree={[]} />);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Open tree editor' }));
     fireEvent.click(screen.getByRole('button', { name: 'Add root' }));
 
     const promptInputs = screen.getAllByPlaceholderText('Prompt / label') as HTMLInputElement[];
@@ -132,11 +133,14 @@ describe('SubAnswerTreeEditor', () => {
   });
 
   it('adding sub-answer from one slot keeps other legacy questions as roots', () => {
-    const { container } = render(<LegacyHarness />);
+    render(<LegacyHarness />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Add sub-answer to question 18.1' }));
 
-    const answerAreas = container.querySelectorAll('textarea');
-    expect(answerAreas.length).toBeGreaterThanOrEqual(4);
+    fireEvent.click(screen.getByRole('button', { name: 'Open tree editor' }));
+
+    expect(screen.getByText('18')).toBeInTheDocument();
+    expect(screen.getByText('19')).toBeInTheDocument();
+    expect(screen.getByText('20')).toBeInTheDocument();
   });
 });

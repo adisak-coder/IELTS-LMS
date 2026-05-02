@@ -23,6 +23,7 @@ interface TableCompletionBlockProps {
   deleteBlock: (blockId: string) => void;
   moveBlock: (blockId: string, direction: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
 const rowEditorGridStyle = {
@@ -66,6 +67,7 @@ export function TableCompletionBlock({
   deleteBlock,
   moveBlock,
   errors = [],
+  onAddSubAnswerAtSlot,
 }: TableCompletionBlockProps) {
   const commitBlock = React.useCallback(
     (nextBlock: TableCompletionBlockType) => {
@@ -352,7 +354,23 @@ export function TableCompletionBlock({
         <div className="space-y-2">
           {canonicalCells.map((cell, index) => (
             <div key={`${cell.id}-${cell.row}-${cell.col}-${index}`} className="rounded-md border border-gray-200 p-3">
-              <div className="mb-1 text-sm font-medium text-gray-700">{startNum + index}.</div>
+              <div className="mb-1 flex items-center justify-between text-sm font-medium text-gray-700">
+                <span>{startNum + index}.</span>
+                {onAddSubAnswerAtSlot ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAddSubAnswerAtSlot(index);
+                    }}
+                    className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                    title="Add sub-answer"
+                    aria-label={`Add sub-answer to question ${startNum + index}.1`}
+                  >
+                    <Plus size={12} />
+                  </button>
+                ) : null}
+              </div>
               <input
                 type="text"
                 value={cell.correctAnswer}

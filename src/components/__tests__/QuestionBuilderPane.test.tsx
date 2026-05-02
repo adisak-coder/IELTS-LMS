@@ -123,4 +123,45 @@ describe('QuestionBuilderPane', () => {
     expect(alertSpy).toHaveBeenCalledWith('Please select a question block first by clicking on it.');
     alertSpy.mockRestore();
   });
+
+  it('keeps full legacy question range visible after adding sub-answer from a row icon', async () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState([
+        {
+          id: 'block-cloze',
+          type: 'CLOZE',
+          instruction: 'Answer questions 14-19',
+          answerRule: 'TWO_WORDS',
+          questions: [
+            { id: 'q-18', prompt: 'Q18', correctAnswer: 'a' },
+            { id: 'q-19', prompt: 'Q19', correctAnswer: 'b' },
+            { id: 'q-20', prompt: 'Q20', correctAnswer: 'c' },
+            { id: 'q-21', prompt: 'Q21', correctAnswer: 'd' },
+            { id: 'q-22', prompt: 'Q22', correctAnswer: 'e' },
+            { id: 'q-23', prompt: 'Q23', correctAnswer: 'f' },
+          ],
+          subAnswerModeEnabled: true,
+          answerTree: [
+            {
+              id: 'root-18',
+              children: [{ id: 'leaf-18', label: 'Leaf 18', acceptedAnswers: ['a'], required: true }],
+            },
+          ],
+        } as any,
+      ]);
+
+      return <QuestionBuilderPane title="Reading" blocks={blocks} updateBlocks={setBlocks} startNumber={18} />;
+    }
+
+    render(<Harness />);
+
+    expect(screen.getByText('Questions 18-23')).toBeInTheDocument();
+    fireEvent.click(screen.getAllByTitle('Add sub-answer')[0]!);
+
+    await waitFor(() => {
+      expect(screen.getByText('Questions 18-23')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Q19')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Q23')).toBeInTheDocument();
+    });
+  });
 });

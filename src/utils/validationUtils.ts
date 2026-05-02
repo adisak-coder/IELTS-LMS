@@ -26,7 +26,8 @@ import { countBlankPlaceholders } from './blankPlaceholders';
 import { resolveAcceptedAnswers } from './acceptedAnswers';
 import { analyzeTablePlaceholders, getCanonicalTableCells } from './tableCompletion';
 import { getInsertedImages, supportsInsertedImages } from './insertedImages';
-import { hasSubAnswerTreeMode, normalizeSubAnswerTree, validateSubAnswerTree } from './subAnswerTree';
+import { hasSubAnswerTreeMode, validateSubAnswerTree } from './subAnswerTree';
+import { healSubAnswerTreeForBlock } from './subAnswerTreeSlots';
 
 export interface ValidationError {
   field: string;
@@ -37,7 +38,9 @@ export function validateQuestionBlock(block: QuestionBlock): ValidationError[] {
   const errors: ValidationError[] = [];
 
   if (hasSubAnswerTreeMode(block)) {
-    const tree = normalizeSubAnswerTree(
+    const tree = healSubAnswerTreeForBlock(
+      block,
+      1,
       (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
     );
     errors.push(

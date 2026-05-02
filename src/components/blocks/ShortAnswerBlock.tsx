@@ -18,9 +18,19 @@ interface ShortAnswerBlockProps {
   deleteBlock: (blockId: string) => void;
   moveBlock: (blockId: string, direction: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
-export function ShortAnswerBlock({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }: ShortAnswerBlockProps) {
+export function ShortAnswerBlock({
+  block,
+  startNum,
+  endNum,
+  updateBlock,
+  deleteBlock,
+  moveBlock,
+  errors = [],
+  onAddSubAnswerAtSlot,
+}: ShortAnswerBlockProps) {
   const updateInstruction = (instruction: string) => {
     updateBlock({ ...block, instruction });
   };
@@ -126,13 +136,29 @@ export function ShortAnswerBlock({ block, startNum, endNum, updateBlock, deleteB
                 <span className="text-sm font-medium text-gray-700">
                   {startNum + index}.
                 </span>
-                <button
-                  onClick={() => removeQuestion(question.id)}
-                  className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"
-                  title="Remove question"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <div className="flex items-center gap-1">
+                  {onAddSubAnswerAtSlot ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAddSubAnswerAtSlot(index);
+                      }}
+                      className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                      title="Add sub-answer"
+                      aria-label={`Add sub-answer to question ${startNum + index}.1`}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  ) : null}
+                  <button
+                    onClick={() => removeQuestion(question.id)}
+                    className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"
+                    title="Remove question"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
               </div>
               <div className="space-y-3">
                 <div>

@@ -201,4 +201,33 @@ describe('student question descriptors (student exam core logic)', () => {
     expect(countQuestionSlots(questions)).toBe(0);
     expect(countAnsweredQuestions(questions, { [questions[0].id]: 'cat' })).toBe(0);
   });
+
+  it('heals collapsed legacy tree roots before building student descriptors', () => {
+    const state = createInitialExamState('Exam', 'Academic');
+    state.reading.passages[0].blocks = [
+      {
+        id: 'short-tree-collapsed',
+        type: 'SHORT_ANSWER',
+        instruction: 'Tree mode collapsed',
+        insertedImages: [],
+        subAnswerModeEnabled: true,
+        questions: [
+          { id: 'q1', prompt: 'Prompt 1', correctAnswer: 'a', answerRule: 'ONE_WORD', acceptedAnswers: ['a'] },
+          { id: 'q2', prompt: 'Prompt 2', correctAnswer: 'b', answerRule: 'ONE_WORD', acceptedAnswers: ['b'] },
+          { id: 'q3', prompt: 'Prompt 3', correctAnswer: 'c', answerRule: 'ONE_WORD', acceptedAnswers: ['c'] },
+        ],
+        answerTree: [
+          {
+            id: 'root-a',
+            label: 'Root A',
+            children: [{ id: 'leaf-a', label: 'Leaf A', acceptedAnswers: ['a'], required: true }],
+          },
+        ],
+      },
+    ] as any;
+
+    const questions = getStudentQuestionsForModule(state, 'reading');
+    expect(questions.map((question) => question.rootNumber)).toEqual([1, 2, 3]);
+    expect(questions.map((question) => question.numberLabel)).toEqual(['1.1', '2.1', '3.1']);
+  });
 });

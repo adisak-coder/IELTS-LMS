@@ -18,11 +18,20 @@ import {
   supportsInsertedImages,
 } from './insertedImages';
 import { hasSubAnswerTreeMode, normalizeSubAnswerTree, validateSubAnswerTree } from './subAnswerTree';
+import {
+  buildSubAnswerSlotSeeds,
+  healSubAnswerTreeForBlock,
+  isTreeCapableBlockType,
+} from './subAnswerTreeSlots';
 
 export const getBlockQuestionCount = (block: QuestionBlock): number => {
-  if (hasSubAnswerTreeMode(block)) {
-    const roots = (block as QuestionBlock & { answerTree?: unknown[] }).answerTree;
-    return Array.isArray(roots) ? roots.length : 0;
+  const treeModeEnabled = Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled);
+  if (treeModeEnabled && isTreeCapableBlockType(block.type)) {
+    const roots = normalizeSubAnswerTree(
+      (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
+    );
+    const canonicalSlots = buildSubAnswerSlotSeeds(block, 1).length;
+    return Math.max(roots.length, canonicalSlots);
   }
 
   switch (block.type) {
@@ -554,7 +563,9 @@ export const validateBlock = (block: QuestionBlock): BlockValidation => {
   let errors: ValidationError[] = [];
 
   if (hasSubAnswerTreeMode(block)) {
-    const tree = normalizeSubAnswerTree(
+    const tree = healSubAnswerTreeForBlock(
+      block,
+      1,
       (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
     );
     errors = validateSubAnswerTree(tree).map((issue) => ({

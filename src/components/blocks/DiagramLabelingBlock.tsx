@@ -13,9 +13,19 @@ interface DiagramLabelingBlockProps {
   deleteBlock: (blockId: string) => void;
   moveBlock: (blockId: string, direction: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
-export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }: DiagramLabelingBlockProps) {
+export function DiagramLabelingBlock({
+  block,
+  startNum,
+  endNum,
+  updateBlock,
+  deleteBlock,
+  moveBlock,
+  errors = [],
+  onAddSubAnswerAtSlot,
+}: DiagramLabelingBlockProps) {
   const [imageLoadError, setImageLoadError] = useState(false);
   const [imageCandidateIndex, setImageCandidateIndex] = useState(0);
   const imageCandidates = getImageUrlCandidates(block.imageUrl ?? '');
@@ -181,7 +191,23 @@ export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, del
                   aria-label={`Correct answer for label ${startNum + index}`}
                 />
               </div>
-              <button onClick={() => removeLabel(label.id)} className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
+              <div className="flex items-center gap-1">
+                {onAddSubAnswerAtSlot ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAddSubAnswerAtSlot(index);
+                    }}
+                    className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                    title="Add sub-answer"
+                    aria-label={`Add sub-answer to question ${startNum + index}.1`}
+                  >
+                    <Plus size={12} />
+                  </button>
+                ) : null}
+                <button onClick={() => removeLabel(label.id)} className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
+              </div>
             </div>
           ))}
         </div>

@@ -13,9 +13,19 @@ interface ClassificationBlockProps {
   deleteBlock: (blockId: string) => void;
   moveBlock: (blockId: string, direction: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
-export function ClassificationBlock({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }: ClassificationBlockProps) {
+export function ClassificationBlock({
+  block,
+  startNum,
+  endNum,
+  updateBlock,
+  deleteBlock,
+  moveBlock,
+  errors = [],
+  onAddSubAnswerAtSlot,
+}: ClassificationBlockProps) {
   const updateInstruction = (instruction: string) => {
     updateBlock({ ...block, instruction });
   };
@@ -128,7 +138,23 @@ export function ClassificationBlock({ block, startNum, endNum, updateBlock, dele
               <select value={item.correctCategory} onChange={(e) => updateItem(item.id, { correctCategory: e.target.value })} className="w-32 border border-gray-300 rounded px-2 py-1 text-sm">
                 {block.categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
               </select>
-              <button onClick={() => removeItem(item.id)} className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
+              <div className="flex items-center gap-1">
+                {onAddSubAnswerAtSlot ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onAddSubAnswerAtSlot(index);
+                    }}
+                    className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                    title="Add sub-answer"
+                    aria-label={`Add sub-answer to question ${startNum + index}.1`}
+                  >
+                    <Plus size={12} />
+                  </button>
+                ) : null}
+                <button onClick={() => removeItem(item.id)} className="p-1 hover:bg-red-50 rounded text-gray-400 hover:text-red-600"><Trash2 size={14} /></button>
+              </div>
             </div>
           ))}
         </div>

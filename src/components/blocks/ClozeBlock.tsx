@@ -20,6 +20,7 @@ interface Props {
   deleteBlock: (id: string) => void;
   moveBlock: (id: string, dir: 'up' | 'down') => void;
   errors?: Array<{ field: string; message: string }>;
+  onAddSubAnswerAtSlot?: (slotIndex: number) => void;
 }
 
 const ANSWER_RULE_LABELS: Record<AnswerRule, string> = {
@@ -28,7 +29,16 @@ const ANSWER_RULE_LABELS: Record<AnswerRule, string> = {
   'THREE_WORDS': 'NO MORE THAN THREE WORDS'
 };
 
-export const ClozeBlock: React.FC<Props> = ({ block, startNum, endNum, updateBlock, deleteBlock, moveBlock, errors = [] }) => {
+export const ClozeBlock: React.FC<Props> = ({
+  block,
+  startNum,
+  endNum,
+  updateBlock,
+  deleteBlock,
+  moveBlock,
+  errors = [],
+  onAddSubAnswerAtSlot,
+}) => {
   const [showMenu, setShowMenu] = useState(false);
   
   const clozeBlock = block as ClozeBlockType;
@@ -152,12 +162,28 @@ export const ClozeBlock: React.FC<Props> = ({ block, startNum, endNum, updateBlo
                 {getFieldError(`questions[${i}].correctAnswer`) && (
                   <p className="text-xs text-red-600 mt-1 flex items-center gap-1"><AlertCircle size={10} /> {getFieldError(`questions[${i}].correctAnswer`)!.message}</p>
                 )}
-                <button 
-                  onClick={() => removeQuestion(q.id)} 
-                  className="absolute top-2 right-2 text-gray-400 hover:text-red-700 opacity-0 group-hover/item:opacity-100 transition-all p-1 hover:bg-red-50 rounded-sm"
-                >
-                  <Trash2 size={14} />
-                </button>
+                <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-all group-hover/item:opacity-100">
+                  {onAddSubAnswerAtSlot ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onAddSubAnswerAtSlot(i);
+                      }}
+                      className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                      title="Add sub-answer"
+                      aria-label={`Add sub-answer to question ${startNum + i}.1`}
+                    >
+                      <Plus size={12} />
+                    </button>
+                  ) : null}
+                  <button
+                    onClick={() => removeQuestion(q.id)}
+                    className="p-1 text-gray-400 hover:bg-red-50 hover:text-red-700 rounded-sm"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
                     </>
                   );
                 })()}
