@@ -19,6 +19,7 @@ import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useSplitPaneResize } from './useSplitPaneResize';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { getInsertedImages, supportsInsertedImages } from '../../utils/insertedImages';
+import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
 
 interface StudentListeningProps {
   state: ExamState;
@@ -162,9 +163,25 @@ export function StudentListening({
 
     return currentDiagramBlocks.length > 0 ? currentDiagramBlocks : diagramBlocks;
   }, [activePart?.blocks, currentQ?.blockId, currentQuestionId]);
-  const hiddenDiagramReferenceBlockIds = useMemo(
-    () => new Set(activeDiagramBlocks.map((block) => block.id)),
+  const instructionPlacementDiagramBlockIds = useMemo(
+    () =>
+      new Set(
+        activeDiagramBlocks
+          .filter((block) => isInstructionReferencePlacement(block))
+          .map((block) => block.id),
+      ),
     [activeDiagramBlocks],
+  );
+  const materialPaneDiagramBlocks = useMemo(
+    () =>
+      activeDiagramBlocks.filter(
+        (block) => !instructionPlacementDiagramBlockIds.has(block.id),
+      ),
+    [activeDiagramBlocks, instructionPlacementDiagramBlockIds],
+  );
+  const hiddenDiagramReferenceBlockIds = useMemo(
+    () => new Set(materialPaneDiagramBlocks.map((block) => block.id)),
+    [materialPaneDiagramBlocks],
   );
 
   useEffect(() => {
@@ -300,6 +317,40 @@ export function StudentListening({
     );
   };
 
+  const renderInstructionLevelReferenceImage = (block: QuestionBlock) => {
+    if (!isInstructionReferencePlacement(block)) {
+      return null;
+    }
+
+    if (block.type === 'MAP') {
+      return (
+        <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
+          <StudentZoomableMedia
+            sources={getImageUrlCandidates(block.assetUrl ?? '')}
+            alt="Map reference"
+            label="Map reference image"
+            hint="Tap to zoom the map"
+            className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+            imageClassName="max-h-[56dvh]"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
+        <StudentZoomableMedia
+          sources={getImageUrlCandidates(block.imageUrl ?? '')}
+          alt="Diagram reference"
+          label="Diagram reference image"
+          hint="Tap to zoom the diagram"
+          className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+          imageClassName="max-h-[56dvh]"
+        />
+      </div>
+    );
+  };
+
   if (!activePart) {
     return null;
   }
@@ -429,9 +480,9 @@ export function StudentListening({
               </div>
             </div>
           )}
-          {activeDiagramBlocks.length > 0 ? (
+          {materialPaneDiagramBlocks.length > 0 ? (
             <div className={`${materialCompact ? 'mt-3 space-y-3' : 'mt-4 space-y-4'} break-words [overflow-wrap:anywhere]`} data-testid="listening-material-pane">
-              {activeDiagramBlocks.map((diagramBlock) => (
+              {materialPaneDiagramBlocks.map((diagramBlock) => (
                   <div key={diagramBlock.id} className="rounded-xl border border-gray-200 bg-white p-3">
                     <div className="mb-3">
                       <h3 className="text-sm font-semibold text-gray-700">Diagram reference</h3>
@@ -504,6 +555,7 @@ export function StudentListening({
                     </h3>
                     {renderBlockInstruction(block.instruction)}
                     {renderBlockInsertedImages(block)}
+                    {renderInstructionLevelReferenceImage(block)}
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8'}>
@@ -570,7 +622,11 @@ export function StudentListening({
                               compactPane={answerCompact}
                               highlightEnabled={highlightEnabled}
                               highlightColor={highlightColor}
-                              hideDiagramReference={hiddenDiagramReferenceBlockIds.has(block.id)}
+                              hideMapReference={isInstructionReferencePlacement(block)}
+                              hideDiagramReference={
+                                hiddenDiagramReferenceBlockIds.has(block.id) ||
+                                isInstructionReferencePlacement(block)
+                              }
                             />
                           </div>
                         );
@@ -628,7 +684,11 @@ export function StudentListening({
                           compactPane={answerCompact}
                           highlightEnabled={highlightEnabled}
                           highlightColor={highlightColor}
-                          hideDiagramReference={hiddenDiagramReferenceBlockIds.has(block.id)}
+                          hideMapReference={isInstructionReferencePlacement(block)}
+                          hideDiagramReference={
+                            hiddenDiagramReferenceBlockIds.has(block.id) ||
+                            isInstructionReferencePlacement(block)
+                          }
                         />
                       </div>
                     )}

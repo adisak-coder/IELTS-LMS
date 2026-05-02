@@ -175,6 +175,8 @@ export interface InsertedBlockImage {
   caption?: string | undefined;
 }
 
+export type ReferenceImagePlacement = 'question' | 'instruction';
+
 export interface TFNGBlock extends BaseQuestionBlock {
   type: 'TFNG';
   mode: TFNGMode;
@@ -196,6 +198,7 @@ export interface MatchingBlock extends BaseQuestionBlock {
 export interface MapBlock extends BaseQuestionBlock {
   type: 'MAP';
   assetUrl: string;
+  referenceImagePlacement?: ReferenceImagePlacement;
   questions: MapQuestion[];
 }
 
@@ -255,6 +258,7 @@ export interface DiagramLabel {
 export interface DiagramLabelingBlock extends BaseQuestionBlock {
   type: 'DIAGRAM_LABELING';
   imageUrl: string;
+  referenceImagePlacement?: ReferenceImagePlacement;
   labels: DiagramLabel[];
 }
 

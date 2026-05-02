@@ -65,6 +65,7 @@ interface QuestionRendererProps {
   sessionId?: string | undefined;
   studentId?: string | undefined;
   hideDiagramReference?: boolean | undefined;
+  hideMapReference?: boolean | undefined;
 }
 
 export function QuestionRenderer({
@@ -86,6 +87,7 @@ export function QuestionRenderer({
   sessionId,
   studentId,
   hideDiagramReference = false,
+  hideMapReference = false,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
   const latestStringArrayAnswerRef = React.useRef<string[]>(stringArrayAnswer);
@@ -372,12 +374,14 @@ export function QuestionRenderer({
 
   const renderMap = (mapBlock: MapBlock, q: MapQuestion, num: number) => (
     <div className="flex flex-col gap-4">
-      <StudentZoomableMedia
-        sources={getImageUrlCandidates(mapBlock.assetUrl ?? '')}
-        alt="Map reference"
-        label="Map reference image"
-        hint="Tap to zoom the map"
-      />
+      {!hideMapReference ? (
+        <StudentZoomableMedia
+          sources={getImageUrlCandidates(mapBlock.assetUrl ?? '')}
+          alt="Map reference"
+          label="Map reference image"
+          hint="Tap to zoom the map"
+        />
+      ) : null}
       <div className="flex flex-col gap-3">
         <div className="flex gap-3">
           <span className="min-w-[1.75rem] font-bold text-gray-900">{num}.</span>

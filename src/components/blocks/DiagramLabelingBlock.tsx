@@ -87,6 +87,25 @@ export function DiagramLabelingBlock({ block, startNum, endNum, updateBlock, del
         />
       </div>
 
+      <div className="mb-4 rounded-md border border-gray-200 bg-gray-50 px-3 py-2">
+        <label className="flex items-center gap-2 text-xs font-semibold text-gray-700">
+          <input
+            type="checkbox"
+            checked={block.referenceImagePlacement === 'instruction'}
+            onChange={(event) =>
+              updateBlock({
+                ...block,
+                referenceImagePlacement: event.target.checked
+                  ? 'instruction'
+                  : 'question',
+              })
+            }
+            className="h-4 w-4 accent-blue-800"
+          />
+          Show reference image between instruction and questions (custom layout)
+        </label>
+      </div>
+
       {/* Image URL */}
       <div className="mb-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">Diagram Image URL</label>

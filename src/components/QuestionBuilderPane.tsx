@@ -288,6 +288,7 @@ export function QuestionBuilderPane({
           type: 'MAP',
           instruction: 'Label the map below.',
           assetUrl: '',
+          referenceImagePlacement: 'question',
           questions: [{ id: createId('q'), label: 'Location A', correctAnswer: '', x: 50, y: 50 }]
         } as MapBlockType;
         break;
@@ -329,6 +330,7 @@ export function QuestionBuilderPane({
           type: 'DIAGRAM_LABELING',
           instruction: 'Label the diagram below.',
           imageUrl: '',
+          referenceImagePlacement: 'question',
           labels: [{ id: createId('lbl'), x: 50, y: 50, correctAnswer: '' }]
         } as DiagramLabelingBlockType;
         break;

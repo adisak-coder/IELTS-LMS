@@ -16,6 +16,7 @@ import { useSplitPaneResize } from './useSplitPaneResize';
 import { normalizeReadingPlainTextForDisplay } from './normalizeReadingPassageText';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { getInsertedImages, supportsInsertedImages } from '../../utils/insertedImages';
+import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
 
 interface StudentReadingProps {
   state: ExamState;
@@ -141,6 +142,40 @@ export function StudentReading({
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const renderInstructionLevelReferenceImage = (block: QuestionBlock) => {
+    if (!isInstructionReferencePlacement(block)) {
+      return null;
+    }
+
+    if (block.type === 'MAP') {
+      return (
+        <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
+          <StudentZoomableMedia
+            sources={getImageUrlCandidates(block.assetUrl ?? '')}
+            alt="Map reference"
+            label="Map reference image"
+            hint="Tap to zoom the map"
+            className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+            imageClassName="max-h-[56dvh]"
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className={`mt-2 ${answerCompact ? 'space-y-2' : 'space-y-3'}`}>
+        <StudentZoomableMedia
+          sources={getImageUrlCandidates(block.imageUrl ?? '')}
+          alt="Diagram reference"
+          label="Diagram reference image"
+          hint="Tap to zoom the diagram"
+          className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+          imageClassName="max-h-[56dvh]"
+        />
       </div>
     );
   };
@@ -324,6 +359,7 @@ export function StudentReading({
                     </h3>
                     {renderBlockInstruction(block.instruction)}
                     {renderBlockInsertedImages(block)}
+                    {renderInstructionLevelReferenceImage(block)}
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8 md:space-y-10'}>
@@ -390,6 +426,8 @@ export function StudentReading({
                               compactPane={answerCompact}
                               highlightEnabled={highlightEnabled}
                               highlightColor={highlightColor}
+                              hideMapReference={isInstructionReferencePlacement(block)}
+                              hideDiagramReference={isInstructionReferencePlacement(block)}
                             />
                           </div>
                         );
@@ -447,6 +485,8 @@ export function StudentReading({
                           compactPane={answerCompact}
                           highlightEnabled={highlightEnabled}
                           highlightColor={highlightColor}
+                          hideMapReference={isInstructionReferencePlacement(block)}
+                          hideDiagramReference={isInstructionReferencePlacement(block)}
                         />
                       </div>
                     )}

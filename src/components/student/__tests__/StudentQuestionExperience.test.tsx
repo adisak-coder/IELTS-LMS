@@ -2285,4 +2285,125 @@ describe('student question experience', () => {
     expect(screen.getByAltText('Diagram reference')).toHaveAttribute('src', '/diagram-part-two.jpg');
     expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
   });
+
+  it('shows map reference between instruction and questions when map placement is set to instruction', () => {
+    const state = {
+      title: 'Reading Test',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['MAP'] },
+        },
+      },
+      reading: {
+        passages: [
+          {
+            id: 'passage-1',
+            title: 'Passage 1',
+            content: 'Read the map.',
+            images: [],
+            blocks: [
+              {
+                id: 'map-block',
+                type: 'MAP',
+                instruction: 'Label the map.',
+                referenceImagePlacement: 'instruction',
+                assetUrl: '/map-reference.jpg',
+                questions: [{ id: 'q-map-1', label: 'Entrance', correctAnswer: 'A', x: 50, y: 50 }],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentReading
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="q-map-1"
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Label the map.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /map reference image/i })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /map reference image/i })).toHaveLength(1);
+  });
+
+  it('moves listening diagram reference into question pane when placement is set to instruction', () => {
+    const state = {
+      title: 'Listening Test',
+      type: 'Academic',
+      activeModule: 'listening',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: true, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
+          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
+        },
+      },
+      reading: { passages: [] },
+      listening: {
+        parts: [
+          {
+            id: 'part-1',
+            title: 'Part 1',
+            audioUrl: '/audio/test.mp3',
+            pins: [],
+            blocks: [
+              {
+                id: 'diagram-1',
+                type: 'DIAGRAM_LABELING',
+                instruction: 'Label the diagram.',
+                referenceImagePlacement: 'instruction',
+                imageUrl: '/diagram.jpg',
+                labels: [{ id: 'label-a', x: 40, y: 40, correctAnswer: 'Valve' }],
+              },
+            ],
+          },
+        ],
+      },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentListening
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="diagram-1:label-a"
+        onNavigate={() => {}}
+      />,
+    );
+
+    expect(screen.queryByTestId('listening-material-pane')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /diagram reference image/i })).toBeInTheDocument();
+  });
 });
