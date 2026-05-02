@@ -74,6 +74,65 @@ describe('StudentWriting a11y', () => {
     );
 
     const workspace = screen.getByTestId('writing-split-workspace');
+    expect(workspace).toHaveStyle({
+      '--writing-prompt-pane-width': '50%',
+      '--writing-editor-pane-width': 'calc(50% - var(--split-divider-width))',
+      '--split-divider-width': '16px',
+    });
+
+    vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 100,
+      right: 1100,
+      top: 0,
+      width: 1000,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 600 });
+    fireEvent.mouseMove(document, { clientX: 700 });
+    fireEvent.mouseUp(document);
+
+    expect(workspace).toHaveStyle({
+      '--writing-prompt-pane-width': '60%',
+      '--writing-editor-pane-width': 'calc(40% - var(--split-divider-width))',
+    });
+  });
+
+  it('matches tablet resizer dimensions used in reading and listening', () => {
+    render(
+      <StudentWriting
+        state={createExamState()}
+        writingAnswers={{}}
+        onWritingChange={() => undefined}
+        onSubmit={() => undefined}
+        currentQuestionId={null}
+        onNavigate={() => undefined}
+        tabletMode
+      />,
+    );
+
+    const workspace = screen.getByTestId('writing-split-workspace');
+    const resizer = screen.getByTestId('writing-pane-resizer');
+
+    expect(workspace).toHaveStyle({
+      '--writing-prompt-pane-width': '50%',
+      '--writing-editor-pane-width': 'calc(50%)',
+      '--split-divider-width': '32px',
+    });
+    expect(resizer).toHaveClass('w-11');
+    expect(resizer).toHaveClass('absolute');
+    expect(resizer.querySelector('.w-14')).toBeInTheDocument();
+    expect(resizer.querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
+  });
+
+  it('shows builder-authored HTML prompts as plain text in the writing exam', () => {
+    const state = createExamState();
+    state.writing.task1Prompt = '<p>Describe the chart <strong>in detail</strong>.</p>';
+
+    const workspace = screen.getByTestId('writing-split-workspace');
     const resizer = screen.getByTestId('writing-pane-resizer');
     expect(workspace).toHaveStyle({
       '--writing-prompt-pane-width': '50%',

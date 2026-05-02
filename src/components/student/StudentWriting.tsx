@@ -7,6 +7,8 @@ import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
+import { WritingChartPreview } from '../writing/WritingChartPreview';
+import { useSplitPaneResize } from './useSplitPaneResize';
 
 interface StudentWritingProps {
   state: ExamState;
@@ -26,13 +28,6 @@ interface StudentWritingProps {
   studentId?: string | undefined;
   showSubmitButton?: boolean | undefined;
   tabletMode?: boolean | undefined;
-  onIncreasePassageReadability?: (() => void) | undefined;
-  onDecreasePassageReadability?: (() => void) | undefined;
-  onResetPassageReadability?: (() => void) | undefined;
-  passageReadabilityLabel?: string | undefined;
-  canIncreasePassageReadability?: boolean | undefined;
-  canDecreasePassageReadability?: boolean | undefined;
-  registerLiveWritingAnswer?: ((taskId: string, text: string) => void) | undefined;
 }
 
 export function StudentWriting({
@@ -50,7 +45,6 @@ export function StudentWriting({
   studentId,
   showSubmitButton = true,
   tabletMode = false,
-  registerLiveWritingAnswer,
 }: StudentWritingProps) {
   const isTabletMode = Boolean(tabletMode);
   const attemptContext = useOptionalStudentAttempt();
@@ -58,7 +52,8 @@ export function StudentWriting({
   const resolvedStudentId = studentId ?? attemptContext?.state.attemptId ?? undefined;
   const writingConfig = state.config.sections.writing;
   const [activeTaskId, setActiveTaskId] = useState<string>(currentQuestionId || writingConfig.tasks[0]?.id || 'task1');
-  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [isEditorFocused, setIsEditorFocused] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
   const latestEditorTextRef = useRef<string>('');
@@ -307,11 +302,18 @@ export function StudentWriting({
     commitDraftText(activeTaskId, nextValue, { flushDurability: false });
   };
 
+  const handleEditorInput = () => {
+    if (editorRef.current) {
+      const htmlContent = editorRef.current.innerHTML;
+      onWritingChange(activeTaskId, htmlContent);
+    }
+  };
+
   const blockWritingEditorInteraction = (
     event:
-      | React.ClipboardEvent<HTMLTextAreaElement>
-      | React.DragEvent<HTMLTextAreaElement>
-      | React.MouseEvent<HTMLTextAreaElement>,
+      | React.ClipboardEvent<HTMLDivElement>
+      | React.DragEvent<HTMLDivElement>
+      | React.MouseEvent<HTMLDivElement>,
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -320,9 +322,9 @@ export function StudentWriting({
         resolvedSessionId,
         'PASTE_BLOCKED',
         {
-          targetName: 'TEXTAREA',
+          targetName: 'DIV',
           targetType: 'writing-editor',
-          isContentEditable: false,
+          isContentEditable: true,
         },
         resolvedStudentId,
       );
@@ -363,7 +365,7 @@ export function StudentWriting({
           className={`h-full flex flex-col relative ${
             isTabletMode
               ? 'w-[var(--writing-prompt-pane-width)] min-w-[48px] border-r border-gray-200'
-              : 'min-w-[260px] md:min-w-[280px] lg:w-[var(--writing-prompt-pane-width)] lg:min-w-[48px]'
+              : 'min-w-[260px] md:min-w-[280px] lg:w-[var(--writing-prompt-pane-width)] lg:min-w-[300px]'
           }`}
         >
           {/* Timer Bar */}
@@ -392,7 +394,12 @@ export function StudentWriting({
               </div>
             </div>
             {currentChart && (
-              <div className="mb-5 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm">
+              <div
+                className="mb-5 rounded-3xl border border-gray-200 bg-white p-4 shadow-sm"
+                onContextMenu={blockMediaSaveInteraction}
+                onDragStart={blockMediaSaveInteraction}
+                onDrop={blockMediaSaveInteraction}
+              >
                 <p className="text-[length:var(--student-meta-font-size)] font-black text-gray-400 uppercase tracking-[0.22em] mb-3">
                   Stimulus Chart
                 </p>
@@ -442,7 +449,7 @@ export function StudentWriting({
           aria-orientation="vertical"
           data-testid="writing-pane-resizer"
         >
-          <div className={`${isTabletMode ? 'h-[5.5rem] w-14' : 'h-10 w-8'} bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none`}>
+          <div className={`${isTabletMode ? 'h-[5.5rem] w-14' : 'w-8 h-8'} bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none`}>
             <ArrowLeftRight size={isTabletMode ? 22 : 14} className="text-gray-600" />
           </div>
         </div>
@@ -451,16 +458,12 @@ export function StudentWriting({
           className={`h-full flex flex-col relative ${
             isTabletMode
               ? 'w-[var(--writing-editor-pane-width)] min-w-[48px]'
-              : 'min-w-[280px] md:min-w-[320px] lg:w-[var(--writing-editor-pane-width)] lg:min-w-[48px]'
+              : 'min-w-[280px] md:min-w-[320px] lg:w-[var(--writing-editor-pane-width)]'
           }`}
         >
-          <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
-            <div className="relative flex-1 min-h-0 w-full flex flex-col">
-              <div
-                className={`flex flex-col gap-2 border-b border-gray-200 bg-gray-50 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between ${
-                  isTabletMode ? 'pl-10 pr-3' : 'px-3'
-                }`}
-              >
+          <div className="flex-1 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
+            <div className="relative flex-1 w-full">
+              <div className="flex flex-col gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between">
                 <span>Writing Response</span>
                 <div className="flex items-center gap-2" aria-label="Current word count">
                   <span className="text-[length:var(--student-meta-font-size)] font-bold text-gray-400 uppercase tracking-widest">
@@ -476,54 +479,47 @@ export function StudentWriting({
                   </span>
                 </div>
               </div>
-              <textarea
-                ref={editorRef}
-                onChange={handleEditorInput}
-                role="textbox"
-                aria-multiline="true"
-                aria-label="Writing response"
-                onFocus={() => {
-                  editorHasFocusRef.current = true;
-                }}
-                onCompositionEnd={commitEditorDraft}
-                onBlur={() => {
-                  editorHasFocusRef.current = false;
-                  commitEditorDraft();
-                  scheduleDeferredBlurCommit(activeTaskId);
-                }}
-                onPaste={blockWritingEditorInteraction}
-                onCopy={blockWritingEditorInteraction}
-                onCut={blockWritingEditorInteraction}
-                onDrop={blockWritingEditorInteraction}
-                onContextMenu={blockWritingEditorInteraction}
-                className={`h-full w-full resize-none p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 whitespace-pre-wrap ${
-                  isTabletMode ? 'pl-10 md:pl-10 lg:pl-10' : ''
-                }`}
-                data-student-zoom-scroll
-                spellCheck={!security.preventAutocorrect}
-                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
-                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
-                placeholder="Write your answer here..."
-              />
+              {showEditorPlaceholder && (
+                  <div className="pointer-events-none absolute left-4 top-14 md:left-6 md:top-16 lg:left-8 lg:top-20 text-base md:text-lg leading-relaxed text-gray-400 font-serif select-none">
+                    Write your answer here…
+                  </div>
+              )}
+	              <div
+	                ref={editorRef}
+	                contentEditable
+	                onInput={handleEditorInput}
+                  suppressContentEditableWarning
+                  role="textbox"
+                  aria-multiline="true"
+                  aria-label="Writing response"
+                  onFocus={() => {
+                    editorHasFocusRef.current = true;
+                    setIsEditorFocused(true);
+                  }}
+                  onBlur={() => {
+                    editorHasFocusRef.current = false;
+                    setIsEditorFocused(false);
+                    if (editorRef.current) {
+                      const sanitized = sanitizeHtml(editorRef.current.innerHTML);
+                      if (sanitized !== editorRef.current.innerHTML) {
+                        editorRef.current.innerHTML = sanitized;
+                      }
+                      onWritingChange(activeTaskId, editorRef.current.innerHTML);
+                    }
+                  }}
+                  onPaste={blockWritingEditorInteraction}
+                  onCopy={blockWritingEditorInteraction}
+                  onCut={blockWritingEditorInteraction}
+                  onDrop={blockWritingEditorInteraction}
+                  onContextMenu={blockWritingEditorInteraction}
+	                className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
+                  data-student-zoom-scroll
+	                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
+	                spellCheck={!security.preventAutocorrect}
+	                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
+	                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
+	              />
               </div>
-            
-	            <div className="border-t border-gray-200 p-3 md:p-5 bg-gray-50 flex flex-col sm:flex-row justify-between items-center gap-3 text-xs md:text-sm flex-shrink-0">
-	              <div className="flex gap-4 md:gap-8 w-full sm:w-auto">
-	                <div className="flex flex-col">
-	                  <span className="text-[length:var(--student-meta-font-size)] font-bold text-gray-400 uppercase tracking-widest">
-	                    Word Count
-	                  </span>
-	                  <span className={`text-lg md:text-xl font-black ${
-	                    isOptimal ? 'text-emerald-600' :
-	                    isOverLength ? 'text-red-600' :
-	                    isWordCountMet ? 'text-blue-600' :
-	                    isWordCountWarning ? 'text-amber-500' : 'text-gray-900'
-	                  }`}>
-	                    {wordCount}
-	                  </span>
-	                </div>
-	              </div>
-	            </div>
 	          </div>
 
         </div>
