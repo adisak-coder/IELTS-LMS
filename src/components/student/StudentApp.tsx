@@ -470,12 +470,16 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       return;
     }
 
+    const layoutResizeThresholdPx = 48;
     const root = document.documentElement;
     const body = document.body;
     const scheduledRefreshTimers: number[] = [];
     let editableFocused = isEditableInputTarget(document.activeElement);
     let stableViewportHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
     let stableViewportWidth = Math.round(window.innerWidth);
+    let pinchLockActive = false;
+    let pinchGestureActive = false;
+    let layoutRebasePending = false;
 
     const applyViewportHeight = (height: number) => {
       root.style.setProperty('--student-viewport-height', `${Math.max(0, Math.round(height))}px`);
@@ -497,12 +501,17 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         return;
       }
 
-      const nextViewportWidth = Math.round(window.innerWidth);
-      const layoutWidthChanged = nextViewportWidth !== stableViewportWidth;
-      if (layoutWidthChanged) {
-        stableViewportWidth = nextViewportWidth;
+      if (pinchGestureActive || isPinchZooming) {
+        pinchLockActive = true;
+      }
+
+      if (layoutRebasePending) {
+        stableViewportWidth = Math.round(window.innerWidth);
         stableViewportHeight = nextViewportHeight;
-      } else if (!editableFocused && !isPinchZooming) {
+        pinchLockActive = false;
+        pinchGestureActive = false;
+        layoutRebasePending = false;
+      } else if (!editableFocused && !pinchLockActive) {
         stableViewportHeight = nextViewportHeight;
       }
 
@@ -519,10 +528,70 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       scheduledRefreshTimers.push(window.setTimeout(updateViewportHeight, 420));
     };
 
+    const requestLayoutRebase = () => {
+      if (!tabletMode) {
+        scheduleViewportHeightRefresh();
+        return;
+      }
+      layoutRebasePending = true;
+      scheduleViewportHeightRefresh();
+    };
+
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         scheduleViewportHeightRefresh();
       }
+    };
+
+    const handleTouchStart = (event: TouchEvent) => {
+      if (!tabletMode) {
+        return;
+      }
+
+      if (event.touches.length >= 2) {
+        pinchGestureActive = true;
+        pinchLockActive = true;
+        scheduleViewportHeightRefresh();
+      }
+    };
+
+    const handleTouchMove = (event: TouchEvent) => {
+      if (!tabletMode) {
+        return;
+      }
+
+      if (event.touches.length >= 2) {
+        pinchGestureActive = true;
+        pinchLockActive = true;
+      }
+    };
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      if (!tabletMode) {
+        return;
+      }
+
+      pinchGestureActive = event.touches.length >= 2;
+      scheduleViewportHeightRefresh();
+    };
+
+    const handleWindowResize = () => {
+      if (!tabletMode) {
+        scheduleViewportHeightRefresh();
+        return;
+      }
+
+      const widthDelta = Math.abs(Math.round(window.innerWidth) - stableViewportWidth);
+      if (widthDelta >= layoutResizeThresholdPx) {
+        requestLayoutRebase();
+        return;
+      }
+
+      scheduleViewportHeightRefresh();
+    };
+
+    const handleOrientationChange = () => {
+      requestLayoutRebase();
     };
 
     const handleFocusIn = (event: FocusEvent) => {
@@ -542,14 +611,18 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     scheduleViewportHeightRefresh();
     root.classList.add('student-exam-active');
     body.classList.add('student-exam-active');
-    window.addEventListener('resize', scheduleViewportHeightRefresh);
-    window.addEventListener('orientationchange', scheduleViewportHeightRefresh);
+    window.addEventListener('resize', handleWindowResize);
+    window.addEventListener('orientationchange', handleOrientationChange);
     window.addEventListener('focus', scheduleViewportHeightRefresh);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     document.addEventListener('focus', handleFocusIn, true);
     document.addEventListener('blur', handleFocusOut, true);
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
+    document.addEventListener('touchstart', handleTouchStart, true);
+    document.addEventListener('touchmove', handleTouchMove, true);
+    document.addEventListener('touchend', handleTouchEnd, true);
+    document.addEventListener('touchcancel', handleTouchEnd, true);
     window.visualViewport?.addEventListener('resize', scheduleViewportHeightRefresh);
     window.visualViewport?.addEventListener('scroll', scheduleViewportHeightRefresh);
 
@@ -560,14 +633,18 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       root.classList.remove('student-exam-active');
       body.classList.remove('student-exam-active');
       root.style.removeProperty('--student-viewport-height');
-      window.removeEventListener('resize', scheduleViewportHeightRefresh);
-      window.removeEventListener('orientationchange', scheduleViewportHeightRefresh);
+      window.removeEventListener('resize', handleWindowResize);
+      window.removeEventListener('orientationchange', handleOrientationChange);
       window.removeEventListener('focus', scheduleViewportHeightRefresh);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       document.removeEventListener('focus', handleFocusIn, true);
       document.removeEventListener('blur', handleFocusOut, true);
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
+      document.removeEventListener('touchstart', handleTouchStart, true);
+      document.removeEventListener('touchmove', handleTouchMove, true);
+      document.removeEventListener('touchend', handleTouchEnd, true);
+      document.removeEventListener('touchcancel', handleTouchEnd, true);
       window.visualViewport?.removeEventListener('resize', scheduleViewportHeightRefresh);
       window.visualViewport?.removeEventListener('scroll', scheduleViewportHeightRefresh);
     };
