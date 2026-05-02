@@ -32,6 +32,66 @@ describe('applySelectionHighlight', () => {
     expect(container.textContent).toBe('Alpha beta gamma');
   });
 
+  it('returns null when the selection spans multiple paragraphs', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
+
+    const firstParagraphTextNode = container.querySelectorAll('p')[0]?.firstChild;
+    const secondParagraphTextNode = container.querySelectorAll('p')[1]?.firstChild;
+    if (
+      !firstParagraphTextNode ||
+      firstParagraphTextNode.nodeType !== Node.TEXT_NODE ||
+      !secondParagraphTextNode ||
+      secondParagraphTextNode.nodeType !== Node.TEXT_NODE
+    ) {
+      throw new Error('Expected two text nodes');
+    }
+
+    const range = document.createRange();
+    range.setStart(firstParagraphTextNode, 6);
+    range.setEnd(secondParagraphTextNode, 5);
+
+    const removeAllRanges = vi.fn();
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => range.toString(),
+      removeAllRanges,
+    } as unknown as Selection;
+
+    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
+
+    expect(html).toBeNull();
+    expect(removeAllRanges).not.toHaveBeenCalled();
+  });
+
+  it('still highlights when selection stays inside a single paragraph', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
+
+    const secondParagraphTextNode = container.querySelectorAll('p')[1]?.firstChild;
+    if (!secondParagraphTextNode || secondParagraphTextNode.nodeType !== Node.TEXT_NODE) {
+      throw new Error('Expected a text node in the second paragraph');
+    }
+
+    const range = document.createRange();
+    range.setStart(secondParagraphTextNode, 0);
+    range.setEnd(secondParagraphTextNode, 5);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => 'Gamma',
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
+
+    expect(html).toContain('<p><mark');
+    expect(html).toContain('Gamma');
+    expect(html).toContain('data-highlighted="true"');
+  });
+
   it('uses highlight styles that do not add spacing around highlighted text', () => {
     expect(studentHighlightPalette.every((entry) => !entry.highlightClassName.includes('px-'))).toBe(true);
 

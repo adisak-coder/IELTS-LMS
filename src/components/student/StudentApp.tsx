@@ -118,6 +118,23 @@ function formatRuntimeTime(seconds: number) {
   return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
+function isEditableInputTarget(target: EventTarget | null): target is HTMLElement {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const contentEditableAttr = target.getAttribute('contenteditable');
+  const hasExplicitContentEditable =
+    contentEditableAttr !== null && contentEditableAttr.toLowerCase() !== 'false';
+
+  return (
+    target.tagName === 'INPUT' ||
+    target.tagName === 'TEXTAREA' ||
+    target.isContentEditable ||
+    hasExplicitContentEditable
+  );
+}
+
 interface StudentAppProps {
   showSubmitControls?: boolean | undefined;
 }
@@ -456,13 +473,35 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     const root = document.documentElement;
     const body = document.body;
     const scheduledRefreshTimers: number[] = [];
+    let editableFocused = isEditableInputTarget(document.activeElement);
+    let stableViewportHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
+    let stableViewportWidth = Math.round(window.innerWidth);
+
+    const applyViewportHeight = (height: number) => {
+      root.style.setProperty('--student-viewport-height', `${Math.max(0, Math.round(height))}px`);
+    };
 
     const updateViewportHeight = () => {
       const visualViewport = window.visualViewport;
-      const viewportHeight = visualViewport
+      const nextViewportHeight = visualViewport
         ? Math.min(window.innerHeight, Math.round(visualViewport.height + visualViewport.offsetTop))
         : Math.round(window.innerHeight);
-      root.style.setProperty('--student-viewport-height', `${Math.max(0, viewportHeight)}px`);
+
+      if (!tabletMode) {
+        applyViewportHeight(nextViewportHeight);
+        return;
+      }
+
+      const nextViewportWidth = Math.round(window.innerWidth);
+      const layoutWidthChanged = nextViewportWidth !== stableViewportWidth;
+      if (layoutWidthChanged) {
+        stableViewportWidth = nextViewportWidth;
+        stableViewportHeight = nextViewportHeight;
+      } else if (!editableFocused) {
+        stableViewportHeight = nextViewportHeight;
+      }
+
+      applyViewportHeight(stableViewportHeight);
     };
 
     const scheduleViewportHeightRefresh = () => {
@@ -481,6 +520,20 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       }
     };
 
+    const handleFocusIn = (event: FocusEvent) => {
+      if (tabletMode && isEditableInputTarget(event.target)) {
+        editableFocused = true;
+      }
+      scheduleViewportHeightRefresh();
+    };
+
+    const handleFocusOut = (event: FocusEvent) => {
+      if (tabletMode && isEditableInputTarget(event.target)) {
+        editableFocused = isEditableInputTarget(event.relatedTarget);
+      }
+      scheduleViewportHeightRefresh();
+    };
+
     scheduleViewportHeightRefresh();
     root.classList.add('student-exam-active');
     body.classList.add('student-exam-active');
@@ -488,8 +541,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     window.addEventListener('orientationchange', scheduleViewportHeightRefresh);
     window.addEventListener('focus', scheduleViewportHeightRefresh);
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    document.addEventListener('focusin', scheduleViewportHeightRefresh);
-    document.addEventListener('focusout', scheduleViewportHeightRefresh);
+    document.addEventListener('focus', handleFocusIn, true);
+    document.addEventListener('blur', handleFocusOut, true);
+    document.addEventListener('focusin', handleFocusIn);
+    document.addEventListener('focusout', handleFocusOut);
     window.visualViewport?.addEventListener('resize', scheduleViewportHeightRefresh);
     window.visualViewport?.addEventListener('scroll', scheduleViewportHeightRefresh);
 
@@ -504,12 +559,14 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       window.removeEventListener('orientationchange', scheduleViewportHeightRefresh);
       window.removeEventListener('focus', scheduleViewportHeightRefresh);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      document.removeEventListener('focusin', scheduleViewportHeightRefresh);
-      document.removeEventListener('focusout', scheduleViewportHeightRefresh);
+      document.removeEventListener('focus', handleFocusIn, true);
+      document.removeEventListener('blur', handleFocusOut, true);
+      document.removeEventListener('focusin', handleFocusIn);
+      document.removeEventListener('focusout', handleFocusOut);
       window.visualViewport?.removeEventListener('resize', scheduleViewportHeightRefresh);
       window.visualViewport?.removeEventListener('scroll', scheduleViewportHeightRefresh);
     };
-  }, [effectivePhase]);
+  }, [effectivePhase, tabletMode]);
 
   const requestFullscreenFromOverlay = useMemo(() => {
     return {

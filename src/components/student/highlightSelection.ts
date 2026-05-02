@@ -129,6 +129,10 @@ export function createHighlightSelectionSnapshot(
     return null;
   }
 
+  if (selectionCrossesBlockBoundary(container, range)) {
+    return null;
+  }
+
   const startNodePath = getNodePath(container, range.startContainer);
   const endNodePath = getNodePath(container, range.endContainer);
   if (!startNodePath || !endNodePath) {
@@ -143,6 +147,65 @@ export function createHighlightSelectionSnapshot(
     selectedText,
     signature: `${startNodePath.join('.')}:${range.startOffset}|${endNodePath.join('.')}:${range.endOffset}|${selectedText}`,
   };
+}
+
+const BLOCK_BOUNDARY_TAGS = new Set([
+  'P',
+  'DIV',
+  'SECTION',
+  'ARTICLE',
+  'ASIDE',
+  'MAIN',
+  'NAV',
+  'HEADER',
+  'FOOTER',
+  'UL',
+  'OL',
+  'LI',
+  'DL',
+  'DT',
+  'DD',
+  'BLOCKQUOTE',
+  'PRE',
+  'TABLE',
+  'THEAD',
+  'TBODY',
+  'TFOOT',
+  'TR',
+  'TD',
+  'TH',
+  'CAPTION',
+  'FIGURE',
+  'FIGCAPTION',
+  'H1',
+  'H2',
+  'H3',
+  'H4',
+  'H5',
+  'H6',
+]);
+
+function selectionCrossesBlockBoundary(container: HTMLElement, range: Range): boolean {
+  const startBlock = findNearestBlockBoundary(container, range.startContainer);
+  const endBlock = findNearestBlockBoundary(container, range.endContainer);
+  return startBlock !== endBlock;
+}
+
+function findNearestBlockBoundary(container: HTMLElement, node: Node): Node {
+  const initialElement =
+    node.nodeType === Node.ELEMENT_NODE
+      ? (node as Element)
+      : node.parentElement;
+
+  let current: Element | null = initialElement;
+  while (current && current !== container) {
+    if (BLOCK_BOUNDARY_TAGS.has(current.tagName)) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+
+  return container;
 }
 
 function createClonedRangeFromSnapshot(
