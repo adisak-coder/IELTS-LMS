@@ -3,7 +3,6 @@ import { Button } from '../ui/Button';
 import {
   countAnsweredQuestions,
   countQuestionSlots,
-  getQuestionNumberLabel,
   isQuestionAnswered,
   type StudentQuestionDescriptor,
 } from '@services/examAdapterService';
@@ -31,6 +30,34 @@ export function StudentFooter({
   showSubmitButton = true,
   tabletMode = false,
 }: StudentFooterProps) {
+  const byRoot = questions.reduce<Record<string, StudentQuestionDescriptor[]>>((roots, question) => {
+    const bucket = roots[question.rootId];
+    if (bucket) {
+      bucket.push(question);
+    } else {
+      roots[question.rootId] = [question];
+    }
+    return roots;
+  }, {});
+
+  const rootQuestions = Object.values(byRoot)
+    .map((rootMembers) => {
+      const first = rootMembers[0];
+      if (!first) {
+        return null;
+      }
+      const currentMember = rootMembers.find((member) => member.id === currentQuestionId) ?? null;
+      const representative = currentMember ?? first;
+      return {
+        rootId: first.rootId,
+        rootNumber: first.rootNumber,
+        members: rootMembers,
+        representative,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+    .sort((left, right) => left.rootNumber - right.rootNumber);
+
   const groupedQuestions = questions.reduce<Record<string, StudentQuestionDescriptor[]>>(
     (groups, question) => {
       const existingGroup = groups[question.groupId];
@@ -109,15 +136,18 @@ export function StudentFooter({
             >
               {isActiveGroup ? (
                 <div className="flex items-center gap-0.5 md:gap-1">
-                  {groupQuestions.map((question) => {
-                    const isCurrent = question.id === currentQuestionId;
-                    const isFlagged = flags[question.id];
-                    const isAnswered = isQuestionAnswered(question, answers);
+                  {rootQuestions
+                    .filter((root) => root.members.some((member) => member.groupId === groupId))
+                    .map((root) => {
+                    const isCurrent = root.members.some((member) => member.id === currentQuestionId);
+                    const isFlagged = root.members.some((member) => Boolean(flags[member.id]));
+                    const isAnswered = root.members.some((member) => isQuestionAnswered(member, answers));
+                    const displayLabel = String(root.rootNumber);
 
                     return (
                       <button
-                        key={question.id}
-                        onClick={() => onNavigate(question.id)}
+                        key={root.rootId}
+                        onClick={() => onNavigate(root.representative.id)}
                         className={`relative text-[length:var(--student-chip-font-size)] flex items-center justify-center min-w-[1.6rem] md:min-w-[1.8rem] lg:min-w-[2rem] h-6 md:h-7 lg:h-8 px-1 md:px-1.5 rounded-sm font-bold border ${
                           isCurrent
                             ? 'bg-blue-800 border-blue-800 text-white'
@@ -127,8 +157,9 @@ export function StudentFooter({
                                 ? 'bg-blue-200 border-blue-500 text-blue-800'
                                 : 'bg-white border-gray-100 text-gray-700'
                         }`}
+                        aria-label={displayLabel}
                       >
-                        {getQuestionNumberLabel(questions, question.id)}
+                        {displayLabel}
                         {isFlagged && !isCurrent ? (
                           <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-amber-700 rounded-full border border-white"></div>
                         ) : null}

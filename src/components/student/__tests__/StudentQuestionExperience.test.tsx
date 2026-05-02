@@ -108,6 +108,88 @@ describe('student question experience', () => {
     expect(screen.getByRole('button', { name: '5' })).toBeInTheDocument();
   });
 
+  it('shows root-only footer numbers when a question has sub-answers', () => {
+    render(
+      <StudentFooter
+        questions={[
+          {
+            id: 'q27',
+            blockId: 'b1',
+            groupId: 'group-1',
+            groupLabel: 'Section 1',
+            rootId: 'q27',
+            rootNumber: 27,
+            numberLabel: '27',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: 'q27',
+          },
+          {
+            id: 'q28::leaf-1',
+            blockId: 'b1',
+            groupId: 'group-1',
+            groupLabel: 'Section 1',
+            rootId: 'q28',
+            rootNumber: 28,
+            numberLabel: '28.1',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: 'q28::leaf-1',
+            isSubAnswerTreeLeaf: true,
+          },
+          {
+            id: 'q28::leaf-2',
+            blockId: 'b1',
+            groupId: 'group-1',
+            groupLabel: 'Section 1',
+            rootId: 'q28',
+            rootNumber: 28,
+            numberLabel: '28.2',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: 'q28::leaf-2',
+            isSubAnswerTreeLeaf: true,
+          },
+          {
+            id: 'q29',
+            blockId: 'b1',
+            groupId: 'group-1',
+            groupLabel: 'Section 1',
+            rootId: 'q29',
+            rootNumber: 29,
+            numberLabel: '29',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: 'q29',
+          },
+          {
+            id: 'q30',
+            blockId: 'b1',
+            groupId: 'group-1',
+            groupLabel: 'Section 1',
+            rootId: 'q30',
+            rootNumber: 30,
+            numberLabel: '30',
+            isMulti: false,
+            correctCount: 1,
+            answerKey: 'q30',
+          },
+        ]}
+        currentQuestionId="q28::leaf-2"
+        onNavigate={() => {}}
+        answers={{}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '27' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '28' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '29' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '30' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '28.1' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '28.2' })).toBeNull();
+  });
+
   it('marks matching-dropdown answer changes as discrete interactions', () => {
     const onChange = vi.fn();
     const block = {
