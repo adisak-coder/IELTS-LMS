@@ -123,13 +123,10 @@ export function ExamPreviewRoute() {
   };
 
   return (
-    <div className="h-full w-full bg-gray-50">
-      <div className="h-11 border-b border-gray-200 bg-white flex items-center justify-between px-3 md:px-4 lg:px-6">
-        <div className="text-xs font-bold uppercase tracking-[0.2em] text-gray-500">
-          Preview mode
-        </div>
+    <>
+      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[120] rounded-md border border-gray-200 bg-white/95 shadow-sm px-3 py-1.5 backdrop-blur">
         <label className="text-xs font-semibold text-gray-700">
-          Section
+          Preview section
           <select
             aria-label="Preview section"
             value={previewModule}
@@ -154,7 +151,7 @@ export function ExamPreviewRoute() {
         persistenceEnabled={false}
         enableMonitoring={false}
       />
-    </div>
+    </>
   );
 }
 
