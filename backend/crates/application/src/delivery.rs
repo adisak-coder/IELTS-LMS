@@ -891,15 +891,12 @@ impl DeliveryService {
             }),
         );
 
-        let persisted_mutations: Vec<&MutationEnvelope> = req
-            .mutations
-            .iter()
-            .filter(|mutation| should_persist_mutation_row(response_mode, &mutation.mutation_type))
-            .collect();
+        let persisted_mutations: Vec<&MutationEnvelope> = req.mutations.iter().collect();
+        let persisted_mutations_count = persisted_mutations.len();
         let should_write_batch_audit =
-            response_mode == MutationBatchResponseMode::Full || !persisted_mutations.is_empty();
+            response_mode == MutationBatchResponseMode::Full || persisted_mutations_count > 0;
 
-        if !persisted_mutations.is_empty() {
+        if persisted_mutations_count > 0 {
             let schedule_id = schedule_id.to_string();
             let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
                 r#"
@@ -927,6 +924,16 @@ impl DeliveryService {
             });
             query_builder.build().execute(tx.as_mut()).await?;
         }
+
+        tracing::info!(
+            schedule_id = %schedule_id,
+            attempt_id = %req.attempt_id,
+            client_session_id = %req.client_session_id,
+            response_mode = ?response_mode,
+            mutation_batch_count = req.mutations.len(),
+            persisted_mutations_count,
+            "persisted student mutation batch",
+        );
 
         sqlx::query(
             r#"
@@ -988,6 +995,7 @@ impl DeliveryService {
             .bind(&attempt.id)
             .bind(json!({
                 "count": req.mutations.len(),
+                "persistedMutationCount": persisted_mutations_count,
                 "seqFrom": seq_from,
                 "seqTo": seq_to,
                 "types": mutation_types,
@@ -2061,20 +2069,6 @@ fn is_operation_command_type(mutation_type: &str) -> bool {
             | "ClearChoice"
             | "SetEssayText"
             | "ClearEssayText"
-    )
-}
-
-fn should_persist_mutation_row(
-    response_mode: MutationBatchResponseMode,
-    mutation_type: &str,
-) -> bool {
-    if response_mode == MutationBatchResponseMode::Full {
-        return true;
-    }
-
-    !matches!(
-        mutation_type,
-        "answer" | "writing_answer" | "flag" | "position"
     )
 }
 
