@@ -287,6 +287,28 @@ export function getStudentAnswerDisplay(
   descriptor: StudentQuestionDescriptor,
   answerMap: Record<string, unknown>,
 ): string {
+  if (descriptor.block.type === 'SINGLE_MCQ') {
+    const options = Array.isArray(descriptor.block.options) ? descriptor.block.options : [];
+    const value = getQuestionAnswer(descriptor, answerMap);
+    return typeof value === 'string' ? lookupOptionText(options, value) : formatAnswerValue(value);
+  }
+
+  if (descriptor.block.type === 'MULTI_MCQ') {
+    const options = Array.isArray(descriptor.block.options) ? descriptor.block.options : [];
+    const rawValue = answerMap[descriptor.answerKey];
+    const ids = Array.isArray(rawValue)
+      ? rawValue.filter((entry): entry is string => typeof entry === 'string')
+      : typeof rawValue === 'string'
+        ? [rawValue]
+        : [];
+
+    if (ids.length === 0) {
+      return formatAnswerValue(rawValue);
+    }
+
+    return ids.map((id) => lookupOptionText(options, id)).join(', ');
+  }
+
   const value =
     descriptor.block.type === 'MULTI_MCQ' && typeof descriptor.answerIndex === 'number'
       ? answerMap[descriptor.answerKey]

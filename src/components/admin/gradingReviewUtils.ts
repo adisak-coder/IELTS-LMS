@@ -14,6 +14,7 @@ import {
   extractObjectiveAnswerMap,
   getCorrectAnswerDisplay,
   getQuestionPrompt,
+  getStudentAnswerDisplay,
   getStudentAnswerRawProjection,
   isStudentAnswerCorrect,
 } from './gradingAnswerUtils';
@@ -294,6 +295,9 @@ function buildTracebackItem(
     ? 1
     : questionResult?.maxScore ?? (computedCorrectness === null ? null : 1);
   const rawStudentAnswer = getStudentAnswerRawProjection(descriptor, answerMap);
+  const displayStudentAnswer = getStudentAnswerDisplay(descriptor, answerMap);
+  const shouldUseMappedMcqDisplay =
+    descriptor.block.type === 'MULTI_MCQ' || descriptor.block.type === 'SINGLE_MCQ';
 
   return {
     numberLabel: getQuestionNumberLabel(descriptors, descriptor.id),
@@ -301,8 +305,8 @@ function buildTracebackItem(
     questionId: descriptor.id,
     rootId: descriptor.rootId,
     prompt: getQuestionPrompt(descriptor),
-    studentAnswer: rawStudentAnswer.canonical,
-    studentAnswerSlots: rawStudentAnswer.slots ?? undefined,
+    studentAnswer: shouldUseMappedMcqDisplay ? displayStudentAnswer : rawStudentAnswer.canonical,
+    studentAnswerSlots: shouldUseMappedMcqDisplay ? undefined : rawStudentAnswer.slots ?? undefined,
     correctAnswer: getCorrectAnswerDisplay(descriptor),
     correctness,
     rootCorrectness: treeOverride ? treeOverride.rootCorrect : correctness,
