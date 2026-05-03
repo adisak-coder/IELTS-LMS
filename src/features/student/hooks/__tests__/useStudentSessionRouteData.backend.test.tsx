@@ -206,32 +206,8 @@ function buildAttempt(publishedVersionId = 'ver-1') {
   };
 }
 
-function buildLiveSessionContext(
-  attempt: Record<string, unknown> | null,
-  publishedVersionId: string | null = 'ver-1',
-  rollout: Record<string, unknown> | null = null,
-) {
-  return {
-    runtime: buildRuntime(),
-    attempt,
-    publishedVersionId,
-    rollout,
-    degradedLiveMode: false,
-  };
-}
-
-function buildBootstrapContext(attempt = buildAttempt()) {
-  return {
-    attempt,
-    attemptCredential: {
-      attemptToken: 'attempt-token-1',
-      expiresAt: '2026-01-01T10:00:00.000Z',
-    },
-  };
-}
-
-function buildStaticSessionContextWithMissingDiagramImage(versionId = 'ver-1') {
-  const context = buildStaticSessionContext(versionId);
+function buildSessionContextWithMissingDiagramImage() {
+  const context = buildSessionContext(buildAttempt());
   const contentSnapshot = context.version.contentSnapshot as {
     listening: {
       parts: Array<{
@@ -860,15 +836,9 @@ describe('useStudentSessionRouteData backend mode', () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
     vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const fetchMock = vi.fn((url: string) => {
-      if (url === '/api/v1/student/sessions/sched-1/static?candidateId=W250334') {
-        return Promise.resolve(jsonResponse(buildStaticSessionContextWithMissingDiagramImage()));
-      }
-      if (url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334') {
-        return Promise.resolve(jsonResponse(buildLiveSessionContext(buildAttempt())));
-      }
-      return Promise.resolve(jsonResponse(buildBootstrapContext(buildAttempt())));
-    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse(buildSessionContextWithMissingDiagramImage())));
     global.fetch = fetchMock as typeof fetch;
 
     const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {

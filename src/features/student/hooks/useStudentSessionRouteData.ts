@@ -169,40 +169,6 @@ interface StudentSessionRouteData {
   retry: () => Promise<void>;
 }
 
-type BackendStaticSession = {
-  schedule: Parameters<typeof mapBackendSchedule>[0];
-  version: Parameters<typeof mapBackendExamVersion>[0];
-};
-
-type BackendLiveSession = {
-  runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-  attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-  publishedVersionId?: string | null | undefined;
-  rollout?: unknown;
-};
-
-interface LoadedStaticSnapshot {
-  examState: ExamState;
-  scheduleEntity: ExamSchedule;
-  versionId: string;
-}
-
-interface SnapshotFreshnessDimension {
-  revision: number | null;
-  updatedAtMs: number | null;
-}
-
-interface LiveSnapshotFreshness {
-  attempt: SnapshotFreshnessDimension;
-  runtime: SnapshotFreshnessDimension;
-}
-
-interface LiveSnapshotApplyDecision {
-  discardAll: boolean;
-  applyAttempt: boolean;
-  applyRuntime: boolean;
-}
-
 type DiagramSnapshotIssue = {
   blockId: string;
   section: 'reading' | 'listening';
@@ -211,6 +177,15 @@ type DiagramSnapshotIssue = {
   hasAssetUrl: boolean;
   hasUsableFallback: boolean;
 };
+
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
 
 function collectPublishedDiagramSnapshotIssues(contentSnapshot: unknown): {
   totalDiagramBlocks: number;
@@ -253,13 +228,13 @@ function collectPublishedDiagramSnapshotIssues(contentSnapshot: unknown): {
 
       totalDiagramBlocks += 1;
 
-      const imageUrl = parseNullableString(blockRecord['imageUrl']);
+      const imageUrl = readNonEmptyString(blockRecord['imageUrl']);
       if (imageUrl) {
         return;
       }
 
-      const imageSrc = parseNullableString(blockRecord['imageSrc']);
-      const assetUrl = parseNullableString(blockRecord['assetUrl']);
+      const imageSrc = readNonEmptyString(blockRecord['imageSrc']);
+      const assetUrl = readNonEmptyString(blockRecord['assetUrl']);
       const hasUsableFallback = Boolean(imageSrc || assetUrl);
       if (!hasUsableFallback) {
         missingUsableImageCount += 1;
@@ -267,7 +242,7 @@ function collectPublishedDiagramSnapshotIssues(contentSnapshot: unknown): {
 
       missingImageUrlCount += 1;
       missingBlocks.push({
-        blockId: parseNullableString(blockRecord['id']) ?? '(unknown-block-id)',
+        blockId: readNonEmptyString(blockRecord['id']) ?? '(unknown-block-id)',
         section,
         containerId,
         hasImageSrc: Boolean(imageSrc),
@@ -280,14 +255,14 @@ function collectPublishedDiagramSnapshotIssues(contentSnapshot: unknown): {
   if (Array.isArray(snapshot.reading?.passages)) {
     snapshot.reading?.passages.forEach((passage, index) => {
       const passageId =
-        parseNullableString(passage?.id) ?? `reading-passage-${index + 1}`;
+        readNonEmptyString(passage?.id) ?? `reading-passage-${index + 1}`;
       collectFromBlocks('reading', passageId, passage?.blocks);
     });
   }
 
   if (Array.isArray(snapshot.listening?.parts)) {
     snapshot.listening?.parts.forEach((part, index) => {
-      const partId = parseNullableString(part?.id) ?? `listening-part-${index + 1}`;
+      const partId = readNonEmptyString(part?.id) ?? `listening-part-${index + 1}`;
       collectFromBlocks('listening', partId, part?.blocks);
     });
   }
@@ -297,155 +272,6 @@ function collectPublishedDiagramSnapshotIssues(contentSnapshot: unknown): {
     missingImageUrlCount,
     missingUsableImageCount,
     missingBlocks,
-  };
-}
-
-function buildLiveMetricEndpoint(scheduleId: string) {
-  return `/v1/student/sessions/${scheduleId}/live`;
-}
-
-function extractAttemptSyncState(live: BackendLiveSession): string | null {
-  const attempt = asRecord(live.attempt);
-  const recovery = asRecord(attempt?.['recovery']);
-  return parseNullableString(recovery?.['syncState']);
-}
-
-function resolveAnswerInvariantRollout(live: BackendLiveSession): StudentAnswerInvariantRollout {
-  const defaultRollout = buildDefaultAnswerInvariantRollout();
-  const rolloutRoot = asRecord(live.rollout);
-  if (!rolloutRoot) {
-    return defaultRollout;
-  }
-
-  const nested = asRecord(rolloutRoot['localWriterAnswerInvariant']);
-  const enabled = parseNullableBoolean(
-    nested?.['enabled'] ?? rolloutRoot['localWriterAnswerInvariantEnabled'] ?? rolloutRoot['enabled'],
-  );
-  const killSwitch = parseNullableBoolean(
-    nested?.['killSwitch'] ??
-      rolloutRoot['localWriterAnswerInvariantKillSwitch'] ??
-      rolloutRoot['killSwitch'],
-  );
-  const cohort = parseNullableString(
-    nested?.['cohort'] ?? rolloutRoot['localWriterAnswerInvariantCohort'] ?? rolloutRoot['cohort'],
-  );
-  const configFingerprint = parseNullableString(
-    nested?.['configFingerprint'] ??
-      rolloutRoot['localWriterAnswerInvariantConfigFingerprint'] ??
-      rolloutRoot['configFingerprint'],
-  );
-
-  const hasRuntimeOverride =
-    enabled !== null || killSwitch !== null || cohort !== null || configFingerprint !== null;
-  if (!hasRuntimeOverride) {
-    return defaultRollout;
-  }
-
-  return {
-    enabled: enabled ?? defaultRollout.enabled,
-    killSwitch: killSwitch ?? defaultRollout.killSwitch,
-    cohort,
-    configFingerprint,
-    source: 'runtime',
-  };
-}
-
-function parseFiniteNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-function parseIsoTimestampMs(value: unknown): number | null {
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function extractLiveSnapshotFreshness(live: BackendLiveSession): LiveSnapshotFreshness {
-  return {
-    attempt: {
-      revision: parseFiniteNumber(live.attempt?.revision),
-      updatedAtMs: parseIsoTimestampMs(live.attempt?.updatedAt),
-    },
-    runtime: {
-      revision: parseFiniteNumber(live.runtime?.revision),
-      updatedAtMs: parseIsoTimestampMs(live.runtime?.updatedAt),
-    },
-  };
-}
-
-function hasFreshnessValue(value: SnapshotFreshnessDimension): boolean {
-  return value.revision !== null || value.updatedAtMs !== null;
-}
-
-function compareFreshnessDimension(
-  nextValue: SnapshotFreshnessDimension,
-  currentValue: SnapshotFreshnessDimension,
-): number {
-  if (!hasFreshnessValue(nextValue)) {
-    return 0;
-  }
-
-  if (!hasFreshnessValue(currentValue)) {
-    return 1;
-  }
-
-  const nextHasRevision = nextValue.revision !== null;
-  const currentHasRevision = currentValue.revision !== null;
-  if (nextHasRevision || currentHasRevision) {
-    if (nextHasRevision && !currentHasRevision) {
-      return 1;
-    }
-    if (!nextHasRevision && currentHasRevision) {
-      return -1;
-    }
-    if (nextValue.revision !== null && currentValue.revision !== null) {
-      if (nextValue.revision > currentValue.revision) {
-        return 1;
-      }
-      if (nextValue.revision < currentValue.revision) {
-        return -1;
-      }
-    }
-  }
-
-  if (nextValue.updatedAtMs !== null && currentValue.updatedAtMs !== null) {
-    if (nextValue.updatedAtMs > currentValue.updatedAtMs) {
-      return 1;
-    }
-    if (nextValue.updatedAtMs < currentValue.updatedAtMs) {
-      return -1;
-    }
-  }
-
-  return 0;
-}
-
-function mergeLiveSnapshotFreshness(
-  current: LiveSnapshotFreshness | null,
-  incoming: LiveSnapshotFreshness,
-  options?: { applyAttempt?: boolean; applyRuntime?: boolean },
-): LiveSnapshotFreshness {
-  const applyAttempt = options?.applyAttempt ?? true;
-  const applyRuntime = options?.applyRuntime ?? true;
-  return {
-    attempt: {
-      revision: applyAttempt
-        ? incoming.attempt.revision ?? current?.attempt.revision ?? null
-        : current?.attempt.revision ?? null,
-      updatedAtMs: applyAttempt
-        ? incoming.attempt.updatedAtMs ?? current?.attempt.updatedAtMs ?? null
-        : current?.attempt.updatedAtMs ?? null,
-    },
-    runtime: {
-      revision: applyRuntime
-        ? incoming.runtime.revision ?? current?.runtime.revision ?? null
-        : current?.runtime.revision ?? null,
-      updatedAtMs: applyRuntime
-        ? incoming.runtime.updatedAtMs ?? current?.runtime.updatedAtMs ?? null
-        : current?.runtime.updatedAtMs ?? null,
-    },
   };
 }
 
@@ -893,10 +719,31 @@ export function useStudentSessionRouteData(
         throw new Error('Student identity not found');
       }
 
-      let loadedStatic = await loadStaticSessionSnapshot();
-      if (!loadedStatic) {
-        throw new Error('Unable to load static exam session context');
+      const session = await backendGet<{
+        schedule: Parameters<typeof mapBackendSchedule>[0];
+        version: Parameters<typeof mapBackendExamVersion>[0];
+        runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
+        attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
+      }>(buildBackendSessionEndpoint(scheduleId, candidateId));
+      const scheduleEntity = mapBackendSchedule(session.schedule);
+      const version = mapBackendExamVersion(session.version);
+      const diagramSnapshotDiagnostics = collectPublishedDiagramSnapshotIssues(version.contentSnapshot);
+      if (diagramSnapshotDiagnostics.missingImageUrlCount > 0) {
+        console.warn('[student-session] published version has DIAGRAM_LABELING blocks without imageUrl', {
+          routeScheduleId: scheduleId,
+          scheduleId: scheduleEntity.id,
+          publishedVersionId: scheduleEntity.publishedVersionId,
+          loadedVersionId: version.id,
+          totalDiagramBlocks: diagramSnapshotDiagnostics.totalDiagramBlocks,
+          missingImageUrlCount: diagramSnapshotDiagnostics.missingImageUrlCount,
+          missingUsableImageCount: diagramSnapshotDiagnostics.missingUsableImageCount,
+          missingBlocks: diagramSnapshotDiagnostics.missingBlocks,
+        });
       }
+      const examState = hydrateExamState({
+        ...version.contentSnapshot,
+        config: version.configSnapshot,
+      } satisfies ExamState);
 
       let live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
       const reloadedStatic = await maybeRebootstrapStaticOnVersionMismatch(live);
