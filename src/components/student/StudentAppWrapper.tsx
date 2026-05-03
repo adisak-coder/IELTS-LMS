@@ -62,19 +62,23 @@ export function StudentAppWrapper({
         attemptSnapshot={attemptSnapshot}
         persistenceEnabled={persistenceEnabled}
       >
-        {enableMonitoring ? (
-          <StudentNetworkProvider
-            config={state.config}
-            scheduleId={scheduleId}
-            onRefreshRuntime={onRuntimeRefresh}
-          >
-            <ProctoringProvider config={state.config} scheduleId={scheduleId}>
+        <ProctoringProvider
+          config={state.config}
+          scheduleId={scheduleId}
+          enabled={enableMonitoring}
+        >
+          {enableMonitoring ? (
+            <StudentNetworkProvider
+              config={state.config}
+              scheduleId={scheduleId}
+              onRefreshRuntime={onRuntimeRefresh}
+            >
               {app}
-            </ProctoringProvider>
-          </StudentNetworkProvider>
-        ) : (
-          app
-        )}
+            </StudentNetworkProvider>
+          ) : (
+            app
+          )}
+        </ProctoringProvider>
       </StudentAttemptProvider>
     </StudentRuntimeProvider>
   );

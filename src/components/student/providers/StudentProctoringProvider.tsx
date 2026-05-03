@@ -30,6 +30,7 @@ interface ProctoringProviderProps {
   children: ReactNode;
   config: ExamConfig;
   scheduleId?: string | undefined;
+  enabled?: boolean | undefined;
 }
 
 function isSafariBrowser() {
@@ -83,6 +84,7 @@ export function ProctoringProvider({
   children,
   config,
   scheduleId,
+  enabled = true,
 }: ProctoringProviderProps) {
   const { state: runtimeState, actions: runtimeActions } = useStudentRuntime();
   const { state: attemptState, actions: attemptActions } = useStudentAttempt();
@@ -107,6 +109,10 @@ export function ProctoringProvider({
     message: string,
     severity: ViolationSeverity = 'medium',
   ) => {
+    if (!enabled) {
+      return;
+    }
+
     const now = Date.now();
     const lastViolationAt = cooldownByTypeRef.current[type] ?? 0;
 
@@ -248,6 +254,7 @@ export function ProctoringProvider({
     config.progression.allowPause,
     config.progression.warningThreshold,
     config.security.severityThresholds,
+    enabled,
     runtimeActions,
     scheduleId,
   ]);
@@ -261,7 +268,7 @@ export function ProctoringProvider({
   }, []);
 
   useEffect(() => {
-    if (runtimeState.phase !== 'exam' || !config.security.requireFullscreen) {
+    if (!enabled || runtimeState.phase !== 'exam' || !config.security.requireFullscreen) {
       fullscreenEntryAttemptedRef.current = false;
       return;
     }
@@ -272,7 +279,7 @@ export function ProctoringProvider({
 
     fullscreenEntryAttemptedRef.current = true;
     void requestFullscreen();
-  }, [config.security.requireFullscreen, requestFullscreen, runtimeState.phase]);
+  }, [config.security.requireFullscreen, enabled, requestFullscreen, runtimeState.phase]);
 
   useEffect(() => {
     const translateMetaId = 'student-notranslate-meta';
@@ -284,7 +291,7 @@ export function ProctoringProvider({
       document.head.querySelector(`#${translateMetaId}`)?.remove();
     };
 
-    if (runtimeState.phase !== 'exam' || !shouldPreventTranslation) {
+    if (!enabled || runtimeState.phase !== 'exam' || !shouldPreventTranslation) {
       removeNoTranslateMarkers();
       return;
     }
@@ -301,10 +308,10 @@ export function ProctoringProvider({
     }
 
     return removeNoTranslateMarkers;
-  }, [runtimeState.phase, shouldPreventTranslation]);
+  }, [enabled, runtimeState.phase, shouldPreventTranslation]);
 
   useEffect(() => {
-    if (runtimeState.phase !== 'exam' || !shouldPreventTranslation) {
+    if (!enabled || runtimeState.phase !== 'exam' || !shouldPreventTranslation) {
       return;
     }
 
@@ -344,10 +351,10 @@ export function ProctoringProvider({
       window.clearInterval(intervalId);
       observer.disconnect();
     };
-  }, [handleViolation, runtimeState.phase, shouldPreventTranslation]);
+  }, [enabled, handleViolation, runtimeState.phase, shouldPreventTranslation]);
 
   const detectSecondaryScreens = useCallback(async () => {
-    if (!config.security.detectSecondaryScreen || runtimeState.phase !== 'exam') {
+    if (!enabled || !config.security.detectSecondaryScreen || runtimeState.phase !== 'exam') {
       return;
     }
 
@@ -407,12 +414,17 @@ export function ProctoringProvider({
   }, [
     attemptState.attemptId,
     config.security.detectSecondaryScreen,
+    enabled,
     handleViolation,
     runtimeState.phase,
     scheduleId,
   ]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     let tabSwitchDebounceTimer: number | null = null;
     let lastTabSwitchTime = 0;
     let fullscreenReentryTimer: number | null = null;
@@ -774,6 +786,7 @@ export function ProctoringProvider({
     attemptState.attempt?.recovery.syncState,
     config.security,
     detectSecondaryScreens,
+    enabled,
     handleViolation,
     attemptState.pendingMutationCount,
     requestFullscreen,
