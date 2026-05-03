@@ -81,7 +81,7 @@ function createState(): ExamState {
 }
 
 describe('StudentReading passage readability controls', () => {
-  it('renders in-pane controls and invokes handlers', () => {
+  it('does not render in-pane controls anymore', () => {
     const onIncrease = vi.fn();
     const onDecrease = vi.fn();
     const onReset = vi.fn();
@@ -102,18 +102,17 @@ describe('StudentReading passage readability controls', () => {
       />,
     );
 
-    expect(screen.getByTestId('passage-readability-controls')).toBeInTheDocument();
+    expect(screen.queryByTestId('passage-readability-controls')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /increase passage text size/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /decrease passage text size/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reset passage readability/i })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /increase passage text size/i }));
-    fireEvent.click(screen.getByRole('button', { name: /decrease passage text size/i }));
-    fireEvent.click(screen.getByRole('button', { name: /reset passage readability/i }));
-
-    expect(onIncrease).toHaveBeenCalledTimes(1);
-    expect(onDecrease).toHaveBeenCalledTimes(1);
-    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(onIncrease).not.toHaveBeenCalled();
+    expect(onDecrease).not.toHaveBeenCalled();
+    expect(onReset).not.toHaveBeenCalled();
   });
 
-  it('clamps controls via disabled state and keeps question pane sizing unchanged', () => {
+  it('keeps question pane sizing unchanged', () => {
     render(
       <StudentReading
         state={createState()}
@@ -129,9 +128,6 @@ describe('StudentReading passage readability controls', () => {
         canDecreasePassageReadability={false}
       />,
     );
-
-    expect(screen.getByRole('button', { name: /increase passage text size/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /decrease passage text size/i })).toBeDisabled();
 
     const questionPane = screen.getByTestId('reading-question-scroll');
     expect(questionPane).not.toHaveStyle({ fontSize: 'var(--student-reading-question-font-size)' });

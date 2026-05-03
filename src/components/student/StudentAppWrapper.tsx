@@ -20,6 +20,8 @@ interface StudentAppWrapperProps {
   runtimeSnapshot?: ExamSessionRuntime | null;
   answerInvariantRollout?: StudentAnswerInvariantRollout | undefined;
   showSubmitControls?: boolean | undefined;
+  persistenceEnabled?: boolean | undefined;
+  enableMonitoring?: boolean | undefined;
 }
 
 export function StudentAppWrapper({
@@ -31,7 +33,17 @@ export function StudentAppWrapper({
   runtimeSnapshot = null,
   answerInvariantRollout,
   showSubmitControls = true,
+  persistenceEnabled = true,
+  enableMonitoring = true,
 }: StudentAppWrapperProps) {
+  const app = (
+    <StudentUIProvider>
+      <KeyboardProvider>
+        <StudentApp showSubmitControls={showSubmitControls} />
+      </KeyboardProvider>
+    </StudentUIProvider>
+  );
+
   return (
     <StudentRuntimeProvider
       state={state}
@@ -45,20 +57,24 @@ export function StudentAppWrapper({
       runtimeBacked={Boolean(runtimeSnapshot)}
       runtimeSnapshot={runtimeSnapshot}
     >
-      <StudentAttemptProvider scheduleId={scheduleId} attemptSnapshot={attemptSnapshot}>
-        <StudentNetworkProvider
-          config={state.config}
-          scheduleId={scheduleId}
-          onRefreshRuntime={onRuntimeRefresh}
-        >
-          <ProctoringProvider config={state.config} scheduleId={scheduleId}>
-            <StudentUIProvider>
-              <KeyboardProvider>
-                <StudentApp showSubmitControls={showSubmitControls} />
-              </KeyboardProvider>
-            </StudentUIProvider>
-          </ProctoringProvider>
-        </StudentNetworkProvider>
+      <StudentAttemptProvider
+        scheduleId={scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        persistenceEnabled={persistenceEnabled}
+      >
+        {enableMonitoring ? (
+          <StudentNetworkProvider
+            config={state.config}
+            scheduleId={scheduleId}
+            onRefreshRuntime={onRuntimeRefresh}
+          >
+            <ProctoringProvider config={state.config} scheduleId={scheduleId}>
+              {app}
+            </ProctoringProvider>
+          </StudentNetworkProvider>
+        ) : (
+          app
+        )}
       </StudentAttemptProvider>
     </StudentRuntimeProvider>
   );

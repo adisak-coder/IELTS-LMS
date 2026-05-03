@@ -83,6 +83,7 @@ interface StudentAttemptProviderProps {
   children: ReactNode;
   scheduleId?: string | undefined;
   attemptSnapshot?: StudentAttempt | null;
+  persistenceEnabled?: boolean | undefined;
 }
 
 type AttemptPatch = Omit<Partial<StudentAttempt>, 'integrity' | 'recovery'> & {
@@ -463,6 +464,7 @@ export function StudentAttemptProvider({
   children,
   scheduleId,
   attemptSnapshot = null,
+  persistenceEnabled = true,
 }: StudentAttemptProviderProps) {
   const { state: runtimeState, actions: runtimeActions } = useStudentRuntime();
   const setRuntimeAttemptSyncState = runtimeActions.setAttemptSyncState;
@@ -721,6 +723,21 @@ export function StudentAttemptProvider({
     }
 
     const timestamp = new Date().toISOString();
+    if (!persistenceEnabled) {
+      const nextAttempt = mergeAttempt(currentAttempt, {
+        ...patch,
+        recovery: {
+          ...patch.recovery,
+          lastLocalMutationAt: timestamp,
+          lastPersistedAt: timestamp,
+          pendingMutationCount: 0,
+          syncState: 'idle',
+        },
+      });
+      syncAttemptState(nextAttempt);
+      return;
+    }
+
     const payloadWithModule =
       (mutationType === 'answer' || mutationType === 'flag' || mutationType === 'writing_answer') &&
       payload['module'] === undefined
@@ -766,7 +783,7 @@ export function StudentAttemptProvider({
         delayMs,
       );
     }
-  }, [scheduleFlush, setPendingMutations, syncAttemptState]);
+  }, [persistenceEnabled, scheduleFlush, setPendingMutations, syncAttemptState]);
 
   const flushPending = useCallback(async () => {
     if (flushInFlightRef.current) {
@@ -776,6 +793,20 @@ export function StudentAttemptProvider({
     const promise = (async () => {
       const currentAttempt = attemptRef.current;
       if (!currentAttempt) {
+        return true;
+      }
+
+      if (!persistenceEnabled) {
+        pendingMutationsRef.current = [];
+        setPendingMutationCount(0);
+        setStorageDurabilityBlocking(false);
+        const idleAttempt = mergeAttempt(currentAttempt, {
+          recovery: {
+            pendingMutationCount: 0,
+            syncState: 'idle',
+          },
+        });
+        syncAttemptState(idleAttempt);
         return true;
       }
 
@@ -957,9 +988,12 @@ export function StudentAttemptProvider({
     }
   }, [
     clearDurablePendingWriteTimeout,
+    persistenceEnabled,
     persistPendingMutationsMirrorNow,
     setPendingMutations,
     setRuntimeAttemptSyncState,
+    setStorageDurabilityBlocking,
+    setPendingMutationCount,
     syncAttemptState,
     updatePendingMutationsRamState,
   ]);
@@ -1024,6 +1058,27 @@ export function StudentAttemptProvider({
       observedRef.current = createObservedSnapshot(null);
       setRuntimeAttemptSyncState('idle');
       setAttempt(null);
+      setPendingMutationCount(0);
+      pendingMutationsRef.current = [];
+      pendingMutationVersionRef.current = 0;
+      durablePersistedMutationVersionRef.current = 0;
+      latestAnswerMutationVersionRef.current = 0;
+      durablePersistChainRef.current = Promise.resolve(true);
+      clearDurablePendingWriteTimeout();
+      return;
+    }
+
+    if (!persistenceEnabled) {
+      const ephemeralAttempt = mergeAttempt(attemptSnapshot, {
+        recovery: {
+          pendingMutationCount: 0,
+          syncState: 'idle',
+        },
+      });
+      attemptRef.current = ephemeralAttempt;
+      setAttempt(ephemeralAttempt);
+      observedRef.current = createObservedSnapshot(ephemeralAttempt);
+      setRuntimeAttemptSyncState('idle');
       setPendingMutationCount(0);
       pendingMutationsRef.current = [];
       pendingMutationVersionRef.current = 0;
@@ -1226,6 +1281,7 @@ export function StudentAttemptProvider({
     attemptSnapshot,
     clearDurablePendingWriteTimeout,
     flushPending,
+    persistenceEnabled,
     persistPendingMutationsMirrorNow,
     runtimeState.runtimeSnapshot,
     setRuntimeAttemptSyncState,
@@ -1428,6 +1484,21 @@ export function StudentAttemptProvider({
       throw new Error('Missing student attempt context.');
     }
 
+    if (!persistenceEnabled) {
+      syncAttemptState(
+        mergeAttempt(currentAttempt, {
+          integrity: {
+            preCheck: result,
+          },
+          recovery: {
+            syncState: 'idle',
+            pendingMutationCount: 0,
+          },
+        }),
+      );
+      return;
+    }
+
     const resolvedScheduleId = scheduleId ?? currentAttempt.scheduleId;
 
     try {
@@ -1473,7 +1544,7 @@ export function StudentAttemptProvider({
         completedAt: result.completedAt,
       });
     }
-  }, [applyPatch, scheduleId, syncAttemptState]);
+  }, [applyPatch, persistenceEnabled, scheduleId, syncAttemptState]);
 
   const recordNetworkStatus = useCallback(async (
     status: 'offline' | 'online',
@@ -1506,6 +1577,10 @@ export function StudentAttemptProvider({
     type: HeartbeatEventType,
     payload?: Record<string, unknown>,
   ) => {
+    if (!persistenceEnabled) {
+      return;
+    }
+
     const currentAttempt = attemptRef.current;
     if (!currentAttempt) {
       return;
@@ -1518,7 +1593,7 @@ export function StudentAttemptProvider({
       payload,
     );
     await studentAttemptRepository.saveHeartbeatEvent(heartbeatEvent);
-  }, []);
+  }, [persistenceEnabled]);
 
   const acknowledgeProctorWarning = useCallback(async (warningId: string) => {
     const currentAttempt = attemptRef.current;
@@ -1534,6 +1609,11 @@ export function StudentAttemptProvider({
       proctorUpdatedBy: 'Candidate',
     });
 
+    if (!persistenceEnabled) {
+      syncAttemptState(nextAttempt);
+      return;
+    }
+
     await studentAttemptRepository.saveAttempt(nextAttempt);
     syncAttemptState(nextAttempt);
     await saveStudentAuditEvent(
@@ -1544,7 +1624,7 @@ export function StudentAttemptProvider({
       },
       currentAttempt.id,
     );
-  }, [scheduleId, syncAttemptState]);
+  }, [persistenceEnabled, scheduleId, syncAttemptState]);
 
   const submitAttempt = useCallback(async (): Promise<boolean> => {
     const currentAttempt = attemptRef.current;
@@ -1558,16 +1638,33 @@ export function StudentAttemptProvider({
     }
 
     const latestAttempt = attemptRef.current ?? currentAttempt;
+    if (!persistenceEnabled) {
+      const submittedAttempt = mergeAttempt(latestAttempt, {
+        phase: 'post-exam',
+        submittedAt: new Date().toISOString(),
+        recovery: {
+          syncState: 'idle',
+          pendingMutationCount: 0,
+        },
+      });
+      runtimeActions.setPhase('post-exam');
+      syncAttemptState(submittedAttempt);
+      return true;
+    }
+
     const submittedAttempt = await studentAttemptRepository.submitAttempt(latestAttempt);
     runtimeActions.setPhase('post-exam');
     syncAttemptState(submittedAttempt);
     void queryClient.invalidateQueries();
     return true;
-  }, [flushPending, runtimeActions, syncAttemptState]);
+  }, [flushPending, persistenceEnabled, runtimeActions, syncAttemptState]);
 
   const flushAnswerDurabilityNow = useCallback(() => {
+    if (!persistenceEnabled) {
+      return;
+    }
     flushAnswerDurableMirrorNow('dom_rescue_commit');
-  }, [flushAnswerDurableMirrorNow]);
+  }, [flushAnswerDurableMirrorNow, persistenceEnabled]);
 
   const setDeviceFingerprintHash = useCallback(async (hash: string) => {
     await applyPatch(
@@ -1585,13 +1682,17 @@ export function StudentAttemptProvider({
   }, [applyPatch]);
 
   const flushHeartbeatEvents = useCallback(async () => {
+    if (!persistenceEnabled) {
+      return;
+    }
+
     const currentAttempt = attemptRef.current;
     if (!currentAttempt) {
       return;
     }
 
     await studentAttemptRepository.flushHeartbeatEvents(currentAttempt.id);
-  }, []);
+  }, [persistenceEnabled]);
 
   const dismissDroppedMutationsBanner = useCallback(async () => {
     const currentAttempt = attemptRef.current;
@@ -1609,8 +1710,11 @@ export function StudentAttemptProvider({
       },
     });
     syncAttemptState(nextAttempt);
+    if (!persistenceEnabled) {
+      return;
+    }
     await studentAttemptRepository.saveAttempt(nextAttempt).catch(() => {});
-  }, [syncAttemptState]);
+  }, [persistenceEnabled, syncAttemptState]);
 
   const value = useMemo<StudentAttemptContextValue>(() => ({
     state: {

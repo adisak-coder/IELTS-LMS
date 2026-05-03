@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExamState } from '../../../types';
 import { StudentListening } from '../StudentListening';
@@ -145,7 +145,7 @@ function createWritingState(): ExamState {
 }
 
 describe('Listening/Writing stimulus readability controls', () => {
-  it('renders listening stimulus controls and keeps question pane sizing unchanged', () => {
+  it('does not render listening stimulus controls and keeps question pane sizing unchanged', () => {
     const onIncrease = vi.fn();
     const onDecrease = vi.fn();
     const onReset = vi.fn();
@@ -166,20 +166,20 @@ describe('Listening/Writing stimulus readability controls', () => {
       />,
     );
 
-    expect(screen.getByTestId('listening-stimulus-readability-controls')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /increase listening stimulus text size/i }));
-    fireEvent.click(screen.getByRole('button', { name: /decrease listening stimulus text size/i }));
-    fireEvent.click(screen.getByRole('button', { name: /reset listening stimulus readability/i }));
+    expect(screen.queryByTestId('listening-stimulus-readability-controls')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /increase listening stimulus text size/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /decrease listening stimulus text size/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reset listening stimulus readability/i })).not.toBeInTheDocument();
 
-    expect(onIncrease).toHaveBeenCalledTimes(1);
-    expect(onDecrease).toHaveBeenCalledTimes(1);
-    expect(onReset).toHaveBeenCalledTimes(1);
+    expect(onIncrease).not.toHaveBeenCalled();
+    expect(onDecrease).not.toHaveBeenCalled();
+    expect(onReset).not.toHaveBeenCalled();
 
     const questionPane = screen.getByTestId('listening-question-scroll');
     expect(questionPane).not.toHaveStyle({ fontSize: 'var(--student-passage-font-size)' });
   });
 
-  it('renders writing stimulus controls and does not affect writing editor sizing', () => {
+  it('does not render writing stimulus controls and does not affect writing editor sizing', () => {
     render(
       <StudentWriting
         state={createWritingState()}
@@ -197,9 +197,10 @@ describe('Listening/Writing stimulus readability controls', () => {
       />,
     );
 
-    expect(screen.getByTestId('writing-stimulus-readability-controls')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /increase writing stimulus text size/i })).toBeDisabled();
-    expect(screen.getByRole('button', { name: /decrease writing stimulus text size/i })).toBeDisabled();
+    expect(screen.queryByTestId('writing-stimulus-readability-controls')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /increase writing stimulus text size/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /decrease writing stimulus text size/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /reset writing stimulus readability/i })).not.toBeInTheDocument();
 
     const prompt = screen.getByTestId('writing-task-prompt');
     expect(prompt.className).toContain('student-stimulus-content');

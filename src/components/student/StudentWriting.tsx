@@ -1,6 +1,6 @@
 import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { ExamState } from '../../types';
-import { ArrowLeftRight, Check, X, RotateCcw } from 'lucide-react';
+import { ArrowLeftRight, Check, X } from 'lucide-react';
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
 import { MIN_HEIGHTS } from '../../constants/uiConstants';
 import { saveStudentAuditEvent } from '../../services/studentAuditService';
@@ -52,12 +52,6 @@ export function StudentWriting({
   studentId,
   showSubmitButton = true,
   tabletMode = false,
-  onIncreasePassageReadability,
-  onDecreasePassageReadability,
-  onResetPassageReadability,
-  passageReadabilityLabel,
-  canIncreasePassageReadability = false,
-  canDecreasePassageReadability = false,
 }: StudentWritingProps) {
   const isTabletMode = Boolean(tabletMode);
   const attemptContext = useOptionalStudentAttempt();
@@ -86,12 +80,6 @@ export function StudentWriting({
   const currentText = writingAnswers[activeTaskId] || '';
   const currentPlainText = currentText.replace(/<[^>]*>/g, '').trim();
   const showEditorPlaceholder = !isEditorFocused && currentPlainText.length === 0;
-  const showStimulusReadabilityControls = Boolean(
-    onIncreasePassageReadability &&
-      onDecreasePassageReadability &&
-      onResetPassageReadability &&
-      passageReadabilityLabel,
-  );
 
   const commitDraftHtml = useCallback(
     (taskId: string, rawHtml: string, options?: { flushDurability?: boolean }) => {
@@ -458,53 +446,14 @@ export function StudentWriting({
               <h2 className="font-bold" style={{ fontSize: 'var(--student-passage-title-font-size)' }}>
                 {currentTask.label}
               </h2>
-              <div className="flex items-center gap-2">
-                {showStimulusReadabilityControls ? (
-                  <div
-                    className="flex flex-wrap items-center justify-end gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1"
-                    data-testid="writing-stimulus-readability-controls"
-                  >
-                    <button
-                      type="button"
-                      onClick={onDecreasePassageReadability}
-                      disabled={!canDecreasePassageReadability}
-                      className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label="Decrease writing stimulus text size"
-                    >
-                      A-
-                    </button>
-                    <span className="px-1 text-[10px] font-black uppercase tracking-[0.16em] text-gray-500">
-                      {passageReadabilityLabel}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={onIncreasePassageReadability}
-                      disabled={!canIncreasePassageReadability}
-                      className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      aria-label="Increase writing stimulus text size"
-                    >
-                      A+
-                    </button>
-                    <button
-                      type="button"
-                      onClick={onResetPassageReadability}
-                      className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
-                      aria-label="Reset writing stimulus readability"
-                    >
-                      <RotateCcw size={11} />
-                      Reset
-                    </button>
-                  </div>
-                ) : null}
-                <div className={`px-3 py-1 rounded-lg text-xs font-black uppercase tracking-widest ${
-                  isTimeCritical
-                    ? 'bg-red-100 text-red-700 animate-pulse'
-                    : isTimeWarning
-                      ? 'bg-amber-100 text-amber-700'
-                      : 'bg-blue-100 text-blue-700'
-                }`}>
-                  {formatTime(resolvedTimeRemaining)}
-                </div>
+              <div className={`px-3 py-1 rounded-lg text-xs font-black uppercase tracking-widest ${
+                isTimeCritical
+                  ? 'bg-red-100 text-red-700 animate-pulse'
+                  : isTimeWarning
+                    ? 'bg-amber-100 text-amber-700'
+                    : 'bg-blue-100 text-blue-700'
+              }`}>
+                {formatTime(resolvedTimeRemaining)}
               </div>
             </div>
             {currentChart && (
