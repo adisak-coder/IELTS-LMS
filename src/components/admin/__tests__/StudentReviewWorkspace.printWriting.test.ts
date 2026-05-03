@@ -12,11 +12,15 @@ describe('StudentReviewWorkspace print writing layout', () => {
     expect(source).toContain('@page');
     expect(source).toContain('size: A4');
     expect(source).toContain('font-family: Arial, Helvetica, sans-serif');
-    expect(source).toContain('.writing-print-summary');
+    expect(source).toContain('.writing-print-task-page');
+    expect(source).toContain('.writing-print-page-header');
+    expect(source).toContain('page-break-before: always');
     expect(source).toContain('.writing-print-response');
     expect(source).toContain('white-space: pre-wrap');
+    expect(source).toContain('overflow-wrap: anywhere');
+    expect(source).toContain('word-break: break-word');
+    expect(source).toContain('<div><strong>Task</strong></div>');
     expect(source).toContain('<div className="writing-print-response">{task.text}</div>');
-    expect(source).not.toContain('htmlToPlainText(');
     expect(source).toContain('.writing-print-assessment-table');
     expect(source).not.toContain('responseHtml');
     expect(source).not.toContain('font-family: Arial, "Times New Roman", serif');

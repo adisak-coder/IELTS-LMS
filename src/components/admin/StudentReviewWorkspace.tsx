@@ -20,6 +20,7 @@ import { StudentReportPreview } from './StudentReportPreview';
 import { QuestionTracebackPanel } from './QuestionTracebackPanel';
 import { logger } from '../../utils/logger';
 import { SectionLoadingSkeleton } from '@components/ui';
+import { htmlToPlainText } from '../../utils/htmlText';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 export interface StudentReviewWorkspaceProps {
@@ -30,6 +31,19 @@ export interface StudentReviewWorkspaceProps {
   currentTeacherId: string;
   currentTeacherName: string;
 }
+
+type WritingPrintSlot = 'task1' | 'task2';
+
+const getWritingPrintSlot = (taskId: string): WritingPrintSlot | null => {
+  const normalized = taskId.trim().toLowerCase();
+  if (normalized === 'task1' || normalized === 'task-1') {
+    return 'task1';
+  }
+  if (normalized === 'task2' || normalized === 'task-2') {
+    return 'task2';
+  }
+  return null;
+};
 
 export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace({ 
   submissionId, 
@@ -529,23 +543,40 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
           annotation.taskId === currentWritingTaskId && annotation.visibility === 'student_visible',
       ).length ?? 0
     : 0;
-  const printableWritingTasks = writingTasks.map((task, index) => {
-    const text = getWritingResponseText(task.taskId);
-    const taskSubmission = getWritingTaskSubmission(task.taskId);
+  const printableWritingTasks = useMemo(() => {
+    const promptTaskIdsBySlot = new Map<WritingPrintSlot, string>();
+    const submissionTaskBySlot = new Map<WritingPrintSlot, WritingTaskSubmission>();
 
-    return {
-      taskId: task.taskId,
-      label:
-        task.taskId === 'task1'
-          ? 'Task 1'
-          : task.taskId === 'task2'
-            ? 'Task 2'
-            : `Task ${index + 1}`,
-      promptHtml: sanitizeHtml(getWritingPrompt(task.taskId)),
-      text,
-      wordCount: taskSubmission?.wordCount ?? (text ? text.trim().split(/\s+/).filter(Boolean).length : 0),
-    };
-  });
+    for (const task of writingTasks) {
+      const slot = getWritingPrintSlot(task.taskId);
+      if (slot && !promptTaskIdsBySlot.has(slot)) {
+        promptTaskIdsBySlot.set(slot, task.taskId);
+      }
+    }
+
+    for (const task of writingSubmissions) {
+      const slot = getWritingPrintSlot(task.taskId);
+      if (slot && !submissionTaskBySlot.has(slot)) {
+        submissionTaskBySlot.set(slot, task);
+      }
+    }
+
+    return (['task1', 'task2'] as const).map((slot) => {
+      const taskIdForPrompt = promptTaskIdsBySlot.get(slot) ?? slot;
+      const rawText = getWritingResponseText(taskIdForPrompt);
+      const text = htmlToPlainText(rawText);
+      const taskSubmission = submissionTaskBySlot.get(slot);
+
+      return {
+        taskId: slot,
+        label: slot === 'task1' ? 'Task 1' : 'Task 2',
+        submittedAt: taskSubmission?.submittedAt ?? submission?.submittedAt ?? '',
+        promptHtml: sanitizeHtml(getWritingPrompt(taskIdForPrompt)),
+        text,
+        wordCount: taskSubmission?.wordCount ?? (text ? text.trim().split(/\s+/).filter(Boolean).length : 0),
+      };
+    });
+  }, [getWritingPrompt, getWritingResponseText, submission?.submittedAt, writingSubmissions, writingTasks]);
   const previewSectionBands = useMemo(() => {
     if (!reviewDraft) {
       return {
@@ -688,16 +719,27 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             line-height: 1.42;
           }
 
-          .writing-print-summary {
-            border-bottom: 2px solid #111827;
-            margin-bottom: 5mm;
-            padding-bottom: 4mm;
+          .writing-print-task-page {
+            break-before: page;
+            page-break-before: always;
           }
 
-          .writing-print-summary h1 {
-            margin: 0 0 3mm;
-            font-size: 17pt;
-            line-height: 1.1;
+          .writing-print-task-page.writing-print-task-page-first {
+            break-before: auto;
+            page-break-before: auto;
+          }
+
+          .writing-print-page-header {
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            padding: 3mm;
+            margin-bottom: 4mm;
+          }
+
+          .writing-print-page-header h1 {
+            margin: 0 0 2mm;
+            font-size: 13pt;
+            line-height: 1.2;
           }
 
           .writing-print-meta {
@@ -708,7 +750,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
           }
 
           .writing-print-task {
-            margin-top: 4mm;
+            margin-top: 0;
           }
 
           .writing-print-task h2 {
@@ -739,6 +781,8 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             border: 1px solid #cbd5e1;
             padding: 2.5mm 3mm;
             white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
           }
 
           .writing-print-response {
@@ -749,6 +793,8 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             font-size: 9.8pt;
             line-height: 1.42;
             white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
           }
 
           .writing-print-rich p {
@@ -813,75 +859,75 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
         </div>
       )}
       <div className="writing-print-root">
-        <div className="writing-print-summary">
-          <h1>Writing Results</h1>
-          <div className="writing-print-meta">
-            <div><strong>Student</strong></div>
-            <div>{submission.studentName}</div>
-            <div><strong>Student ID</strong></div>
-            <div>{submission.studentId}</div>
-            <div><strong>Email</strong></div>
-            <div>{submission.studentEmail ?? ''}</div>
-            <div><strong>Cohort</strong></div>
-            <div>{submission.cohortName}</div>
-            <div><strong>Submitted</strong></div>
-            <div>{new Date(submission.submittedAt).toLocaleString()}</div>
-          </div>
-        </div>
-
-        {printableWritingTasks.map((task) => (
-          <section key={task.taskId} className="writing-print-task">
-            <h2>{task.label}</h2>
-            <div className="writing-print-task-summary"><strong>Word Count:</strong> {task.wordCount}</div>
-            <div className="writing-print-block">
-              <h3>Prompt</h3>
-              {task.promptHtml ? (
-                <div
-                  className="writing-print-rich"
-                  dangerouslySetInnerHTML={{ __html: task.promptHtml }}
-                />
-              ) : (
-                <p>Prompt unavailable.</p>
-              )}
-            </div>
-            <div className="writing-print-block">
-              <h3>Student Response</h3>
-              {task.text ? (
-                <div className="writing-print-response">{task.text}</div>
-              ) : (
-                <p>No writing response recorded.</p>
-              )}
-            </div>
-            <div className="writing-print-block">
-              <h3>Assessment</h3>
-              <table className="writing-print-assessment-table">
-                <thead>
-                  <tr>
-                    <th className="writing-print-criterion">Criterion</th>
-                    <th className="writing-print-band">Band</th>
-                    <th className="writing-print-comment">Teacher Comment</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {['Task Response', 'Coherence & Cohesion', 'Lexical Resource', 'Grammar'].map((criterion) => (
-                    <tr key={`${task.taskId}-${criterion}`}>
-                      <td className="writing-print-criterion">{criterion}</td>
+        {printableWritingTasks.map((task, index) => (
+          <section
+            key={task.taskId}
+            className={`writing-print-task-page${index === 0 ? ' writing-print-task-page-first' : ''}`}
+          >
+            <header className="writing-print-page-header">
+              <h1>{submission.studentName}</h1>
+              <div className="writing-print-meta">
+                <div><strong>Student ID</strong></div>
+                <div>{submission.studentId || submission.submissionId}</div>
+                <div><strong>Task</strong></div>
+                <div>{task.label}</div>
+                <div><strong>Submitted</strong></div>
+                <div>{task.submittedAt ? new Date(task.submittedAt).toLocaleString() : 'Not submitted'}</div>
+              </div>
+            </header>
+            <article className="writing-print-task">
+              <h2>{task.label}</h2>
+              <div className="writing-print-task-summary"><strong>Word Count:</strong> {task.wordCount}</div>
+              <div className="writing-print-block">
+                <h3>Prompt</h3>
+                {task.promptHtml ? (
+                  <div
+                    className="writing-print-rich"
+                    dangerouslySetInnerHTML={{ __html: task.promptHtml }}
+                  />
+                ) : (
+                  <p>Prompt unavailable.</p>
+                )}
+              </div>
+              <div className="writing-print-block">
+                <h3>Student Response</h3>
+                {task.text ? (
+                  <div className="writing-print-response">{task.text}</div>
+                ) : (
+                  <p>No writing response recorded.</p>
+                )}
+              </div>
+              <div className="writing-print-block">
+                <h3>Assessment</h3>
+                <table className="writing-print-assessment-table">
+                  <thead>
+                    <tr>
+                      <th className="writing-print-criterion">Criterion</th>
+                      <th className="writing-print-band">Band</th>
+                      <th className="writing-print-comment">Teacher Comment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {['Task Response', 'Coherence & Cohesion', 'Lexical Resource', 'Grammar'].map((criterion) => (
+                      <tr key={`${task.taskId}-${criterion}`}>
+                        <td className="writing-print-criterion">{criterion}</td>
+                        <td className="writing-print-band writing-print-band-box" />
+                        <td className="writing-print-comment writing-print-comment-box" />
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="writing-print-criterion"><strong>Overall Band</strong></td>
                       <td className="writing-print-band writing-print-band-box" />
                       <td className="writing-print-comment writing-print-comment-box" />
                     </tr>
-                  ))}
-                  <tr>
-                    <td className="writing-print-criterion"><strong>Overall Band</strong></td>
-                    <td className="writing-print-band writing-print-band-box" />
-                    <td className="writing-print-comment writing-print-comment-box" />
-                  </tr>
-                </tbody>
-              </table>
-              <div className="writing-print-block">
-                <h4>Overall Teacher Comment</h4>
-                <div className="writing-print-comment-box border border-gray-400" />
+                  </tbody>
+                </table>
+                <div className="writing-print-block">
+                  <h4>Overall Teacher Comment</h4>
+                  <div className="writing-print-comment-box border border-gray-400" />
+                </div>
               </div>
-            </div>
+            </article>
           </section>
         ))}
       </div>
