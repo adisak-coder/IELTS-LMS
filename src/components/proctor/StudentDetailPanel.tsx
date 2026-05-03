@@ -20,6 +20,7 @@ interface StudentDetailPanelProps {
   onAction: (action: 'warn' | 'pause' | 'resume' | 'terminate', payload?: unknown) => Promise<void> | void;
   onSaveNote?: (content: string, category: NoteCategory) => Promise<void> | void;
   onToggleNote?: (noteId: string) => Promise<void> | void;
+  onOpenAnswerHistory?: (() => void) | undefined;
 }
 
 const formatTime = (seconds: number) => {
@@ -42,6 +43,7 @@ export function StudentDetailPanel({
   onAction,
   onSaveNote,
   onToggleNote,
+  onOpenAnswerHistory,
 }: StudentDetailPanelProps) {
   const [draftNote, setDraftNote] = useState('');
   const [draftCategory, setDraftCategory] = useState<NoteCategory>('general');
@@ -341,6 +343,11 @@ export function StudentDetailPanel({
             </div>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
+            {onOpenAnswerHistory ? (
+              <Button variant="ghost" size="sm" onClick={onOpenAnswerHistory}>
+                Answer History
+              </Button>
+            ) : null}
             <Button
               variant="warning"
               size="sm"

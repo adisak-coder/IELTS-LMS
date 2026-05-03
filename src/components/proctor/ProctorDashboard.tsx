@@ -40,6 +40,7 @@ interface ProctorDashboardProps {
   onEndSectionNow: (scheduleId: string) => Promise<void> | void;
   onExtendCurrentSection: (scheduleId: string, minutes: number) => Promise<void> | void;
   onCompleteExam: (scheduleId: string) => Promise<void> | void;
+  onOpenAnswerHistory?: ((attemptId: string) => void) | undefined;
 }
 
 export const ProctorDashboard = React.memo(function ProctorDashboard({
@@ -65,6 +66,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
   onEndSectionNow: _onEndSectionNow,
   onExtendCurrentSection,
   onCompleteExam,
+  onOpenAnswerHistory,
 }: ProctorDashboardProps) {
   type CohortControlAction = 'start' | 'pause' | 'resume' | 'extend_5' | 'extend_10' | 'complete';
 
@@ -924,6 +926,11 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
                     throw new Error(result.error);
                   }
                 }}
+                onOpenAnswerHistory={
+                  onOpenAnswerHistory && selectedStudent
+                    ? () => onOpenAnswerHistory(selectedStudent.id)
+                    : undefined
+                }
                 onSaveNote={async (content, category) => {
                   if (!selectedScheduleId || !onUpdateNotes) return;
                   const newNote = {

@@ -104,9 +104,15 @@ interface GradingSessionDetailProps {
   sessionId: string;
   onBack: () => void;
   onStudentSelect: (submissionId: string) => void;
+  onAnswerHistorySelect?: ((submissionId: string) => void) | undefined;
 }
 
-export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: GradingSessionDetailProps) {
+export function GradingSessionDetail({
+  sessionId,
+  onBack,
+  onStudentSelect,
+  onAnswerHistorySelect,
+}: GradingSessionDetailProps) {
   const [session, setSession] = useState<GradingSession | null>(null);
   const [submissions, setSubmissions] = useState<StudentSubmission[]>([]);
   const [loading, setLoading] = useState(true);
@@ -807,16 +813,29 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
                       {getOverallStatusBadge(submission.gradingStatus)}
                     </td>
                     <td className="px-3 md:px-6 py-4 text-right">
-                      <button 
-                        className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-md text-sm font-medium transition-colors flex items-center gap-1 ml-auto"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onStudentSelect(submission.id);
-                        }}
-                      >
-                        Review
-                        <ChevronRight size={14} />
-                      </button>
+                      <div className="ml-auto flex items-center justify-end gap-2">
+                        {onAnswerHistorySelect ? (
+                          <button
+                            className="px-3 py-1.5 bg-gray-50 text-gray-700 hover:bg-gray-100 rounded-md text-sm font-medium transition-colors"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onAnswerHistorySelect(submission.id);
+                            }}
+                          >
+                            Answer History
+                          </button>
+                        ) : null}
+                        <button
+                          className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-md text-sm font-medium transition-colors flex items-center gap-1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onStudentSelect(submission.id);
+                          }}
+                        >
+                          Review
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

@@ -41,6 +41,7 @@ export function ProctorApp({
   onEndSectionNow,
   onExtendCurrentSection,
   onCompleteExam,
+  onOpenAnswerHistory,
 }: ProctorProps) {
   const { session } = useAuthSession();
   const [searchQuery, setSearchQuery] = useState('');
@@ -181,6 +182,7 @@ export function ProctorApp({
             onEndSectionNow={onEndSectionNow}
             onExtendCurrentSection={onExtendCurrentSection}
             onCompleteExam={onCompleteExam}
+            onOpenAnswerHistory={onOpenAnswerHistory}
           />
         </main>
       </div>

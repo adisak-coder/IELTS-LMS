@@ -75,6 +75,7 @@ export function ProctorRoot() {
       onEndSectionNow={handleEndSectionNow}
       onExtendCurrentSection={handleExtendCurrentSection}
       onCompleteExam={handleCompleteExam}
+      onOpenAnswerHistory={(attemptId) => navigate(`/proctor/answer-history/${attemptId}`)}
     />
   );
 }

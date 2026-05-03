@@ -71,6 +71,7 @@ export interface ProctorOperationCallbacks {
   onEndSectionNow: (scheduleId: string) => Promise<void>;
   onExtendCurrentSection: (scheduleId: string, minutes: number) => Promise<void>;
   onCompleteExam: (scheduleId: string) => Promise<void>;
+  onOpenAnswerHistory?: (attemptId: string) => void;
 }
 
 /**
@@ -108,4 +109,5 @@ export interface ProctorProps {
   onEndSectionNow: (scheduleId: string) => Promise<void>;
   onExtendCurrentSection: (scheduleId: string, minutes: number) => Promise<void>;
   onCompleteExam: (scheduleId: string) => Promise<void>;
+  onOpenAnswerHistory?: (attemptId: string) => void;
 }

@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { GradingSessionList } from '@components/admin/GradingSessionList';
 import { GradingSessionDetail } from '@components/admin/GradingSessionDetail';
 import type { StudentReviewWorkspaceProps } from '@components/admin/StudentReviewWorkspace';
@@ -18,6 +19,7 @@ const StudentReviewWorkspace = lazyLoad<StudentReviewWorkspaceProps>(
  * and student review workspace.
  */
 function GradingRouteContent() {
+  const navigate = useNavigate();
   const { state: shellState, actions: shellActions } = useAdminShell();
 
   const handleSessionSelect = (sessionId: string) => {
@@ -26,6 +28,10 @@ function GradingRouteContent() {
 
   const handleStudentSelect = (submissionId: string) => {
     shellActions.selectSubmission(submissionId);
+  };
+
+  const handleAnswerHistorySelect = (submissionId: string) => {
+    navigate(`/admin/answer-history/${submissionId}`);
   };
 
   return (
@@ -38,6 +44,7 @@ function GradingRouteContent() {
           sessionId={shellState.selectedSessionId} 
           onBack={shellActions.handleGradingBack}
           onStudentSelect={handleStudentSelect}
+          onAnswerHistorySelect={handleAnswerHistorySelect}
         />
       )}
       {shellState.gradingLevel === 'student' && shellState.selectedSubmissionId && (

@@ -1,0 +1,101 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  fetchAnswerHistoryExport,
+  fetchAnswerHistoryOverviewByAttempt,
+  fetchAnswerHistoryOverviewBySubmission,
+  fetchAnswerHistoryTargetDetail,
+} from '../answerHistoryService';
+
+describe('answerHistoryService', () => {
+  const originalFetch = global.fetch;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    global.fetch = originalFetch;
+  });
+
+  it('requests submission overview endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { submissionId: 'sub-1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await fetchAnswerHistoryOverviewBySubmission('sub-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/answer-history/submissions/sub-1/overview',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('requests attempt overview endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { attemptId: 'attempt-1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await fetchAnswerHistoryOverviewByAttempt('attempt-1');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/answer-history/attempts/attempt-1/overview',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('encodes target detail query parameters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { targetId: 'q1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await fetchAnswerHistoryTargetDetail({
+      submissionId: 'sub-1',
+      targetId: 'q 1',
+      targetType: 'objective',
+      cursor: 10,
+      limit: 50,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/answer-history/submissions/sub-1/targets/q%201?targetType=objective&cursor=10&limit=50',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('encodes export query parameters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: true,
+          data: { format: 'csv', filename: 'x.csv', contentType: 'text/csv', content: 'a,b' },
+        }),
+        {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await fetchAnswerHistoryExport({
+      submissionId: 'sub-1',
+      targetId: 'task 2',
+      targetType: 'writing',
+      format: 'csv',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/answer-history/submissions/sub-1/export?targetType=writing&targetId=task+2&format=csv',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+});

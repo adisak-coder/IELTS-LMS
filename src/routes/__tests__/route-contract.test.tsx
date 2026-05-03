@@ -13,6 +13,7 @@ describe('route contracts', () => {
     expect(getLeafPath('/admin/exams')).toBe('exams');
     expect(getLeafPath('/admin/scheduling')).toBe('scheduling');
     expect(getLeafPath('/admin/grading')).toBe('grading');
+    expect(getLeafPath('/admin/answer-history/sub-123')).toBe('answer-history/:submissionId');
     expect(getLeafPath('/admin/results')).toBe('results');
     expect(getLeafPath('/admin/settings')).toBe('settings');
   });
@@ -30,6 +31,7 @@ describe('route contracts', () => {
 
   it('hides proctor settings from the active route tree', () => {
     expect(getLeafPath('/proctor')).toBe('proctor');
+    expect(getLeafPath('/proctor/answer-history/attempt-1')).toBe('proctor/answer-history/:attemptId');
     expect(getLeafPath('/proctor/settings')).toBe('*');
   });
 

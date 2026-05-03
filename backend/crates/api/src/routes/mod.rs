@@ -1,3 +1,4 @@
+pub mod answer_history;
 pub mod auth;
 pub mod exams;
 pub mod grading;

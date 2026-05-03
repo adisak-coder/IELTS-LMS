@@ -8,8 +8,8 @@ use crate::{
     frontend,
     http::request_id::request_id_middleware,
     routes::{
-        auth, exams, grading, health, library, media, proctor, results, schedules, settings,
-        student, ws,
+        answer_history, auth, exams, grading, health, library, media, proctor, results, schedules,
+        settings, student, ws,
     },
     state::AppState,
 };
@@ -22,6 +22,26 @@ pub fn build_router(state: AppState) -> Router {
         .route("/healthz", get(health::healthz))
         .route("/readyz", get(health::readyz))
         .route("/metrics", get(health::metrics))
+        .nest(
+            "/api/v1/answer-history",
+            Router::new()
+                .route(
+                    "/submissions/:submission_id/overview",
+                    get(answer_history::get_overview),
+                )
+                .route(
+                    "/submissions/:submission_id/targets/:target_id",
+                    get(answer_history::get_target_detail),
+                )
+                .route(
+                    "/submissions/:submission_id/export",
+                    get(answer_history::export_target),
+                )
+                .route(
+                    "/attempts/:attempt_id/overview",
+                    get(answer_history::get_overview_by_attempt),
+                ),
+        )
         .nest(
             "/api/v1/auth",
             Router::new()

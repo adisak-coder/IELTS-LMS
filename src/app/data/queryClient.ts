@@ -103,6 +103,22 @@ export const queryKeys = {
     audit: (scheduleId: string) => [...queryKeys.proctoring.all, scheduleId, 'audit'] as const,
     runtime: (scheduleId: string) => [...queryKeys.proctoring.all, scheduleId, 'runtime'] as const,
   },
+
+  answerHistory: {
+    all: ['answer-history'] as const,
+    overviewBySubmission: (submissionId: string) =>
+      [...queryKeys.answerHistory.all, 'overview', 'submission', submissionId] as const,
+    overviewByAttempt: (attemptId: string) =>
+      [...queryKeys.answerHistory.all, 'overview', 'attempt', attemptId] as const,
+    targetDetail: (submissionId: string, targetType: string, targetId: string) =>
+      [
+        ...queryKeys.answerHistory.all,
+        'detail',
+        submissionId,
+        targetType,
+        targetId,
+      ] as const,
+  },
 };
 
 /**

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod answer_history;
 pub mod attempt;
 pub mod auth;
 pub mod exam;

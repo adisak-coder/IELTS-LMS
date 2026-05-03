@@ -51,6 +51,10 @@ name = "grading_contract"
 path = "../../tests/contracts/grading_contract.rs"
 
 [[test]]
+name = "answer_history_contract"
+path = "../../tests/contracts/answer_history_contract.rs"
+
+[[test]]
 name = "auth_contract"
 path = "../../tests/contracts/auth_contract.rs"
 

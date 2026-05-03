@@ -46,6 +46,11 @@ const AdminSettingsRoute = lazy(() =>
     default: module.SettingsRoute,
   })),
 );
+const AdminAnswerHistoryRoute = lazy(() =>
+  import('../features/answer-history/routes/AnswerHistoryRoute').then((module) => ({
+    default: module.AdminAnswerHistoryRoute,
+  })),
+);
 const BuilderRoot = lazy(() =>
   import('../features/builder/routes/BuilderRoot').then((module) => ({
     default: module.BuilderRoot,
@@ -69,6 +74,11 @@ const ExamPreviewRoute = lazy(() =>
 const ProctorRoot = lazy(() =>
   import('../features/proctor/routes/ProctorRoot').then((module) => ({
     default: module.ProctorRoot,
+  })),
+);
+const ProctorAnswerHistoryRoute = lazy(() =>
+  import('../features/answer-history/routes/AnswerHistoryRoute').then((module) => ({
+    default: module.ProctorAnswerHistoryRoute,
   })),
 );
 const StudentSessionRoute = lazy(() =>
@@ -201,6 +211,14 @@ export const appRoutes = [
               </Suspense>
             ), ['admin', 'builder']),
           },
+          {
+            path: 'answer-history/:submissionId',
+            element: withAuth((
+              <Suspense fallback={<RouteLoadingFallback />}>
+                <AdminAnswerHistoryRoute />
+              </Suspense>
+            ), ['admin', 'grader']),
+          },
         ],
       },
       {
@@ -240,6 +258,14 @@ export const appRoutes = [
         element: withAuth((
           <Suspense fallback={<RouteLoadingFallback />}>
             <ProctorRoot />
+          </Suspense>
+        ), ['admin', 'proctor']),
+      },
+      {
+        path: 'proctor/answer-history/:attemptId',
+        element: withAuth((
+          <Suspense fallback={<RouteLoadingFallback />}>
+            <ProctorAnswerHistoryRoute />
           </Suspense>
         ), ['admin', 'proctor']),
       },
