@@ -52,7 +52,11 @@ export function ExamsRoute() {
   };
 
   const handleBulkDuplicate = async (examIds: string[]) => {
-    return examLifecycleService.bulkDuplicate(examIds, 'Admin');
+    const result = await examLifecycleService.bulkDuplicate(examIds, 'Admin');
+    if (result.succeeded > 0) {
+      await refreshLocalExamData();
+    }
+    return result;
   };
 
   const handleBulkExport = async (examIds: string[]) => {
