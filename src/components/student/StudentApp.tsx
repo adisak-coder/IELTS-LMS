@@ -124,23 +124,6 @@ function formatRuntimeTime(seconds: number) {
   return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
-function isEditableInputTarget(target: EventTarget | null): target is HTMLElement {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  const contentEditableAttr = target.getAttribute('contenteditable');
-  const hasExplicitContentEditable =
-    contentEditableAttr !== null && contentEditableAttr.toLowerCase() !== 'false';
-
-  return (
-    target.tagName === 'INPUT' ||
-    target.tagName === 'TEXTAREA' ||
-    target.isContentEditable ||
-    hasExplicitContentEditable
-  );
-}
-
 interface StudentAppProps {
   showSubmitControls?: boolean | undefined;
 }
@@ -194,6 +177,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
   const latestAnswersRef = useRef(runtimeState.answers);
+  const viewportLockForExamSessionRef = useRef<boolean | null>(null);
+  const lockedViewportHeightRef = useRef<number | null>(null);
   const moduleSubmitInFlightRef = useRef<Promise<void> | null>(null);
   const moduleSubmitFingerprintRef = useRef<string | null>(null);
   const priorTimeRemainingRef = useRef<number | null>(null);
@@ -256,6 +241,18 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     runtimeStateRef.current = runtimeState;
     latestAnswersRef.current = runtimeState.answers;
   }, [runtimeState]);
+
+  useEffect(() => {
+    if (effectivePhase !== 'exam') {
+      viewportLockForExamSessionRef.current = null;
+      lockedViewportHeightRef.current = null;
+      return;
+    }
+
+    if (viewportLockForExamSessionRef.current === null) {
+      viewportLockForExamSessionRef.current = tabletMode;
+    }
+  }, [effectivePhase, tabletMode]);
 
   const flushAndSubmitCurrentModuleWithRetry = useMemo(() => {
     return async (fingerprint: string) => {
@@ -490,11 +487,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     const root = document.documentElement;
     const body = document.body;
     const scheduledRefreshTimers: number[] = [];
-    let editableFocused = isEditableInputTarget(document.activeElement);
-    let stableViewportHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
-    let pinchLockActive = false;
+    const tabletViewportSessionLocked = viewportLockForExamSessionRef.current === true;
+    let stableViewportHeight =
+      tabletViewportSessionLocked && lockedViewportHeightRef.current !== null
+        ? lockedViewportHeightRef.current
+        : Math.round(window.visualViewport?.height ?? window.innerHeight);
     let pinchGestureActive = false;
-    let layoutRebasePending = false;
 
     const applyViewportHeight = (height: number) => {
       root.style.setProperty('--student-viewport-height', `${Math.max(0, Math.round(height))}px`);
@@ -511,22 +509,15 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
           : 1;
       const isPinchZooming = nextViewportScale > 1.01;
 
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         applyViewportHeight(nextViewportHeight);
         return;
       }
 
-      if (pinchGestureActive || isPinchZooming) {
-        pinchLockActive = true;
-      }
-
-      if (layoutRebasePending) {
-        stableViewportHeight = nextViewportHeight;
-        pinchLockActive = false;
-        pinchGestureActive = false;
-        layoutRebasePending = false;
-      } else if (!editableFocused && !pinchLockActive) {
-        stableViewportHeight = nextViewportHeight;
+      if (lockedViewportHeightRef.current === null) {
+        lockedViewportHeightRef.current = stableViewportHeight;
+      } else {
+        stableViewportHeight = lockedViewportHeightRef.current;
       }
 
       applyViewportHeight(stableViewportHeight);
@@ -542,15 +533,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       scheduledRefreshTimers.push(window.setTimeout(updateViewportHeight, 420));
     };
 
-    const requestLayoutRebase = () => {
-      if (!tabletMode) {
-        scheduleViewportHeightRefresh();
-        return;
-      }
-      layoutRebasePending = true;
-      scheduleViewportHeightRefresh();
-    };
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
         scheduleViewportHeightRefresh();
@@ -558,30 +540,28 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         return;
       }
 
       if (event.touches.length >= 2) {
         pinchGestureActive = true;
-        pinchLockActive = true;
         scheduleViewportHeightRefresh();
       }
     };
 
     const handleTouchMove = (event: TouchEvent) => {
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         return;
       }
 
       if (event.touches.length >= 2) {
         pinchGestureActive = true;
-        pinchLockActive = true;
       }
     };
 
     const handleTouchEnd = (event: TouchEvent) => {
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         return;
       }
 
@@ -593,35 +573,13 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       scheduleViewportHeightRefresh();
     };
 
-    const handleOrientationChange = () => {
-      requestLayoutRebase();
-    };
-
-    const handleFocusIn = (event: FocusEvent) => {
-      if (tabletMode && isEditableInputTarget(event.target)) {
-        editableFocused = true;
-      }
-      scheduleViewportHeightRefresh();
-    };
-
-    const handleFocusOut = (event: FocusEvent) => {
-      if (tabletMode && isEditableInputTarget(event.target)) {
-        editableFocused = isEditableInputTarget(event.relatedTarget);
-      }
-      scheduleViewportHeightRefresh();
-    };
-
     scheduleViewportHeightRefresh();
     root.classList.add('student-exam-active');
     body.classList.add('student-exam-active');
     window.addEventListener('resize', handleWindowResize);
-    window.addEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('orientationchange', handleWindowResize);
     window.addEventListener('focus', scheduleViewportHeightRefresh);
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    document.addEventListener('focus', handleFocusIn, true);
-    document.addEventListener('blur', handleFocusOut, true);
-    document.addEventListener('focusin', handleFocusIn);
-    document.addEventListener('focusout', handleFocusOut);
     document.addEventListener('touchstart', handleTouchStart, true);
     document.addEventListener('touchmove', handleTouchMove, true);
     document.addEventListener('touchend', handleTouchEnd, true);
@@ -637,13 +595,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       body.classList.remove('student-exam-active');
       root.style.removeProperty('--student-viewport-height');
       window.removeEventListener('resize', handleWindowResize);
-      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('orientationchange', handleWindowResize);
       window.removeEventListener('focus', scheduleViewportHeightRefresh);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      document.removeEventListener('focus', handleFocusIn, true);
-      document.removeEventListener('blur', handleFocusOut, true);
-      document.removeEventListener('focusin', handleFocusIn);
-      document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('touchstart', handleTouchStart, true);
       document.removeEventListener('touchmove', handleTouchMove, true);
       document.removeEventListener('touchend', handleTouchEnd, true);
