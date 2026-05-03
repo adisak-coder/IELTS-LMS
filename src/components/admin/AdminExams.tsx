@@ -222,6 +222,8 @@ export function AdminExams({
   const [showFilters, setShowFilters] = useState(false);
   const [bulkOperationResult, setBulkOperationResult] = useState<BulkOperationResult | null>(null);
   const [showBulkResult, setShowBulkResult] = useState(false);
+  const [showBulkDuplicateModal, setShowBulkDuplicateModal] = useState(false);
+  const [bulkDuplicateTitlePattern, setBulkDuplicateTitlePattern] = useState('{title} (Copy)');
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -383,11 +385,25 @@ export function AdminExams({
   
   const handleBulkDuplicate = async () => {
     if (!onBulkDuplicate || selectedExamIds.size === 0) return;
-    
-    const result = await onBulkDuplicate(Array.from(selectedExamIds));
+
+    const result = await onBulkDuplicate(Array.from(selectedExamIds), bulkDuplicateTitlePattern);
     setBulkOperationResult(result);
     setShowBulkResult(true);
     clearSelection();
+    setShowBulkDuplicateModal(false);
+  };
+
+  const openBulkDuplicateModal = () => {
+    if (selectedExamIds.size === 0) return;
+
+    if (selectedExamIds.size === 1) {
+      const selectedExam = exams.find((exam) => selectedExamIds.has(exam.id));
+      setBulkDuplicateTitlePattern(selectedExam ? `${selectedExam.title} (Copy)` : '{title} (Copy)');
+    } else {
+      setBulkDuplicateTitlePattern('{title} (Copy)');
+    }
+
+    setShowBulkDuplicateModal(true);
   };
   
   const handleBulkExport = async () => {
@@ -683,7 +699,7 @@ export function AdminExams({
           onBulkUnpublish={onBulkUnpublish ? handleBulkUnpublish : undefined}
           onBulkArchive={onBulkArchive ? handleBulkArchive : undefined}
           onBulkDelete={onBulkDelete ? handleBulkDelete : undefined}
-          onBulkDuplicate={onBulkDuplicate ? handleBulkDuplicate : undefined}
+          onBulkDuplicate={onBulkDuplicate ? openBulkDuplicateModal : undefined}
           onBulkExport={onBulkExport ? handleBulkExport : undefined}
         />
       )}
@@ -1050,6 +1066,57 @@ export function AdminExams({
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Duplicate Modal */}
+      {showBulkDuplicateModal && onBulkDuplicate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-xl font-bold text-gray-900">Duplicate Exams</h2>
+              <button onClick={() => setShowBulkDuplicateModal(false)} className="text-gray-400 hover:text-gray-600 p-1">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <p className="text-sm text-gray-600">
+                {selectedExamIds.size} exam{selectedExamIds.size !== 1 ? 's' : ''} selected.
+                {selectedExamIds.size > 1 ? ' Use {title} to include each source exam title.' : ''}
+              </p>
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">
+                  {selectedExamIds.size > 1 ? 'New Exam Title Pattern' : 'New Exam Title'}
+                </label>
+                <input
+                  type="text"
+                  value={bulkDuplicateTitlePattern}
+                  onChange={(e) => setBulkDuplicateTitlePattern(e.target.value)}
+                  placeholder={selectedExamIds.size > 1 ? '{title} (Copy)' : 'Enter title...'}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                  autoFocus
+                  required
+                />
+              </div>
+              <div className="pt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkDuplicateModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkDuplicate}
+                  disabled={!bulkDuplicateTitlePattern.trim()}
+                  className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-md text-sm font-medium shadow-sm transition-colors"
+                >
+                  Duplicate
+                </button>
+              </div>
             </div>
           </div>
         </div>

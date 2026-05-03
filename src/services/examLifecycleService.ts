@@ -1323,6 +1323,60 @@ export class ExamLifecycleService {
     newTitle: string,
     actor: string = 'System'
   ): Promise<CloneResult> {
+    if (this.useBackendBuilder()) {
+      try {
+        const sourceExam = await this.repository.getExamById(examId);
+        if (!sourceExam) {
+          return { success: false, error: 'Source exam not found' };
+        }
+
+        const versionId = sourceExam.currentDraftVersionId || sourceExam.currentPublishedVersionId;
+        if (!versionId) {
+          return { success: false, error: 'No version to clone from' };
+        }
+
+        const sourceVersion = await this.repository.getVersionById(versionId);
+        if (!sourceVersion) {
+          return { success: false, error: 'Source version not found' };
+        }
+
+        const createdExam = await backendPost<any>('/v1/exams', {
+          slug: generateSlug(newTitle),
+          title: newTitle,
+          examType: sourceExam.type,
+          visibility: sourceExam.visibility,
+        });
+        rememberExamRevision(createdExam.id, createdExam.revision);
+
+        const clonedContent = JSON.parse(JSON.stringify(sourceVersion.contentSnapshot));
+        const clonedConfig = JSON.parse(JSON.stringify(sourceVersion.configSnapshot));
+
+        if (clonedContent && typeof clonedContent === 'object') {
+          clonedContent.title = newTitle;
+        }
+        if (clonedConfig?.general && typeof clonedConfig.general === 'object') {
+          clonedConfig.general.title = newTitle;
+        }
+
+        await backendPatch<any>(`/v1/exams/${createdExam.id}/draft`, {
+          contentSnapshot: clonedContent,
+          configSnapshot: clonedConfig,
+          revision: getExamRevision(createdExam.id) ?? createdExam.revision ?? 0,
+        });
+
+        const exam = await this.repository.getExamById(createdExam.id);
+        return {
+          success: true,
+          exam: exam ?? undefined,
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to clone exam',
+        };
+      }
+    }
+
     const sourceExam = await this.repository.getExamById(examId);
     if (!sourceExam) {
       return { success: false, error: 'Source exam not found' };
@@ -1823,7 +1877,8 @@ export class ExamLifecycleService {
    */
   async bulkDuplicate(
     examIds: string[],
-    actor: string = 'System'
+    actor: string = 'System',
+    titlePattern?: string
   ): Promise<BulkOperationResult> {
     const results: BulkOperationResult['results'] = [];
     
@@ -1839,7 +1894,14 @@ export class ExamLifecycleService {
         continue;
       }
 
-      const result = await this.cloneExam(examId, `${exam.title} (Copy)`, actor);
+      const pattern = (titlePattern ?? '{title} (Copy)').trim();
+      const computedTitle = pattern.includes('{title}')
+        ? pattern.replace(/\{title\}/g, exam.title)
+        : pattern.length > 0
+          ? `${pattern} ${exam.title}`
+          : `${exam.title} (Copy)`;
+
+      const result = await this.cloneExam(examId, computedTitle, actor);
       results.push({
         examId,
         examTitle: exam.title,

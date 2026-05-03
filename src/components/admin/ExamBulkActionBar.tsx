@@ -12,7 +12,7 @@ interface ExamBulkActionBarProps {
   onBulkUnpublish?: (() => Promise<void>) | undefined;
   onBulkArchive?: (() => Promise<void>) | undefined;
   onBulkDelete?: (() => Promise<void>) | undefined;
-  onBulkDuplicate?: (() => Promise<void>) | undefined;
+  onBulkDuplicate?: (() => void | Promise<void>) | undefined;
   onBulkExport?: (() => Promise<void>) | undefined;
 }
 

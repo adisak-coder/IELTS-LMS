@@ -51,8 +51,8 @@ export function ExamsRoute() {
     return examLifecycleService.bulkArchive(examIds, 'Admin');
   };
 
-  const handleBulkDuplicate = async (examIds: string[]) => {
-    const result = await examLifecycleService.bulkDuplicate(examIds, 'Admin');
+  const handleBulkDuplicate = async (examIds: string[], titlePattern?: string) => {
+    const result = await examLifecycleService.bulkDuplicate(examIds, 'Admin', titlePattern);
     if (result.succeeded > 0) {
       await refreshLocalExamData();
     }
