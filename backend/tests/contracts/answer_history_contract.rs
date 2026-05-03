@@ -183,6 +183,112 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
 }
 
 #[tokio::test]
+async fn overview_and_detail_read_nested_mutation_payload_shapes() {
+    let database = mysql::TestDatabase::new(ANSWER_HISTORY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+
+    let attempt_id = bootstrap_and_submit(
+        database.pool(),
+        schedule_id,
+        "nested-payload",
+        json!({ "q1": "final" }),
+        json!({}),
+    )
+    .await;
+    let submission_id = submission_id_for_attempt(database.pool(), attempt_id).await;
+
+    insert_mutation(
+        database.pool(),
+        schedule_id,
+        attempt_id,
+        "SetScalar",
+        1,
+        json!({
+            "command": {
+                "question_id": "q1",
+                "value": "draft-1"
+            },
+            "module": "reading"
+        }),
+        Utc.with_ymd_and_hms(2026, 1, 10, 9, 20, 0).unwrap(),
+    )
+    .await;
+    insert_mutation(
+        database.pool(),
+        schedule_id,
+        attempt_id,
+        "position",
+        2,
+        json!({
+            "command": {
+                "current_question_id": "q1",
+                "current_module": "reading"
+            }
+        }),
+        Utc.with_ymd_and_hms(2026, 1, 10, 9, 20, 2).unwrap(),
+    )
+    .await;
+
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Admin,
+        "admin-nested@example.com",
+        "Admin Nested",
+    )
+    .await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let overview = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/submissions/{}/overview",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(overview.status(), StatusCode::OK);
+    let overview_json = json_body(overview).await;
+    assert!(overview_json["data"]["questionSummaries"]
+        .as_array()
+        .map(|items| {
+            items.iter().any(|item| {
+                item["targetId"] == "q1"
+                    && item["targetType"] == "objective"
+                    && item["revisionCount"] == 2
+                    && item["finalValue"] == "draft-1"
+            })
+        })
+        .unwrap_or(false));
+
+    let detail = app
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/submissions/{}/targets/q1?targetType=objective",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail_json = json_body(detail).await;
+    assert_eq!(detail_json["data"]["targetId"], "q1");
+    assert_eq!(detail_json["data"]["checkpoints"][0]["stateSnapshot"], "draft-1");
+    assert_eq!(detail_json["data"]["checkpoints"][1]["stateSnapshot"], "draft-1");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn overview_includes_catalog_targets_without_mutations_and_detail_uses_submitted_snapshot() {
     let database = mysql::TestDatabase::new(ANSWER_HISTORY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;

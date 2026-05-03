@@ -74,6 +74,13 @@ struct TargetCatalogEntry {
     target_type: AnswerHistoryTargetType,
 }
 
+#[derive(Debug, Clone)]
+struct TargetCatalogIndex {
+    objective_ids: HashSet<String>,
+    writing_ids: HashSet<String>,
+    objective_slot_targets: HashMap<(String, usize), String>,
+}
+
 impl AnswerHistoryService {
     pub fn new(pool: MySqlPool) -> Self {
         Self { pool }
@@ -99,11 +106,12 @@ impl AnswerHistoryService {
         let context = self.load_context(submission_id).await?;
         let target_catalog =
             build_target_catalog(&context.content_snapshot, &context.config_snapshot);
+        let catalog_index = build_target_catalog_index(&target_catalog);
         let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
         let mutations = self.load_mutations(&context.attempt_id).await?;
         let target_mutations = mutations
             .iter()
-            .filter_map(classify_target_mutation)
+            .filter_map(|row| classify_target_mutation(row, &catalog_index))
             .collect::<Vec<_>>();
 
         let mut revision_counts = HashMap::<(AnswerHistoryTargetType, String), i64>::new();
@@ -249,11 +257,12 @@ impl AnswerHistoryService {
         let context = self.load_context(submission_id).await?;
         let target_catalog =
             build_target_catalog(&context.content_snapshot, &context.config_snapshot);
+        let catalog_index = build_target_catalog_index(&target_catalog);
         let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
         let rows = self.load_mutations(&context.attempt_id).await?;
         let mut matching = rows
             .into_iter()
-            .filter_map(|row| classify_target_mutation(&row))
+            .filter_map(|row| classify_target_mutation(&row, &catalog_index))
             .filter(|item| item.target_type == target_type && item.target_id == target_id)
             .collect::<Vec<_>>();
 
@@ -628,12 +637,13 @@ impl AnswerHistoryService {
     }
 }
 
-fn classify_target_mutation(row: &MutationRow) -> Option<TargetMutation> {
+fn classify_target_mutation(
+    row: &MutationRow,
+    catalog_index: &TargetCatalogIndex,
+) -> Option<TargetMutation> {
     let payload = &row.payload;
     let normalized_type = row.mutation_type.as_str();
-    let module = payload
-        .get("module")
-        .and_then(Value::as_str)
+    let module = extract_payload_string(payload, &["module", "currentModule", "current_module"])
         .unwrap_or(
             if matches!(
                 normalized_type,
@@ -645,34 +655,53 @@ fn classify_target_mutation(row: &MutationRow) -> Option<TargetMutation> {
             },
         )
         .to_string();
+    let question_id =
+        extract_payload_string(payload, &["questionId", "question_id", "currentQuestionId"]);
+    let task_id = extract_payload_string(payload, &["taskId", "task_id", "currentTaskId"]);
+    let slot_id = extract_payload_string(payload, &["slotId", "slot_id"]);
+    let slot_index = extract_payload_usize(payload, &["slotIndex", "slot_index"]);
 
     if matches!(
         normalized_type,
         "SetEssayText" | "ClearEssayText" | "writing_answer"
     ) {
-        let task_id = payload.get("taskId")?.as_str()?.to_string();
+        let task_id = task_id?;
         return Some(TargetMutation {
             module,
-            target_id: task_id,
+            target_id: task_id.to_string(),
             target_type: AnswerHistoryTargetType::Writing,
             row: row.clone(),
         });
     }
 
-    if let Some(question_id) = payload.get("questionId").and_then(Value::as_str) {
+    if let Some(question_id) = question_id {
+        let target_id =
+            resolve_objective_target_id(question_id, slot_id, slot_index, catalog_index);
         return Some(TargetMutation {
             module,
-            target_id: question_id.to_string(),
+            target_id,
             target_type: AnswerHistoryTargetType::Objective,
             row: row.clone(),
         });
     }
 
-    if let Some(task_id) = payload.get("taskId").and_then(Value::as_str) {
+    if let Some(task_id) = task_id {
+        if catalog_index.writing_ids.contains(task_id)
+            || module.eq_ignore_ascii_case("writing")
+            || !catalog_index.objective_ids.contains(task_id)
+        {
+            return Some(TargetMutation {
+                module,
+                target_id: task_id.to_string(),
+                target_type: AnswerHistoryTargetType::Writing,
+                row: row.clone(),
+            });
+        }
+
         return Some(TargetMutation {
             module,
             target_id: task_id.to_string(),
-            target_type: AnswerHistoryTargetType::Writing,
+            target_type: AnswerHistoryTargetType::Objective,
             row: row.clone(),
         });
     }
@@ -682,23 +711,20 @@ fn classify_target_mutation(row: &MutationRow) -> Option<TargetMutation> {
 
 fn apply_mutation_to_state(state: &Value, row: &MutationRow) -> Value {
     match row.mutation_type.as_str() {
-        "answer" => row.payload.get("value").cloned().unwrap_or(Value::Null),
-        "writing_answer" => row.payload.get("value").cloned().unwrap_or(Value::Null),
+        "answer" => extract_payload_value(&row.payload, &["value"])
+            .cloned()
+            .unwrap_or(Value::Null),
+        "writing_answer" => extract_payload_value(&row.payload, &["value"])
+            .cloned()
+            .unwrap_or(Value::Null),
         "SetSlot" => {
             let mut slots = state.as_array().cloned().unwrap_or_default();
-            let slot_index = row
-                .payload
-                .get("slotIndex")
-                .and_then(Value::as_i64)
-                .unwrap_or(0)
-                .max(0) as usize;
+            let slot_index = extract_payload_usize(&row.payload, &["slotIndex", "slot_index"])
+                .unwrap_or(0);
             while slots.len() <= slot_index {
                 slots.push(Value::String(String::new()));
             }
-            let value = row
-                .payload
-                .get("value")
-                .and_then(Value::as_str)
+            let value = extract_payload_string(&row.payload, &["value"])
                 .unwrap_or("")
                 .to_string();
             slots[slot_index] = Value::String(value);
@@ -706,36 +732,24 @@ fn apply_mutation_to_state(state: &Value, row: &MutationRow) -> Value {
         }
         "ClearSlot" => {
             let mut slots = state.as_array().cloned().unwrap_or_default();
-            let slot_index = row
-                .payload
-                .get("slotIndex")
-                .and_then(Value::as_i64)
-                .unwrap_or(0)
-                .max(0) as usize;
+            let slot_index = extract_payload_usize(&row.payload, &["slotIndex", "slot_index"])
+                .unwrap_or(0);
             while slots.len() <= slot_index {
                 slots.push(Value::String(String::new()));
             }
             slots[slot_index] = Value::String(String::new());
             Value::Array(slots)
         }
-        "SetScalar" => Value::String(
-            row.payload
-                .get("value")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string(),
-        ),
+        "SetScalar" => {
+            Value::String(extract_payload_string(&row.payload, &["value"]).unwrap_or("").to_string())
+        }
         "ClearScalar" => Value::String(String::new()),
-        "SetChoice" => row
-            .payload
-            .get("value")
+        "SetChoice" => extract_payload_value(&row.payload, &["value"])
             .cloned()
             .unwrap_or(Value::Array(vec![])),
         "ClearChoice" => Value::Array(vec![]),
         "SetEssayText" => Value::String(
-            row.payload
-                .get("value")
-                .and_then(Value::as_str)
+            extract_payload_string(&row.payload, &["value"])
                 .unwrap_or("")
                 .to_string(),
         ),
@@ -754,19 +768,11 @@ fn describe_mutation(row: &MutationRow) -> String {
         "position" => "Moved cursor position".to_string(),
         "SetSlot" => format!(
             "Updated slot {}",
-            row.payload
-                .get("slotIndex")
-                .and_then(Value::as_i64)
-                .unwrap_or(0)
-                + 1
+            extract_payload_usize(&row.payload, &["slotIndex", "slot_index"]).unwrap_or(0) + 1
         ),
         "ClearSlot" => format!(
             "Cleared slot {}",
-            row.payload
-                .get("slotIndex")
-                .and_then(Value::as_i64)
-                .unwrap_or(0)
-                + 1
+            extract_payload_usize(&row.payload, &["slotIndex", "slot_index"]).unwrap_or(0) + 1
         ),
         "SetScalar" => "Updated answer".to_string(),
         "ClearScalar" => "Cleared answer".to_string(),
@@ -879,6 +885,109 @@ fn build_target_catalog(
             .then(target_type_rank(&left.target_type).cmp(&target_type_rank(&right.target_type)))
     });
     entries
+}
+
+fn build_target_catalog_index(entries: &[TargetCatalogEntry]) -> TargetCatalogIndex {
+    let mut objective_ids = HashSet::new();
+    let mut writing_ids = HashSet::new();
+    let mut grouped_slot_targets = HashMap::<String, Vec<String>>::new();
+
+    for entry in entries {
+        match entry.target_type {
+            AnswerHistoryTargetType::Objective => {
+                objective_ids.insert(entry.target_id.clone());
+                if let Some((root_id, _)) = entry.target_id.split_once(':') {
+                    grouped_slot_targets
+                        .entry(root_id.to_owned())
+                        .or_default()
+                        .push(entry.target_id.clone());
+                }
+            }
+            AnswerHistoryTargetType::Writing => {
+                writing_ids.insert(entry.target_id.clone());
+            }
+        }
+    }
+
+    let mut objective_slot_targets = HashMap::<(String, usize), String>::new();
+    for (root_id, mut slot_targets) in grouped_slot_targets {
+        if !objective_ids.contains(&root_id) {
+            continue;
+        }
+        slot_targets.sort();
+        for (index, target_id) in slot_targets.into_iter().enumerate() {
+            objective_slot_targets.insert((root_id.clone(), index), target_id);
+        }
+    }
+
+    TargetCatalogIndex {
+        objective_ids,
+        writing_ids,
+        objective_slot_targets,
+    }
+}
+
+fn resolve_objective_target_id(
+    question_id: &str,
+    slot_id: Option<&str>,
+    slot_index: Option<usize>,
+    catalog_index: &TargetCatalogIndex,
+) -> String {
+    if let Some(slot_id) = slot_id {
+        let composed = format!("{question_id}:{slot_id}");
+        if catalog_index.objective_ids.contains(&composed) {
+            return composed;
+        }
+    }
+
+    if let Some(slot_index) = slot_index {
+        if let Some(mapped) = catalog_index
+            .objective_slot_targets
+            .get(&(question_id.to_owned(), slot_index))
+        {
+            return mapped.clone();
+        }
+
+        let numbered = format!("{question_id}:slot:{}", slot_index + 1);
+        if catalog_index.objective_ids.contains(&numbered) {
+            return numbered;
+        }
+    }
+
+    question_id.to_owned()
+}
+
+fn extract_payload_value<'a>(payload: &'a Value, keys: &[&str]) -> Option<&'a Value> {
+    let object = payload.as_object()?;
+
+    for key in keys {
+        if let Some(value) = object.get(*key) {
+            return Some(value);
+        }
+    }
+
+    for container_key in ["command", "payload", "mutation", "data"] {
+        if let Some(nested) = object.get(container_key) {
+            if let Some(value) = extract_payload_value(nested, keys) {
+                return Some(value);
+            }
+        }
+    }
+
+    None
+}
+
+fn extract_payload_string<'a>(payload: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    extract_payload_value(payload, keys)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn extract_payload_usize(payload: &Value, keys: &[&str]) -> Option<usize> {
+    extract_payload_value(payload, keys)
+        .and_then(Value::as_i64)
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 fn build_writing_task_ids(config_snapshot: &Value, content_snapshot: &Value) -> HashSet<String> {
