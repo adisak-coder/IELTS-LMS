@@ -6,6 +6,7 @@ import {
   buildQuestionTracebackGroups,
   type ObjectiveTracebackGroup,
 } from './gradingReviewUtils';
+import { extractObjectiveAnswerMap } from './gradingAnswerUtils';
 
 interface QuestionTracebackPanelProps {
   section: 'reading' | 'listening';
@@ -140,7 +141,57 @@ export function QuestionTracebackPanel({
     [examState, section, sectionSubmission],
   );
 
-  const objectiveAnswerMap = sectionSubmission ? sectionSubmission.answers : null;
+  const rawAnswerPayload = sectionSubmission ? sectionSubmission.answers : null;
+  const objectiveAnswerMap = useMemo(
+    () => (sectionSubmission ? extractObjectiveAnswerMap(sectionSubmission.answers) : {}),
+    [sectionSubmission],
+  );
+
+  const numberingGapSummary = useMemo(() => {
+    const seen = new Set<number>();
+    const rootNumbers: number[] = [];
+
+    groups.forEach((group) => {
+      group.items.forEach((item) => {
+        const parsed = Number.parseInt(item.rootNumberLabel, 10);
+        if (Number.isFinite(parsed) && parsed > 0 && !seen.has(parsed)) {
+          seen.add(parsed);
+          rootNumbers.push(parsed);
+        }
+      });
+    });
+
+    if (rootNumbers.length < 2) {
+      return null;
+    }
+
+    const sorted = [...rootNumbers].sort((left, right) => left - right);
+    const missingRanges: string[] = [];
+
+    for (let index = 1; index < sorted.length; index += 1) {
+      const previous = sorted[index - 1];
+      const current = sorted[index];
+      if (current - previous <= 1) continue;
+      const start = previous + 1;
+      const end = current - 1;
+      missingRanges.push(start === end ? String(start) : `${start}-${end}`);
+    }
+
+    if (missingRanges.length === 0) {
+      return null;
+    }
+
+    return missingRanges.join(', ');
+  }, [groups]);
+
+  const unmappedAnswerKeys = useMemo(() => {
+    if (groups.length === 0) return [];
+    const descriptorAnswerKeys = new Set(
+      groups.flatMap((group) => group.items.map((item) => item.answerKey).filter(Boolean)),
+    );
+
+    return Object.keys(objectiveAnswerMap).filter((key) => !descriptorAnswerKeys.has(key));
+  }, [groups, objectiveAnswerMap]);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -168,7 +219,7 @@ export function QuestionTracebackPanel({
             </div>
           </div>
           <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-red-200 bg-white p-3 text-xs text-gray-800">
-            {JSON.stringify(objectiveAnswerMap, null, 2)}
+            {JSON.stringify(rawAnswerPayload, null, 2)}
           </pre>
         </div>
       ) : null}
@@ -180,12 +231,47 @@ export function QuestionTracebackPanel({
             The exam version loaded, but no questions were found for this section. Showing raw answers:
           </p>
           <pre className="mt-3 whitespace-pre-wrap break-words rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-800">
-            {JSON.stringify(objectiveAnswerMap, null, 2)}
+            {JSON.stringify(rawAnswerPayload, null, 2)}
           </pre>
         </div>
       ) : null}
 
-      {!examError && groups.length > 0 ? <div className="space-y-4 p-4 md:p-6">{groups.map(renderGroup)}</div> : null}
+      {!examError && groups.length > 0 ? (
+        <div className="space-y-4 p-4 md:p-6">
+          {numberingGapSummary ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} className="mt-0.5 text-amber-700" />
+                <div>
+                  <p className="font-medium">Question numbering has gaps in this exam version.</p>
+                  <p className="mt-1">
+                    Missing number range(s): {numberingGapSummary}. This traceback preserves canonical numbering.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {unmappedAnswerKeys.length > 0 ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} className="mt-0.5 text-amber-700" />
+                <div>
+                  <p className="font-medium">
+                    {unmappedAnswerKeys.length} stored answer key(s) do not map to this loaded exam schema.
+                  </p>
+                  <p className="mt-1">
+                    Example key(s): {unmappedAnswerKeys.slice(0, 3).join(', ')}
+                    {unmappedAnswerKeys.length > 3 ? ', ...' : ''}.
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {groups.map(renderGroup)}
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -98,7 +98,7 @@ describe('gradingAnswerUtils', () => {
     expect(isStudentAnswerCorrect(descriptor, { 'q-alt': 'different' })).toBe(false);
   });
 
-  test('SINGLE_MCQ: preserves stored option id in student answer display', () => {
+  test('SINGLE_MCQ: displays mapped option text in student answer display', () => {
     const descriptor = {
       id: 'block-1',
       blockId: 'block-1',
@@ -121,11 +121,11 @@ describe('gradingAnswerUtils', () => {
     } as unknown as StudentQuestionDescriptor;
 
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Alpha');
-    expect(getStudentAnswerDisplay(descriptor, { 'block-1': 'A' })).toBe('A');
+    expect(getStudentAnswerDisplay(descriptor, { 'block-1': 'A' })).toBe('Alpha');
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': 'A' })).toBe(true);
   });
 
-  test('MULTI_MCQ: set-compare ignores ordering while display preserves raw array projection', () => {
+  test('MULTI_MCQ: set-compare ignores ordering while display maps ids to readable option text', () => {
     const descriptor = {
       id: 'block-1',
       blockId: 'block-1',
@@ -150,7 +150,7 @@ describe('gradingAnswerUtils', () => {
     } as unknown as StudentQuestionDescriptor;
 
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Alpha, Charlie');
-    expect(getStudentAnswerDisplay(descriptor, { 'block-1': ['C', 'A'] })).toBe('["C","A"]');
+    expect(getStudentAnswerDisplay(descriptor, { 'block-1': ['C', 'A'] })).toBe('Charlie, Alpha');
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': ['C', 'A'] })).toBe(true);
   });
 
