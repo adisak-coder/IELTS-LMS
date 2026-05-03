@@ -67,6 +67,10 @@ pub struct Telemetry {
     db_operation_latency: Family<OperationLabels, Histogram>,
     publish_validation_latency: Family<OutcomeLabels, Histogram>,
     answer_commit_latency: Family<OutcomeLabels, Histogram>,
+    mutation_batch_requested_count: Histogram,
+    mutation_batch_applied_count: Histogram,
+    mutation_batch_persisted_count: Histogram,
+    mutation_batch_zero_persistence_total: Counter,
     violation_to_alert_latency: Histogram,
     websocket_connections: Gauge<i64, AtomicI64>,
     outbox_backlog_events: Gauge<i64, AtomicI64>,
@@ -120,6 +124,10 @@ impl Telemetry {
             Family::<OutcomeLabels, Histogram>::new_with_constructor(|| {
                 Histogram::new(exponential_buckets(0.001, 2.0, 14))
             });
+        let mutation_batch_requested_count = Histogram::new(exponential_buckets(1.0, 2.0, 10));
+        let mutation_batch_applied_count = Histogram::new(exponential_buckets(1.0, 2.0, 10));
+        let mutation_batch_persisted_count = Histogram::new(exponential_buckets(1.0, 2.0, 10));
+        let mutation_batch_zero_persistence_total = Counter::default();
         let violation_to_alert_latency = Histogram::new(exponential_buckets(0.001, 2.0, 14));
         let websocket_connections = Gauge::<i64, AtomicI64>::default();
         let outbox_backlog_events = Gauge::<i64, AtomicI64>::default();
@@ -162,6 +170,26 @@ impl Telemetry {
             "backend_answer_commit_duration_seconds",
             "Answer mutation and submit durability latency grouped by outcome.",
             answer_commit_latency.clone(),
+        );
+        registry.register(
+            "backend_mutation_batch_requested_count",
+            "Requested mutation command count per accepted student mutation batch.",
+            mutation_batch_requested_count.clone(),
+        );
+        registry.register(
+            "backend_mutation_batch_applied_count",
+            "Applied mutation count per accepted student mutation batch.",
+            mutation_batch_applied_count.clone(),
+        );
+        registry.register(
+            "backend_mutation_batch_persisted_count",
+            "Persisted mutation-row count per accepted student mutation batch.",
+            mutation_batch_persisted_count.clone(),
+        );
+        registry.register(
+            "backend_mutation_batch_zero_persistence_total",
+            "Count of accepted mutation batches where applied mutations were non-zero but persisted rows were zero.",
+            mutation_batch_zero_persistence_total.clone(),
         );
         registry.register(
             "backend_violation_to_alert_duration_seconds",
@@ -265,6 +293,10 @@ impl Telemetry {
             db_operation_latency,
             publish_validation_latency,
             answer_commit_latency,
+            mutation_batch_requested_count,
+            mutation_batch_applied_count,
+            mutation_batch_persisted_count,
+            mutation_batch_zero_persistence_total,
             violation_to_alert_latency,
             websocket_connections,
             outbox_backlog_events,
@@ -325,6 +357,24 @@ impl Telemetry {
         self.answer_commit_latency
             .get_or_create(&labels)
             .observe(duration.as_secs_f64());
+    }
+
+    pub fn observe_mutation_batch_persistence(
+        &self,
+        requested_count: usize,
+        applied_count: usize,
+        persisted_count: usize,
+    ) {
+        self.mutation_batch_requested_count
+            .observe(requested_count as f64);
+        self.mutation_batch_applied_count
+            .observe(applied_count as f64);
+        self.mutation_batch_persisted_count
+            .observe(persisted_count as f64);
+
+        if requested_count > 0 && applied_count > 0 && persisted_count == 0 {
+            self.mutation_batch_zero_persistence_total.inc();
+        }
     }
 
     pub fn observe_violation_to_alert(&self, duration: Duration) {
@@ -499,6 +549,22 @@ mod tests {
         )
         .expect("failure counter value");
         assert_eq!(metric_value, 2.0);
+    }
+
+    #[test]
+    fn render_includes_mutation_batch_persistence_metrics() {
+        let telemetry = Telemetry::new();
+        telemetry.observe_mutation_batch_persistence(3, 2, 2);
+        telemetry.observe_mutation_batch_persistence(2, 1, 0);
+
+        let rendered = telemetry.render().expect("render metrics");
+        assert!(rendered.contains("backend_mutation_batch_requested_count_bucket"));
+        assert!(rendered.contains("backend_mutation_batch_applied_count_bucket"));
+        assert!(rendered.contains("backend_mutation_batch_persisted_count_bucket"));
+        let anomaly_value =
+            metric_value(&rendered, "backend_mutation_batch_zero_persistence_total")
+                .expect("zero persistence metric value");
+        assert_eq!(anomaly_value, 1.0);
     }
 
     fn metric_value(rendered: &str, metric_name: &str) -> Option<f64> {

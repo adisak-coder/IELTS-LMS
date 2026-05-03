@@ -290,6 +290,344 @@ async fn operation_mutations_reject_stale_revision_and_preserve_field_scope() {
     let second_attempt = second.attempt.expect("full response attempt");
     assert_eq!(second_attempt.answers["q1"], "ALPHA");
     assert_eq!(second_attempt.answers["q2"], "BRAVO");
+    let stored_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .expect("count persisted mutation rows");
+    assert_eq!(stored_count, 2);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn operation_mutations_with_idempotency_key_are_deterministic_and_do_not_duplicate_rows() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service = DeliveryService::new(database.pool().clone());
+    let session = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, "alice"),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+    let attempt = session.attempt.expect("attempt");
+    let attempt_id = attempt.id.clone();
+    let student_key = student_key(schedule_id, "alice");
+    let client_session_id = Uuid::new_v4().to_string();
+
+    let batch = StudentMutationBatchRequest {
+        attempt_id: attempt_id.clone(),
+        student_key: student_key.clone(),
+        client_session_id: client_session_id.clone(),
+        mutations: vec![MutationEnvelope {
+            id: "op-idempotent-1".to_owned(),
+            seq: 1,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
+            mutation_type: "SetScalar".to_owned(),
+            base_revision: None,
+            payload: json!({
+                "baseRevision": 0,
+                "questionId": "q1",
+                "value": "ALPHA",
+            }),
+        }],
+    };
+
+    let first = service
+        .apply_mutation_batch(
+            schedule_id,
+            batch.clone(),
+            MutationBatchResponseMode::Full,
+            Some("idem-operation-1".to_owned()),
+        )
+        .await
+        .expect("first idempotent request");
+    let second = service
+        .apply_mutation_batch(
+            schedule_id,
+            batch,
+            MutationBatchResponseMode::Full,
+            Some("idem-operation-1".to_owned()),
+        )
+        .await
+        .expect("idempotent replay");
+
+    assert_eq!(
+        first.server_accepted_through_seq,
+        second.server_accepted_through_seq
+    );
+    assert_eq!(first.revision, second.revision);
+    let stored_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .expect("count persisted mutation rows");
+    assert_eq!(stored_count, 1);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn idempotency_hash_mismatch_rejects_conflict_without_partial_writes() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service = DeliveryService::new(database.pool().clone());
+    let session = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, "alice"),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+    let attempt = session.attempt.expect("attempt");
+    let attempt_id = attempt.id.clone();
+    let student_key = student_key(schedule_id, "alice");
+    let client_session_id = Uuid::new_v4().to_string();
+
+    let original = StudentMutationBatchRequest {
+        attempt_id: attempt_id.clone(),
+        student_key: student_key.clone(),
+        client_session_id: client_session_id.clone(),
+        mutations: vec![MutationEnvelope {
+            id: "op-hash-1".to_owned(),
+            seq: 1,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 20, 0).unwrap(),
+            mutation_type: "SetScalar".to_owned(),
+            base_revision: None,
+            payload: json!({
+                "baseRevision": 0,
+                "questionId": "q1",
+                "value": "ALPHA",
+            }),
+        }],
+    };
+    service
+        .apply_mutation_batch(
+            schedule_id,
+            original,
+            MutationBatchResponseMode::Full,
+            Some("idem-hash-1".to_owned()),
+        )
+        .await
+        .expect("store first idempotency result");
+
+    let mismatch = StudentMutationBatchRequest {
+        attempt_id: attempt_id.clone(),
+        student_key: student_key.clone(),
+        client_session_id: client_session_id.clone(),
+        mutations: vec![MutationEnvelope {
+            id: "op-hash-2".to_owned(),
+            seq: 2,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 20, 5).unwrap(),
+            mutation_type: "SetScalar".to_owned(),
+            base_revision: None,
+            payload: json!({
+                "baseRevision": 1,
+                "questionId": "q1",
+                "value": "BRAVO",
+            }),
+        }],
+    };
+    let err = service
+        .apply_mutation_batch(
+            schedule_id,
+            mismatch,
+            MutationBatchResponseMode::Full,
+            Some("idem-hash-1".to_owned()),
+        )
+        .await
+        .expect_err("mismatched payload must conflict");
+    match err {
+        DeliveryError::Conflict { message, .. } => {
+            assert!(
+                message.contains("Idempotency-Key does not match the original request."),
+                "unexpected conflict message: {message}"
+            );
+        }
+        other => panic!("expected idempotency conflict, got {:?}", other),
+    }
+
+    let stored_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .expect("count persisted mutation rows");
+    assert_eq!(stored_count, 1);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn operation_set_slot_persists_mutation_and_answer_slot_rows() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service = DeliveryService::new(database.pool().clone());
+    let session = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, "alice"),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+    let attempt = session.attempt.expect("attempt");
+    let attempt_id = attempt.id.clone();
+    let student_key = student_key(schedule_id, "alice");
+    let client_session_id = Uuid::new_v4().to_string();
+
+    let response = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: attempt_id.clone(),
+                student_key: student_key.clone(),
+                client_session_id: client_session_id.clone(),
+                mutations: vec![MutationEnvelope {
+                    id: "slot-1".to_owned(),
+                    seq: 1,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 30, 0).unwrap(),
+                    mutation_type: "SetSlot".to_owned(),
+                    base_revision: None,
+                    payload: json!({
+                        "baseRevision": 0,
+                        "questionId": "q-slot-1",
+                        "slotIndex": 1,
+                        "value": "second-value",
+                    }),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect("set slot mutation");
+    assert_eq!(response.applied_mutation_count, 1);
+
+    let mutation_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
+            .bind(&attempt_id)
+            .fetch_one(database.pool())
+            .await
+            .expect("count mutation rows");
+    assert_eq!(mutation_rows, 1);
+    let slot_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ?",
+    )
+    .bind(&attempt_id)
+    .bind("q-slot-1")
+    .fetch_one(database.pool())
+    .await
+    .expect("count slot rows");
+    assert_eq!(slot_rows, 1);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn parallel_retries_for_same_operation_do_not_create_duplicate_mutation_ids() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service_a = DeliveryService::new(database.pool().clone());
+    let service_b = DeliveryService::new(database.pool().clone());
+    let session = service_a
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, "alice"),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+    let attempt = session.attempt.expect("attempt");
+    let attempt_id = attempt.id.clone();
+    let student_key = student_key(schedule_id, "alice");
+    let client_session_id = Uuid::new_v4().to_string();
+
+    let req = StudentMutationBatchRequest {
+        attempt_id: attempt_id.clone(),
+        student_key: student_key.clone(),
+        client_session_id: client_session_id.clone(),
+        mutations: vec![MutationEnvelope {
+            id: "parallel-dup-1".to_owned(),
+            seq: 1,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 40, 0).unwrap(),
+            mutation_type: "SetScalar".to_owned(),
+            base_revision: None,
+            payload: json!({
+                "baseRevision": 0,
+                "questionId": "q1",
+                "value": "ALPHA",
+            }),
+        }],
+    };
+
+    let (left, right) = tokio::join!(
+        service_a.apply_mutation_batch(
+            schedule_id,
+            req.clone(),
+            MutationBatchResponseMode::Full,
+            None
+        ),
+        service_b.apply_mutation_batch(schedule_id, req, MutationBatchResponseMode::Full, None)
+    );
+    assert!(left.is_ok(), "left retry should succeed");
+    assert!(right.is_ok(), "right retry should succeed");
+
+    let duplicate_id_groups: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM (
+            SELECT client_mutation_id
+            FROM student_attempt_mutations
+            WHERE attempt_id = ?
+            GROUP BY client_mutation_id
+            HAVING COUNT(*) > 1
+        ) dup
+        "#,
+    )
+    .bind(&attempt_id)
+    .fetch_one(database.pool())
+    .await
+    .expect("check duplicate mutation ids");
+    assert_eq!(duplicate_id_groups, 0);
 
     database.shutdown().await;
 }
@@ -377,6 +715,16 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                                         "questions": [
                                             {"id": "q1", "prompt": "Q1"},
                                             {"id": "q2", "prompt": "Q2"}
+                                        ]
+                                    },
+                                    {
+                                        "id": "reading-block-slot",
+                                        "type": "SENTENCE_COMPLETION",
+                                        "questions": [
+                                            {
+                                                "id": "q-slot-1",
+                                                "blanks": [{"id": "b1"}, {"id": "b2"}]
+                                            }
                                         ]
                                     }
                                 ]

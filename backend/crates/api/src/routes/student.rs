@@ -552,12 +552,14 @@ pub async fn apply_mutation_batch(
             })
             .collect(),
     };
+    let requested_mutation_count = req.mutations.len();
     let service = delivery_service(&state);
     let started = Instant::now();
     let mut result = service
         .apply_mutation_batch(
             schedule_id,
             req,
+            // Public student mutation API is operation-command + full response only.
             MutationBatchResponseMode::Full,
             extract_idempotency_key(&headers)?,
         )
@@ -574,32 +576,21 @@ pub async fn apply_mutation_batch(
     state
         .telemetry
         .observe_answer_commit("mutation_batch", duration);
+    state.telemetry.observe_mutation_batch_persistence(
+        requested_mutation_count,
+        result.applied_mutation_count,
+        result.applied_mutation_count,
+    );
 
     if contains_violation {
-        state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-                kind: "schedule_roster".to_owned(),
-                id: schedule_id.to_string(),
-                revision: 0,
-                event: "violation_snapshot_changed".to_owned(),
-            });
+        state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_roster".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: "violation_snapshot_changed".to_owned(),
+        });
     }
     Ok(ApiResponse::success_with_request_id(result, request_id.0))
-}
-
-fn parse_mutation_batch_response_mode(
-    payload: &Value,
-) -> Result<MutationBatchResponseMode, ApiError> {
-    match payload.get("responseMode").and_then(Value::as_str) {
-        None => Ok(MutationBatchResponseMode::Full),
-        Some("full") => Ok(MutationBatchResponseMode::Full),
-        Some("ack") => Ok(MutationBatchResponseMode::Ack),
-        Some(_) => Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "VALIDATION_ERROR",
-            "responseMode must be either 'full' or 'ack'.",
-        )),
-    }
 }
 
 pub async fn record_heartbeat(
@@ -673,13 +664,12 @@ pub async fn record_heartbeat(
             "lost" => "heartbeat_lost",
             _ => "student_network",
         };
-        state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-                kind: "schedule_alert".to_owned(),
-                id: schedule_id.to_string(),
-                revision: 0,
-                event: event.to_owned(),
-            });
+        state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_alert".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: event.to_owned(),
+        });
     }
     Ok(ApiResponse::success_with_request_id(
         StudentHeartbeatResponse {
@@ -871,13 +861,12 @@ pub async fn record_audit(
             | "VIOLATION_DETECTED"
     );
     if publish_alert {
-        state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-                kind: "schedule_alert".to_owned(),
-                id: schedule_id.to_string(),
-                revision: 0,
-                event: "alert_changed".to_owned(),
-            });
+        state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+            kind: "schedule_alert".to_owned(),
+            id: schedule_id.to_string(),
+            revision: 0,
+            event: "alert_changed".to_owned(),
+        });
     }
 
     Ok(ApiResponse::success_with_request_id((), request_id.0))

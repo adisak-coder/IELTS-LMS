@@ -360,7 +360,11 @@ impl DeliveryService {
             .and_then(|value| value.get("completedAt"))
             .and_then(Value::as_str)
             .is_some();
-        let phase = determine_phase(runtime.as_ref(), has_precheck, attempt.submitted_at.is_some());
+        let phase = determine_phase(
+            runtime.as_ref(),
+            has_precheck,
+            attempt.submitted_at.is_some(),
+        );
         let client_session_id = req.client_session_id.to_string();
 
         let attempt = if attempt.phase != phase
@@ -382,8 +386,11 @@ impl DeliveryService {
                     .and_then(|value| value.get("completedAt"))
                     .and_then(Value::as_str)
                     .is_some();
-                let phase =
-                    determine_phase(runtime.as_ref(), has_precheck, latest.submitted_at.is_some());
+                let phase = determine_phase(
+                    runtime.as_ref(),
+                    has_precheck,
+                    latest.submitted_at.is_some(),
+                );
                 let mut integrity = ensure_object(latest.integrity.clone());
                 integrity.insert(
                     "clientSessionId".to_owned(),
@@ -451,7 +458,7 @@ impl DeliveryService {
             idempotency_key.as_ref(),
         )?;
         if let Some(response) = self
-            .lookup_idempotent_response(
+            .lookup_idempotent_response::<StudentMutationBatchResponse>(
                 &repository,
                 &req.student_key,
                 &route_key,
@@ -460,6 +467,16 @@ impl DeliveryService {
             )
             .await?
         {
+            tracing::info!(
+                schedule_id = %schedule_id,
+                attempt_id = %req.attempt_id,
+                client_session_id = %req.client_session_id,
+                batch_count = req.mutations.len(),
+                applied_count = response.applied_mutation_count,
+                persisted_count = response.applied_mutation_count,
+                idempotency_replay = true,
+                "served idempotent student mutation batch response",
+            );
             return Ok(response);
         }
 
@@ -475,7 +492,7 @@ impl DeliveryService {
             ));
         }
         if let Some(response) = self
-            .lookup_idempotent_response_on_connection(
+            .lookup_idempotent_response_on_connection::<StudentMutationBatchResponse>(
                 tx.as_mut(),
                 &req.student_key,
                 &route_key,
@@ -484,6 +501,16 @@ impl DeliveryService {
             )
             .await?
         {
+            tracing::info!(
+                schedule_id = %schedule_id,
+                attempt_id = %req.attempt_id,
+                client_session_id = %req.client_session_id,
+                batch_count = req.mutations.len(),
+                applied_count = response.applied_mutation_count,
+                persisted_count = response.applied_mutation_count,
+                idempotency_replay = true,
+                "served idempotent student mutation batch response from active transaction",
+            );
             return Ok(response);
         }
         if attempt.submitted_at.is_some() {
@@ -686,6 +713,7 @@ impl DeliveryService {
 
             let applied_mutation_count = newly_applied.len();
             let server_accepted_through_seq = persisted_max_seq + applied_mutation_count as i64;
+            let mut persisted_mutations_count = 0usize;
             let now = Utc::now();
             recovery = merge_recovery(
                 recovery,
@@ -726,7 +754,13 @@ impl DeliveryService {
                             .push("NOW()");
                     },
                 );
-                query_builder.build().execute(tx.as_mut()).await?;
+                let insert_result = query_builder.build().execute(tx.as_mut()).await?;
+                persisted_mutations_count =
+                    usize::try_from(insert_result.rows_affected()).unwrap_or(usize::MAX);
+                ensure_mutation_persistence_invariant(
+                    applied_mutation_count,
+                    persisted_mutations_count,
+                )?;
 
                 for mutation in &newly_applied {
                     if let Some(slot_effect) = mutation.slot_effect.as_ref() {
@@ -781,12 +815,24 @@ impl DeliveryService {
             .bind(json!({
                 "count": req.mutations.len(),
                 "appliedCount": applied_mutation_count,
+                "persistedMutationCount": persisted_mutations_count,
                 "types": req.mutations.iter().map(|mutation| mutation.mutation_type.clone()).collect::<Vec<_>>(),
                 "revision": attempt.revision,
                 "clientSessionId": req.client_session_id
             }))
             .execute(tx.as_mut())
             .await?;
+
+            tracing::info!(
+                schedule_id = %schedule_id,
+                attempt_id = %req.attempt_id,
+                client_session_id = %req.client_session_id,
+                batch_count = req.mutations.len(),
+                applied_count = applied_mutation_count,
+                persisted_count = persisted_mutations_count,
+                idempotency_replay = false,
+                "processed student mutation batch",
+            );
 
             let response = StudentMutationBatchResponse {
                 revision: attempt.revision,
@@ -892,7 +938,7 @@ impl DeliveryService {
         );
 
         let persisted_mutations: Vec<&MutationEnvelope> = req.mutations.iter().collect();
-        let persisted_mutations_count = persisted_mutations.len();
+        let mut persisted_mutations_count = persisted_mutations.len();
         let should_write_batch_audit =
             response_mode == MutationBatchResponseMode::Full || persisted_mutations_count > 0;
 
@@ -922,7 +968,10 @@ impl DeliveryService {
                     .push_bind(attempt.revision + 1)
                     .push("NOW()");
             });
-            query_builder.build().execute(tx.as_mut()).await?;
+            let insert_result = query_builder.build().execute(tx.as_mut()).await?;
+            persisted_mutations_count =
+                usize::try_from(insert_result.rows_affected()).unwrap_or(usize::MAX);
+            ensure_mutation_persistence_invariant(req.mutations.len(), persisted_mutations_count)?;
         }
 
         tracing::info!(
@@ -1026,6 +1075,18 @@ impl DeliveryService {
             &response,
         )
         .await?;
+
+        tracing::info!(
+            schedule_id = %schedule_id,
+            attempt_id = %req.attempt_id,
+            client_session_id = %req.client_session_id,
+            response_mode = ?response_mode,
+            mutation_batch_count = req.mutations.len(),
+            applied_count = req.mutations.len(),
+            persisted_count = persisted_mutations_count,
+            idempotency_replay = false,
+            "processed student mutation batch",
+        );
 
         tx.commit().await?;
 
@@ -2300,6 +2361,20 @@ fn validate_unique_mutation_ids(mutations: &[MutationEnvelope]) -> Result<(), De
     Ok(())
 }
 
+fn ensure_mutation_persistence_invariant(
+    applied_mutation_count: usize,
+    persisted_mutations_count: usize,
+) -> Result<(), DeliveryError> {
+    if applied_mutation_count == persisted_mutations_count {
+        return Ok(());
+    }
+
+    Err(DeliveryError::Internal(format!(
+        "mutation persistence invariant violated: applied_count={} persisted_count={}",
+        applied_mutation_count, persisted_mutations_count
+    )))
+}
+
 fn validate_contiguous_sequences(
     existing_max_seq: i64,
     mutations: &[MutationEnvelope],
@@ -2491,11 +2566,10 @@ fn compute_answer_completion(schema: &AnswerSchema, answers: &Value) -> AnswerCo
             if root.required_leaf_ids.is_empty() {
                 continue;
             }
-            let all_required_answered = root.required_leaf_ids.iter().all(|leaf_id| {
-                answers
-                    .get(leaf_id)
-                    .is_some_and(is_answered_value)
-            });
+            let all_required_answered = root
+                .required_leaf_ids
+                .iter()
+                .all(|leaf_id| answers.get(leaf_id).is_some_and(is_answered_value));
             if all_required_answered {
                 answered_roots += 1;
             }
@@ -2640,7 +2714,10 @@ fn index_tree_completion_roots(
                 let leaf_id = format!("{block_id}::tree::{root_id}::{node_id}");
                 constraints.insert(leaf_id.clone(), AnswerConstraint::Text);
                 register_section(sections, &leaf_id, section_key)?;
-                let required = node.get("required").and_then(Value::as_bool).unwrap_or(true);
+                let required = node
+                    .get("required")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
                 if required {
                     required_leaf_ids.push(leaf_id);
                 }
@@ -4553,6 +4630,18 @@ mod tests {
         assert!(
             matches!(err, DeliveryError::Validation(message) if message == "Mutation batch contains duplicate mutationId values.")
         );
+    }
+
+    #[test]
+    fn mutation_persistence_invariant_accepts_matching_counts() {
+        let result = ensure_mutation_persistence_invariant(3, 3);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn mutation_persistence_invariant_rejects_mismatch() {
+        let error = ensure_mutation_persistence_invariant(2, 1).unwrap_err();
+        assert!(matches!(error, DeliveryError::Internal(message) if message.contains("applied_count=2") && message.contains("persisted_count=1")));
     }
 
     #[test]

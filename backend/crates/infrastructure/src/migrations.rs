@@ -11,6 +11,7 @@ const STARTUP_MIGRATIONS_LOCK_NAME: &str = "ielts_backend_startup_migrations_loc
 const STARTUP_MIGRATIONS_LOCK_TIMEOUT_SECS: i32 = 300;
 const MIGRATION_HISTORY_GUARD_MODE_ENV: &str = "MIGRATION_HISTORY_GUARD_MODE";
 const REQUIRED_INDEX_GUARD_MODE_ENV: &str = "REQUIRED_INDEX_GUARD_MODE";
+const MUTATION_UNIQUENESS_GUARD_MODE_ENV: &str = "MUTATION_UNIQUENESS_GUARD_MODE";
 
 const REQUIRED_INDEXES: &[(&str, &str)] = &[
     (
@@ -73,6 +74,7 @@ async fn run_startup_migrations_on_connection(
     }
 
     verify_required_indexes(conn).await?;
+    verify_mutation_uniqueness_guard(conn).await?;
 
     Ok(())
 }
@@ -209,6 +211,58 @@ async fn verify_required_indexes(conn: &mut MySqlConnection) -> Result<(), sqlx:
                 mode = "warn",
                 env = REQUIRED_INDEX_GUARD_MODE_ENV,
                 "REQUIRED_INDEX_GUARD_MODE=warn allows startup despite missing indexes; {}",
+                detail
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn verify_mutation_uniqueness_guard(conn: &mut MySqlConnection) -> Result<(), sqlx::Error> {
+    let has_unique_identity_index: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM information_schema.statistics
+        WHERE table_schema = DATABASE()
+          AND table_name = 'student_attempt_mutations'
+          AND index_name = 'idx_student_attempt_mutations_attempt_mutation_id'
+        "#,
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+    if has_unique_identity_index > 0 {
+        return Ok(());
+    }
+
+    let duplicate: Option<(String, String, i64)> = sqlx::query_as(
+        r#"
+        SELECT attempt_id, client_mutation_id, COUNT(*) AS duplicate_count
+        FROM student_attempt_mutations
+        GROUP BY attempt_id, client_mutation_id
+        HAVING COUNT(*) > 1
+        LIMIT 1
+        "#,
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let Some((attempt_id, client_mutation_id, duplicate_count)) = duplicate else {
+        return Ok(());
+    };
+
+    let detail = format!(
+        "Duplicate mutation identity rows detected in student_attempt_mutations. \
+attempt_id={attempt_id}, client_mutation_id={client_mutation_id}, duplicate_count={duplicate_count}. \
+Pre-deploy gate query: SELECT attempt_id, client_mutation_id, COUNT(*) AS duplicate_count \
+FROM student_attempt_mutations GROUP BY attempt_id, client_mutation_id HAVING COUNT(*) > 1;"
+    );
+    match guard_mode_from_env(MUTATION_UNIQUENESS_GUARD_MODE_ENV, GuardMode::Fail) {
+        GuardMode::Fail => Err(sqlx::Error::Protocol(detail)),
+        GuardMode::Warn => {
+            tracing::warn!(
+                mode = "warn",
+                env = MUTATION_UNIQUENESS_GUARD_MODE_ENV,
+                "MUTATION_UNIQUENESS_GUARD_MODE=warn allows startup despite duplicate mutation identities; {}",
                 detail
             );
             Ok(())

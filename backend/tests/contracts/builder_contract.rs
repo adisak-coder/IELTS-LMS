@@ -349,6 +349,120 @@ async fn patch_draft_prunes_old_draft_versions_to_three() {
 }
 
 #[tokio::test]
+async fn patch_draft_does_not_delete_versions_referenced_by_schedules() {
+    let database = mysql::TestDatabase::new(BUILDER_MIGRATIONS).await;
+    let seeded = seed_exam(database.pool()).await;
+    let service = BuilderService::new(database.pool().clone());
+    let actor = contract_actor();
+
+    let mut revision = seeded.revision;
+    let mut saved_versions = Vec::new();
+
+    for _ in 0..3 {
+        let version = service
+            .save_draft(
+                &actor,
+                seeded.id.clone(),
+                SaveDraftRequest {
+                    content_snapshot: json!({
+                        "listening": {"parts": []},
+                        "reading": {"passages": []},
+                        "writing": {"tasks": []},
+                        "speaking": {"part1Topics": [], "cueCard": "", "part3Discussion": []}
+                    }),
+                    config_snapshot: json!({
+                        "general": {"title": seeded.title},
+                        "sections": {}
+                    }),
+                    revision,
+                },
+            )
+            .await
+            .expect("save draft");
+
+        saved_versions.push(version);
+        revision = service
+            .get_exam(&actor, seeded.id.clone())
+            .await
+            .expect("exam after draft save")
+            .revision;
+    }
+
+    let protected_version = saved_versions
+        .last()
+        .expect("oldest saved draft")
+        .id
+        .to_string();
+
+    sqlx::query(
+        r#"
+        INSERT INTO exam_schedules (
+            id, exam_id, organization_id, exam_title, published_version_id, cohort_name,
+            institution, start_time, end_time, planned_duration_minutes, delivery_mode,
+            recurrence_type, recurrence_interval, auto_start, auto_stop, status, created_by,
+            created_at, updated_at, revision
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW() + INTERVAL 60 MINUTE, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(seeded.id.to_string())
+    .bind("org-1")
+    .bind(&seeded.title)
+    .bind(&protected_version)
+    .bind("Batch A")
+    .bind("Test Center")
+    .bind(60)
+    .bind("proctor_start")
+    .bind("none")
+    .bind(1)
+    .bind(false)
+    .bind(false)
+    .bind("scheduled")
+    .bind(actor.actor_id.clone())
+    .bind(0)
+    .execute(database.pool())
+    .await
+    .expect("insert schedule referencing draft version");
+
+    let fourth_save = service
+        .save_draft(
+            &actor,
+            seeded.id.clone(),
+            SaveDraftRequest {
+                content_snapshot: json!({
+                    "listening": {"parts": []},
+                    "reading": {"passages": []},
+                    "writing": {"tasks": []},
+                    "speaking": {"part1Topics": [], "cueCard": "", "part3Discussion": []}
+                }),
+                config_snapshot: json!({
+                    "general": {"title": seeded.title},
+                    "sections": {}
+                }),
+                revision,
+            },
+        )
+        .await;
+
+    assert!(
+        fourth_save.is_ok(),
+        "saving a new draft should not fail when an older draft is referenced by a schedule"
+    );
+
+    let versions = service
+        .list_versions(&actor, seeded.id.clone())
+        .await
+        .expect("list versions");
+
+    assert!(versions
+        .iter()
+        .any(|version| version.id.to_string() == protected_version && version.is_draft));
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn get_validation_reports_publish_readiness_for_the_current_draft() {
     let database = mysql::TestDatabase::new(BUILDER_MIGRATIONS).await;
     let seeded = seed_exam(database.pool()).await;
