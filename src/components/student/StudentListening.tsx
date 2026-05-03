@@ -7,7 +7,7 @@ import {
 } from '../../types';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { QuestionRenderer } from './QuestionRenderer';
-import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag, RotateCcw } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
@@ -39,6 +39,12 @@ interface StudentListeningProps {
   highlightClassName?: string | undefined;
   tabletMode?: boolean | undefined;
   contentZoom?: number | undefined;
+  onIncreasePassageReadability?: (() => void) | undefined;
+  onDecreasePassageReadability?: (() => void) | undefined;
+  onResetPassageReadability?: (() => void) | undefined;
+  passageReadabilityLabel?: string | undefined;
+  canIncreasePassageReadability?: boolean | undefined;
+  canDecreasePassageReadability?: boolean | undefined;
 }
 
 function getDiagramSlotIds(block: DiagramLabelingBlock): string[] {
@@ -94,6 +100,12 @@ export function StudentListening({
   highlightClassName,
   tabletMode = false,
   contentZoom = 1,
+  onIncreasePassageReadability,
+  onDecreasePassageReadability,
+  onResetPassageReadability,
+  passageReadabilityLabel,
+  canIncreasePassageReadability = false,
+  canDecreasePassageReadability = false,
 }: StudentListeningProps) {
   const isTabletMode = Boolean(tabletMode);
   const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
@@ -183,6 +195,12 @@ export function StudentListening({
   const hiddenDiagramReferenceBlockIds = useMemo(
     () => new Set(materialPaneDiagramBlocks.map((block) => block.id)),
     [materialPaneDiagramBlocks],
+  );
+  const showStimulusReadabilityControls = Boolean(
+    onIncreasePassageReadability &&
+      onDecreasePassageReadability &&
+      onResetPassageReadability &&
+      passageReadabilityLabel,
   );
 
   useEffect(() => {
@@ -367,15 +385,63 @@ export function StudentListening({
         data-testid="listening-split-workspace"
       >
         <div
-          className={`h-full overflow-y-auto font-sans leading-relaxed text-gray-900 ${
-            materialCompact ? 'p-2 pr-2 text-xs md:p-3 md:pr-3 md:text-sm' : 'p-4 pr-4 text-sm md:p-6 md:pr-6 md:text-base'
+          className={`h-full overflow-y-auto font-sans text-gray-900 ${
+            materialCompact ? 'p-2 pr-2 md:p-3 md:pr-3' : 'p-4 pr-4 md:p-6 md:pr-6'
           } ${
             isTabletMode ? 'w-[var(--listening-pane-width)] min-w-[48px] border-r border-gray-200' : 'lg:w-[var(--listening-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
           }`}
           data-student-zoom-scroll
-          style={tabletContentZoomStyle}
+          style={{
+            ...(tabletContentZoomStyle ?? {}),
+            fontSize: 'var(--student-passage-font-size)',
+            lineHeight: 'var(--student-passage-line-height)',
+          }}
         >
-          <h2 className={`${materialCompact ? 'mb-2 text-base md:text-lg' : 'mb-4 text-lg md:mb-6 md:text-xl'} font-bold break-words [overflow-wrap:anywhere]`}>{activePart.title}</h2>
+          <div className={`flex items-start justify-between gap-3 ${materialCompact ? 'mb-2' : 'mb-4 md:mb-6'}`}>
+            <h2
+              className="font-bold break-words [overflow-wrap:anywhere]"
+              style={{ fontSize: 'var(--student-passage-title-font-size)' }}
+            >
+              {activePart.title}
+            </h2>
+            {showStimulusReadabilityControls ? (
+              <div
+                className="flex flex-wrap items-center justify-end gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1"
+                data-testid="listening-stimulus-readability-controls"
+              >
+                <button
+                  type="button"
+                  onClick={onDecreasePassageReadability}
+                  disabled={!canDecreasePassageReadability}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Decrease listening stimulus text size"
+                >
+                  A-
+                </button>
+                <span className="px-1 text-[10px] font-black uppercase tracking-[0.16em] text-gray-500">
+                  {passageReadabilityLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={onIncreasePassageReadability}
+                  disabled={!canIncreasePassageReadability}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Increase listening stimulus text size"
+                >
+                  A+
+                </button>
+                <button
+                  type="button"
+                  onClick={onResetPassageReadability}
+                  className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+                  aria-label="Reset listening stimulus readability"
+                >
+                  <RotateCcw size={11} />
+                  Reset
+                </button>
+              </div>
+            ) : null}
+          </div>
 
           {canPlayAudio ? (
             <audio
@@ -500,7 +566,7 @@ export function StudentListening({
                 content={activeTranscript}
                 contentType="text"
                 enabled={highlightEnabled}
-                className={`${materialCompact ? 'text-xs md:text-sm' : 'text-sm md:text-base'} whitespace-pre-wrap break-words [overflow-wrap:anywhere] leading-relaxed text-gray-800`}
+                className="student-stimulus-content whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-gray-800"
                 highlightColor={highlightColor}
                 highlightClassName={highlightClassName}
               />

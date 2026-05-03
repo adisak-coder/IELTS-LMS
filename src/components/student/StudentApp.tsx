@@ -1192,6 +1192,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
+            onIncreasePassageReadability={uiActions.increasePassageReadability}
+            onDecreasePassageReadability={uiActions.decreasePassageReadability}
+            onResetPassageReadability={uiActions.resetPassageReadability}
+            passageReadabilityLabel={passageReadabilityLabel}
+            canIncreasePassageReadability={canIncreasePassageReadability}
+            canDecreasePassageReadability={canDecreasePassageReadability}
           />
         ) : null}
         {runtimeState.currentModule === 'writing' ? (
@@ -1207,6 +1213,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             security={examState.config.security}
             showSubmitButton={showSubmitControls}
             tabletMode={tabletMode}
+            onIncreasePassageReadability={uiActions.increasePassageReadability}
+            onDecreasePassageReadability={uiActions.decreasePassageReadability}
+            onResetPassageReadability={uiActions.resetPassageReadability}
+            passageReadabilityLabel={passageReadabilityLabel}
+            canIncreasePassageReadability={canIncreasePassageReadability}
+            canDecreasePassageReadability={canDecreasePassageReadability}
           />
         ) : null}
         {runtimeState.currentModule === 'speaking' ? (

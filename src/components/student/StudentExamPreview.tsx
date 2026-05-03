@@ -327,6 +327,12 @@ function StudentExamPreviewInner({
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
+            onIncreasePassageReadability={uiActions.increasePassageReadability}
+            onDecreasePassageReadability={uiActions.decreasePassageReadability}
+            onResetPassageReadability={uiActions.resetPassageReadability}
+            passageReadabilityLabel={passageReadabilityLabel}
+            canIncreasePassageReadability={canIncreasePassageReadability}
+            canDecreasePassageReadability={canDecreasePassageReadability}
           />
         ) : null}
 
@@ -340,6 +346,12 @@ function StudentExamPreviewInner({
             onNavigate={setCurrentQuestionId}
             timeRemaining={timeRemaining}
             tabletMode={tabletMode}
+            onIncreasePassageReadability={uiActions.increasePassageReadability}
+            onDecreasePassageReadability={uiActions.decreasePassageReadability}
+            onResetPassageReadability={uiActions.resetPassageReadability}
+            passageReadabilityLabel={passageReadabilityLabel}
+            canIncreasePassageReadability={canIncreasePassageReadability}
+            canDecreasePassageReadability={canDecreasePassageReadability}
           />
         ) : null}
 

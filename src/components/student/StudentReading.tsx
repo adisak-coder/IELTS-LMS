@@ -346,7 +346,7 @@ export function StudentReading({
               </div>
             ) : null}
           </div>
-          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} student-reading-passage-content break-words [overflow-wrap:anywhere] text-gray-900 [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
+          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} student-reading-passage-content student-stimulus-content break-words [overflow-wrap:anywhere] text-gray-900 [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
             <RichTextHighlighter
               content={renderedPassageContent}
               contentType="html"

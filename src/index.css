@@ -254,27 +254,27 @@
     max-height: none;
   }
 
-  .student-reading-passage-content p {
+  .student-stimulus-content p {
     margin-top: var(--student-reading-paragraph-spacing, 1rem);
     margin-bottom: var(--student-reading-paragraph-spacing, 1rem);
     line-height: var(--student-passage-line-height, 1.8);
   }
 
-  .student-reading-passage-content p:first-child {
+  .student-stimulus-content p:first-child {
     margin-top: 0;
   }
 
-  .student-reading-passage-content p:last-child {
+  .student-stimulus-content p:last-child {
     margin-bottom: 0;
   }
 
-  /* Force consistent passage typography regardless of builder-authored tags/styles. */
-  .student-reading-passage-content,
-  .student-reading-passage-content * {
+  /* Force consistent stimulus typography regardless of builder-authored tags/styles. */
+  .student-stimulus-content,
+  .student-stimulus-content * {
     font-family: inherit !important;
   }
 
-  .student-reading-passage-content :is(
+  .student-stimulus-content :is(
     p,
     h1,
     h2,
@@ -295,7 +295,7 @@
     line-height: inherit !important;
   }
 
-  .student-reading-passage-content :is(h1, h2, h3, h4, h5, h6, strong, b) {
+  .student-stimulus-content :is(h1, h2, h3, h4, h5, h6, strong, b) {
     font-weight: 700;
   }
 
