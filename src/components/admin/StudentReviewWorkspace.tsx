@@ -20,7 +20,6 @@ import { StudentReportPreview } from './StudentReportPreview';
 import { QuestionTracebackPanel } from './QuestionTracebackPanel';
 import { logger } from '../../utils/logger';
 import { SectionLoadingSkeleton } from '@components/ui';
-import { htmlToPlainText } from '../../utils/htmlText';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 export interface StudentReviewWorkspaceProps {
@@ -563,8 +562,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
 
     return (['task1', 'task2'] as const).map((slot) => {
       const taskIdForPrompt = promptTaskIdsBySlot.get(slot) ?? slot;
-      const rawText = getWritingResponseText(taskIdForPrompt);
-      const text = htmlToPlainText(rawText);
+      const text = getWritingResponseText(taskIdForPrompt);
       const taskSubmission = submissionTaskBySlot.get(slot);
 
       return {
