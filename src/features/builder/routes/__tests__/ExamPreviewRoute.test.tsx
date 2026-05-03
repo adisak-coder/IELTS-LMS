@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInitialExamState } from '../../../../services/examAdapterService';
 import { ExamPreviewRoute } from '../ExamPreviewRoute';
@@ -8,6 +8,7 @@ const mockNavigate = vi.fn();
 const wrapperSpy = vi.fn();
 const mockController = vi.fn();
 let searchParams = new URLSearchParams('module=writing');
+const setSearchParamsMock = vi.fn();
 
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
@@ -15,7 +16,7 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     useNavigate: () => mockNavigate,
     useParams: () => ({ examId: 'exam-1' }),
-    useSearchParams: () => [searchParams, vi.fn()],
+    useSearchParams: () => [searchParams, setSearchParamsMock],
   };
 });
 
@@ -47,6 +48,7 @@ describe('ExamPreviewRoute', () => {
     render(<ExamPreviewRoute />);
 
     expect(screen.getByTestId('student-app-wrapper')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /preview section/i })).toBeInTheDocument();
     expect(wrapperSpy).toHaveBeenCalledTimes(1);
 
     const props = wrapperSpy.mock.calls[0]?.[0] as {
@@ -90,5 +92,25 @@ describe('ExamPreviewRoute', () => {
     };
 
     expect(props.attemptSnapshot.currentModule).toBe('reading');
+  });
+
+  it('updates the preview section query param when switching modules', () => {
+    const state = createInitialExamState('Preview exam', 'Academic');
+    mockController.mockReturnValue({
+      isLoading: false,
+      error: null,
+      state,
+    });
+
+    render(<ExamPreviewRoute />);
+
+    fireEvent.change(screen.getByRole('combobox', { name: /preview section/i }), {
+      target: { value: 'reading' },
+    });
+
+    expect(setSearchParamsMock).toHaveBeenCalledTimes(1);
+    const [nextParams, options] = setSearchParamsMock.mock.calls[0] as [URLSearchParams, { replace: boolean }];
+    expect(nextParams.get('module')).toBe('reading');
+    expect(options).toEqual({ replace: true });
   });
 });

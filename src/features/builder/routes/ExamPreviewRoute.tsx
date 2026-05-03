@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ErrorSurface, LoadingSurface } from '@components/ui';
 import { StudentAppWrapper } from '@components/student/StudentAppWrapper';
@@ -12,7 +12,8 @@ const MODULE_KEYS: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'
 export function ExamPreviewRoute() {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [previewRevision, setPreviewRevision] = useState(0);
 
   const requestedModule = useMemo<ModuleType | null>(() => {
     const raw = searchParams.get('module');
@@ -110,15 +111,50 @@ export function ExamPreviewRoute() {
     updatedAt: now,
   };
 
+  const handleModuleChange = (nextModule: ModuleType) => {
+    if (nextModule === previewModule) {
+      return;
+    }
+
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('module', nextModule);
+    setSearchParams(nextParams, { replace: true });
+    setPreviewRevision((current) => current + 1);
+  };
+
   return (
-    <StudentAppWrapper
-      state={controller.state}
-      onExit={() => navigate(`/builder/${examId}/builder`, { replace: true })}
-      attemptSnapshot={attemptSnapshot}
-      showSubmitControls={false}
-      persistenceEnabled={false}
-      enableMonitoring={false}
-    />
+    <div className="h-full w-full bg-gray-50">
+      <div className="h-11 border-b border-gray-200 bg-white flex items-center justify-between px-3 md:px-4 lg:px-6">
+        <div className="text-xs font-bold uppercase tracking-[0.2em] text-gray-500">
+          Preview mode
+        </div>
+        <label className="text-xs font-semibold text-gray-700">
+          Section
+          <select
+            aria-label="Preview section"
+            value={previewModule}
+            onChange={(event) => handleModuleChange(event.target.value as ModuleType)}
+            className="ml-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-800"
+          >
+            {enabledModules.map((module) => (
+              <option key={module} value={module}>
+                {module.charAt(0).toUpperCase() + module.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <StudentAppWrapper
+        key={`preview-${examId}-${previewModule}-${previewRevision}`}
+        state={controller.state}
+        onExit={() => navigate(`/builder/${examId}/builder`, { replace: true })}
+        attemptSnapshot={attemptSnapshot}
+        showSubmitControls={false}
+        persistenceEnabled={false}
+        enableMonitoring={false}
+      />
+    </div>
   );
 }
 
