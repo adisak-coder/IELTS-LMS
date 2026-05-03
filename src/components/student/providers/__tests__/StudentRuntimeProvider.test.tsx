@@ -1324,6 +1324,33 @@ describe('StudentRuntimeProvider - Runtime timer smoothing', () => {
     vi.useRealTimers();
   });
 
+  it('seeds non-runtime exam attempts with the selected module duration', async () => {
+    const attemptSnapshot: StudentAttempt = {
+      ...hydratedAttempt,
+      phase: 'exam',
+      currentModule: 'reading',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+
+    const nonRuntimeWrapper = ({ children }: { children: React.ReactNode }) => (
+      <StudentRuntimeProvider
+        state={mockExamState}
+        onExit={vi.fn()}
+        attemptSnapshot={attemptSnapshot}
+      >
+        {children}
+      </StudentRuntimeProvider>
+    );
+
+    const { result } = renderHook(() => useStudentRuntime(), {
+      wrapper: nonRuntimeWrapper,
+    });
+
+    expect(result.current.state.phase).toBe('exam');
+    expect(result.current.state.currentModule).toBe('reading');
+    expect(result.current.state.displayTimeRemaining).toBe(60 * 60);
+  });
+
   it('promotes a runtime-backed pre-check attempt to exam phase when the section is already live', async () => {
     const attemptSnapshot: StudentAttempt = {
       ...hydratedAttempt,

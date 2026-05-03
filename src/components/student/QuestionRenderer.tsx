@@ -96,6 +96,26 @@ export function QuestionRenderer({
   const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
   const inlineAnswerInputClass =
     'min-w-[8rem] w-fit max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
+  const matchingSelectClass = isCompactPane
+    ? 'w-full min-w-0 max-w-full'
+    : tabletMode
+      ? 'min-w-[12rem] max-w-full'
+      : 'min-w-[12rem] max-w-full';
+
+  const getAutoWidthStyle = (
+    value: string,
+    fallback: string,
+    minCh: number,
+    maxCh: number,
+  ): React.CSSProperties => {
+    const text = (value || fallback).trim() || fallback;
+    const widthCh = Math.max(minCh, Math.min(maxCh, text.length + 2));
+    return {
+      width: `${widthCh}ch`,
+      minWidth: '8rem',
+      maxWidth: '100%',
+    };
+  };
 
   const getSlotId = (index: number, fallback: string) => slotIds[index] ?? fallback;
   const getSlotClassName = (slotId: string) => {
@@ -271,16 +291,29 @@ export function QuestionRenderer({
 
   const renderMatching = (matchingBlock: MatchingBlock, q: MatchingQuestion) => (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
           <span className="min-w-[1.75rem] font-bold text-gray-900">{number}.</span>
         <span className="font-medium text-gray-800 text-[length:var(--student-control-font-size)]">
           Paragraph {q.paragraphLabel}
         </span>
 
+        {(() => {
+          const selectedValue = typeof answer === 'string' ? answer : '';
+          const selectedIndex = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'].indexOf(selectedValue);
+          const selectedHeading = selectedIndex >= 0 ? matchingBlock.headings?.[selectedIndex] : undefined;
+          const selectedLabel = selectedHeading
+            ? `${selectedValue}. ${stripBoldMarkdown(selectedHeading.text)}`
+            : 'Choose heading…';
+          const autoWidthStyle = isCompactPane
+            ? undefined
+            : getAutoWidthStyle(selectedLabel, 'Choose heading…', 16, 56);
+
+          return (
         <ProtectedSelect
-          value={typeof answer === 'string' ? answer : ''}
+          value={selectedValue}
           onChange={(event) => onChange(event.target.value, { interactionType: 'discrete' })}
-          className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-xs'}`}
+          className={`rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${matchingSelectClass}`}
+          style={autoWidthStyle}
           aria-label={`Heading selection for question ${number}`}
         >
           <option value="">Choose heading…</option>
@@ -293,6 +326,8 @@ export function QuestionRenderer({
             );
           })}
         </ProtectedSelect>
+          );
+        })()}
       </div>
     </div>
   );
@@ -497,6 +532,11 @@ export function QuestionRenderer({
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
                     className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-0' : ''} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
+                    style={
+                      isCompactPane
+                        ? undefined
+                        : getAutoWidthStyle(stringArrayAnswer[index] ?? '', 'Answer...', 14, 48)
+                    }
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -539,6 +579,11 @@ export function QuestionRenderer({
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
                     className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-0' : ''} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
+                    style={
+                      isCompactPane
+                        ? undefined
+                        : getAutoWidthStyle(stringArrayAnswer[index] ?? '', 'Answer...', 14, 48)
+                    }
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -698,6 +743,11 @@ export function QuestionRenderer({
                                   updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
                                 }
                                 className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
+                                style={
+                                  isCompactPane
+                                    ? undefined
+                                    : getAutoWidthStyle(stringArrayAnswer[slot.index] ?? '', 'Answer...', 14, 48)
+                                }
                                 placeholder="Answer..."
                                 security={security}
                                 sessionId={sessionId}

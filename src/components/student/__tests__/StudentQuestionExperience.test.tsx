@@ -233,6 +233,60 @@ describe('student question experience', () => {
     });
   });
 
+  it('applies responsive auto-width sizing to matching dropdown selections', () => {
+    const block = {
+      id: 'match-1',
+      type: 'MATCHING',
+      instruction: 'Match headings',
+      headings: [
+        { id: 'h1', text: 'Short title' },
+        { id: 'h2', text: 'A much longer heading title that should expand width' },
+      ],
+      questions: [
+        {
+          id: 'q1',
+          paragraphLabel: 'A',
+          correctHeadingId: 'h1',
+        },
+      ],
+    } as any;
+
+    const question = {
+      id: 'q1',
+      paragraphLabel: 'A',
+      correctHeadingId: 'h1',
+    } as any;
+
+    const { rerender } = render(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={1}
+        answer=""
+        onChange={() => {}}
+      />,
+    );
+
+    const select = screen.getByRole('combobox', { name: /heading selection for question 1/i });
+    expect(select).toHaveStyle({ maxWidth: '100%' });
+    expect(select).toHaveClass('min-w-[12rem]');
+    const initialWidth = parseFloat(select.style.width || '0');
+
+    rerender(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={1}
+        answer="ii"
+        onChange={() => {}}
+      />,
+    );
+
+    const resizedSelect = screen.getByRole('combobox', { name: /heading selection for question 1/i });
+    const resizedWidth = parseFloat(resizedSelect.style.width || '0');
+    expect(resizedWidth).toBeGreaterThan(initialWidth);
+  });
+
   it('does not show decorative category tags for classification questions', () => {
     const block: ClassificationBlock = {
       id: 'classify-1',
@@ -613,6 +667,7 @@ describe('student question experience', () => {
     expect(firstInput).toHaveClass('min-w-[8rem]');
     expect(firstInput).toHaveClass('w-fit');
     expect(firstInput).toHaveClass('max-w-full');
+    expect(firstInput.style.width).toContain('ch');
   });
 
   it('renders table blanks inline and keeps row-major numbering stable', () => {

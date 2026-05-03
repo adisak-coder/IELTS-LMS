@@ -394,12 +394,21 @@ function createInitialRuntimeState(
     !runtimeBacked || attemptSnapshot?.currentModule === firstModule
       ? attemptSnapshot?.currentQuestionId ?? null
       : null;
+  const initialPhase = getInitialPhase(runtimeBacked, runtimeSnapshot, attemptSnapshot);
+  const nonRuntimeSectionDurationMinutes = examState.config.sections[firstModule]?.duration ?? 0;
+  const nonRuntimeSectionDurationSeconds = Number.isFinite(nonRuntimeSectionDurationMinutes)
+    ? Math.max(0, nonRuntimeSectionDurationMinutes * 60)
+    : 0;
 
   return {
-    phase: getInitialPhase(runtimeBacked, runtimeSnapshot, attemptSnapshot),
+    phase: initialPhase,
     currentModule: firstModule,
     currentQuestionId: attemptQuestionId ?? (runtimeBacked ? firstQuestionId : null),
-    timeRemaining: runtimeBacked ? runtimeSnapshot?.currentSectionRemainingSeconds ?? 0 : 0,
+    timeRemaining: runtimeBacked
+      ? runtimeSnapshot?.currentSectionRemainingSeconds ?? 0
+      : initialPhase === 'exam'
+        ? nonRuntimeSectionDurationSeconds
+        : 0,
     currentSectionExtensionMinutes: runtimeBacked
       ? getRuntimeSectionExtensionMinutes(runtimeSnapshot, runtimeSnapshot?.currentSectionKey ?? firstModule)
       : null,
