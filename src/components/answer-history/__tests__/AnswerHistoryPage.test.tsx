@@ -304,4 +304,58 @@ describe('AnswerHistoryPage', () => {
     expect(screen.getByText('No checkpoints were recorded for this target.')).toBeInTheDocument();
     expect(screen.getByText('No technical logs available for this target.')).toBeInTheDocument();
   });
+
+  it('preserves overview ordering and uses backend labels without showing raw ids in primary panels', () => {
+    mockOverviewHook.mockReturnValue({
+      data: {
+        ...overviewFixture,
+        questionSummaries: [
+          {
+            targetId: 'reading-q2',
+            label: 'Question 2',
+            module: 'reading',
+            targetType: 'objective' as const,
+            revisionCount: 1,
+            answered: true,
+            finalValue: 'r2',
+          },
+          {
+            targetId: 'listening-q1',
+            label: 'Question 1',
+            module: 'listening',
+            targetType: 'objective' as const,
+            revisionCount: 1,
+            answered: true,
+            finalValue: 'l1',
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    mockDetailHook.mockReturnValue({
+      data: {
+        ...detailFixture,
+        targetId: 'reading-q2',
+        targetLabel: 'Question 2',
+        module: 'reading',
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <AnswerHistoryPage
+        submissionId="sub-1"
+        headingPrefix="Grading"
+        backLabel="Back"
+        onBack={() => undefined}
+      />,
+    );
+
+    const firstSectionHeader = screen.getAllByRole('heading', { level: 3 })[0];
+    expect(firstSectionHeader).toHaveTextContent('reading');
+    expect(screen.queryByText('reading-q2')).not.toBeInTheDocument();
+    expect(screen.queryByText(/objective • reading • reading-q2/i)).not.toBeInTheDocument();
+  });
 });

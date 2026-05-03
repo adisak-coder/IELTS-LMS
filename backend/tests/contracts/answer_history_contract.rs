@@ -62,7 +62,7 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
         attempt_id,
         "SetScalar",
         1,
-        json!({ "questionId": "q1", "value": "policy", "baseRevision": 0, "module": "reading" }),
+        json!({ "questionId": "q1", "value": "policy", "baseRevision": 0, "module": "objective" }),
         Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
     )
     .await;
@@ -84,6 +84,16 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
         3,
         json!({ "taskId": "task1", "value": "first essay paragraph", "baseRevision": 2, "module": "writing" }),
         Utc.with_ymd_and_hms(2026, 1, 10, 9, 15, 0).unwrap(),
+    )
+    .await;
+    insert_mutation(
+        database.pool(),
+        schedule_id,
+        attempt_id,
+        "SetScalar",
+        4,
+        json!({ "questionId": "legacy-q", "value": "legacy", "baseRevision": 3, "module": "objective" }),
+        Utc.with_ymd_and_hms(2026, 1, 10, 9, 18, 0).unwrap(),
     )
     .await;
 
@@ -117,6 +127,21 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
         overview_json["data"]["submissionId"],
         submission_id.to_string()
     );
+    let summaries = overview_json["data"]["questionSummaries"]
+        .as_array()
+        .expect("question summaries");
+    let summary_targets = summaries
+        .iter()
+        .map(|item| item["targetId"].as_str().unwrap_or_default())
+        .collect::<Vec<_>>();
+    assert_eq!(summary_targets, vec!["q1", "q2", "task1", "legacy-q"]);
+    assert_eq!(summaries[0]["label"], "Question 1");
+    assert_eq!(summaries[0]["module"], "reading");
+    assert_eq!(summaries[1]["label"], "Question 2");
+    assert_eq!(summaries[2]["label"], "Task 1");
+    assert_eq!(summaries[3]["label"], "Question 3 (Unmapped)");
+    assert_eq!(summaries[3]["module"], "objective");
+
     assert!(overview_json["data"]["questionSummaries"]
         .as_array()
         .map(|items| {

@@ -228,25 +228,8 @@ export function AnswerHistoryPage({
       list.push(item);
       groups.set(item.module, list);
     }
-    return [...groups.entries()].sort((left, right) => left[0].localeCompare(right[0]));
+    return [...groups.entries()];
   }, [filteredTargets]);
-
-  const displayLabelByTarget = useMemo(() => {
-    const map = new Map<string, string>();
-    const summaries = overview?.questionSummaries ?? [];
-    let objectiveIndex = 0;
-    let writingIndex = 0;
-    for (const summary of summaries) {
-      if (summary.targetType === 'writing') {
-        writingIndex += 1;
-        map.set(`${summary.targetType}:${summary.targetId}`, `Task ${writingIndex}`);
-      } else {
-        objectiveIndex += 1;
-        map.set(`${summary.targetType}:${summary.targetId}`, `Question ${objectiveIndex}`);
-      }
-    }
-    return map;
-  }, [overview?.questionSummaries]);
 
   const writingGrowthChart = useMemo<WritingChartData | undefined>(() => {
     if (selectedTargetType !== 'writing' || checkpoints.length === 0) {
@@ -359,9 +342,6 @@ export function AnswerHistoryPage({
                     const selected =
                       item.targetId === selectedTargetId && item.targetType === selectedTargetType;
                     const unanswered = !item.answered;
-                    const displayLabel =
-                      displayLabelByTarget.get(`${item.targetType}:${item.targetId}`) ??
-                      item.label;
                     return (
                       <button
                         key={`${item.targetType}-${item.targetId}`}
@@ -377,7 +357,7 @@ export function AnswerHistoryPage({
                         }`}
                       >
                         <div className="flex items-center justify-between gap-2">
-                          <p className="truncate font-medium">{displayLabel}</p>
+                          <p className="truncate font-medium">{item.label}</p>
                           <div className="flex items-center gap-1.5">
                             {unanswered ? (
                               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
@@ -389,7 +369,6 @@ export function AnswerHistoryPage({
                             </span>
                           </div>
                         </div>
-                        <p className="mt-1 text-xs text-gray-500">{item.targetId}</p>
                       </button>
                     );
                   })}
@@ -409,9 +388,7 @@ export function AnswerHistoryPage({
                 <div>
                   <div className="flex items-center gap-2">
                     <h2 className="text-lg font-semibold text-gray-900">
-                      {displayLabelByTarget.get(
-                        `${selectedTargetSummary.targetType}:${selectedTargetSummary.targetId}`,
-                      ) ?? selectedTargetSummary.label}
+                      {selectedTargetSummary.label}
                     </h2>
                     {!selectedTargetSummary.answered ? (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
@@ -420,7 +397,7 @@ export function AnswerHistoryPage({
                     ) : null}
                   </div>
                   <p className="text-sm text-gray-500">
-                    {selectedTargetSummary.targetType} • {selectedTargetSummary.module} • {selectedTargetSummary.targetId}
+                    {selectedTargetSummary.targetType} • {selectedTargetSummary.module}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">

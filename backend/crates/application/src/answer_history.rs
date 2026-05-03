@@ -72,6 +72,7 @@ struct TargetCatalogEntry {
     module: String,
     target_id: String,
     target_type: AnswerHistoryTargetType,
+    label: String,
 }
 
 #[derive(Debug, Clone)]
@@ -114,30 +115,22 @@ impl AnswerHistoryService {
             .iter()
             .filter_map(|row| classify_target_mutation(row, &catalog_index))
             .collect::<Vec<_>>();
+        let catalog_by_key = build_target_catalog_lookup(&target_catalog);
 
         let mut revision_counts = HashMap::<(AnswerHistoryTargetType, String), i64>::new();
         let mut final_states = HashMap::<(AnswerHistoryTargetType, String), Value>::new();
-        let mut target_modules = HashMap::<(AnswerHistoryTargetType, String), String>::new();
+        let mut mutation_modules = HashMap::<(AnswerHistoryTargetType, String), String>::new();
 
         for target in &target_mutations {
             let key = (target.target_type.clone(), target.target_id.clone());
             *revision_counts.entry(key.clone()).or_insert(0) += 1;
-            target_modules
+            mutation_modules
                 .entry(key.clone())
                 .or_insert_with(|| target.module.clone());
 
             let prev = final_states.remove(&key).unwrap_or(Value::Null);
             let next = apply_mutation_to_state(&prev, &target.row);
             final_states.insert(key, next);
-        }
-
-        for catalog_entry in &target_catalog {
-            target_modules
-                .entry((
-                    catalog_entry.target_type.clone(),
-                    catalog_entry.target_id.clone(),
-                ))
-                .or_insert_with(|| catalog_entry.module.clone());
         }
 
         let mut all_keys = HashSet::<(AnswerHistoryTargetType, String)>::new();
@@ -160,18 +153,56 @@ impl AnswerHistoryService {
         let mut section_revision_counts = HashMap::<String, i64>::new();
         let mut section_targets = HashMap::<String, HashSet<String>>::new();
         let mut question_summaries = Vec::<AnswerHistoryQuestionSummary>::new();
+        let mut seen_keys = HashSet::<(AnswerHistoryTargetType, String)>::new();
+        let mut ordered_keys = Vec::<(AnswerHistoryTargetType, String)>::new();
 
-        let mut keys = all_keys.into_iter().collect::<Vec<_>>();
-        keys.sort_by(|left, right| {
-            left.1
-                .cmp(&right.1)
+        for entry in &target_catalog {
+            let key = (entry.target_type.clone(), entry.target_id.clone());
+            if all_keys.contains(&key) && seen_keys.insert(key.clone()) {
+                ordered_keys.push(key);
+            }
+        }
+
+        let mut fallback_keys = all_keys
+            .into_iter()
+            .filter(|key| !seen_keys.contains(key))
+            .collect::<Vec<_>>();
+        fallback_keys.sort_by(|left, right| {
+            let left_module = mutation_modules
+                .get(&(left.0.clone(), left.1.clone()))
+                .cloned()
+                .unwrap_or_else(|| default_module_for_type(&left.0).to_string());
+            let right_module = mutation_modules
+                .get(&(right.0.clone(), right.1.clone()))
+                .cloned()
+                .unwrap_or_else(|| default_module_for_type(&right.0).to_string());
+            left_module
+                .cmp(&right_module)
+                .then(left.1.cmp(&right.1))
                 .then(target_type_rank(&left.0).cmp(&target_type_rank(&right.0)))
         });
+        ordered_keys.extend(fallback_keys);
 
-        for (target_type, target_id) in keys {
-            let module = target_modules
-                .get(&(target_type.clone(), target_id.clone()))
-                .cloned()
+        let mut objective_label_index_by_module = HashMap::<String, usize>::new();
+        let mut writing_label_index = 0usize;
+        for (target_type, target_id) in &ordered_keys {
+            if let Some(entry) = catalog_by_key.get(&(target_type.clone(), target_id.clone())) {
+                if *target_type == AnswerHistoryTargetType::Writing {
+                    writing_label_index += 1;
+                } else {
+                    *objective_label_index_by_module
+                        .entry(entry.module.clone())
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+
+        for (target_type, target_id) in ordered_keys {
+            let key = (target_type.clone(), target_id.clone());
+            let catalog_entry = catalog_by_key.get(&key);
+            let module = catalog_entry
+                .map(|entry| entry.module.clone())
+                .or_else(|| mutation_modules.get(&key).cloned())
                 .unwrap_or_else(|| default_module_for_type(&target_type).to_string());
             let revision_count = *revision_counts
                 .get(&(target_type.clone(), target_id.clone()))
@@ -186,6 +217,18 @@ impl AnswerHistoryService {
                 })
                 .unwrap_or(Value::Null);
             let answered = is_answered_value(&final_value);
+            let label = if let Some(entry) = catalog_entry {
+                entry.label.clone()
+            } else if target_type == AnswerHistoryTargetType::Writing {
+                writing_label_index += 1;
+                format!("Task {} (Unmapped)", writing_label_index)
+            } else {
+                let next = objective_label_index_by_module
+                    .entry(module.clone())
+                    .and_modify(|index| *index += 1)
+                    .or_insert(1);
+                format!("Question {} (Unmapped)", next)
+            };
 
             if revision_count > 0 {
                 *section_revision_counts.entry(module.clone()).or_insert(0) += revision_count;
@@ -197,7 +240,7 @@ impl AnswerHistoryService {
 
             question_summaries.push(AnswerHistoryQuestionSummary {
                 target_id: target_id.clone(),
-                label: target_id.clone(),
+                label,
                 module,
                 target_type,
                 revision_count,
@@ -365,15 +408,15 @@ impl AnswerHistoryService {
             .map(|entry| entry.target_type.clone())
             .unwrap_or_else(|| target_type.clone());
 
-        let module = matching
-            .first()
-            .map(|item| item.module.clone())
-            .or_else(|| {
-                resolved_from_catalog
-                    .as_ref()
-                    .map(|entry| entry.module.clone())
-            })
+        let module = resolved_from_catalog
+            .as_ref()
+            .map(|entry| entry.module.clone())
+            .or_else(|| matching.first().map(|item| item.module.clone()))
             .unwrap_or_else(|| default_module_for_type(&resolved_target_type).to_string());
+        let target_label = resolved_from_catalog
+            .as_ref()
+            .map(|entry| entry.label.clone())
+            .unwrap_or_else(|| target_id.to_string());
         if matching.is_empty() {
             state = submitted_states
                 .get(&(resolved_target_type.clone(), target_id.to_string()))
@@ -386,7 +429,7 @@ impl AnswerHistoryService {
             attempt_id: history_attempt_id,
             schedule_id: context.schedule_id,
             target_id: target_id.to_string(),
-            target_label: target_id.to_string(),
+            target_label,
             module,
             target_type: resolved_target_type,
             final_state: state,
@@ -902,31 +945,46 @@ fn build_target_catalog(
     content_snapshot: &Value,
     config_snapshot: &Value,
 ) -> Vec<TargetCatalogEntry> {
-    let mut module_by_target = HashMap::<(AnswerHistoryTargetType, String), String>::new();
-    let objective_sections = build_objective_target_sections(content_snapshot);
-    for (target_id, module) in objective_sections {
-        module_by_target.insert((AnswerHistoryTargetType::Objective, target_id), module);
+    let objective_modules = build_objective_module_order(config_snapshot);
+    let mut seen = HashSet::<(AnswerHistoryTargetType, String)>::new();
+    let mut entries = Vec::<TargetCatalogEntry>::new();
+    let mut objective_count_by_module = HashMap::<String, usize>::new();
+    let mut writing_count = 0usize;
+
+    for module in objective_modules {
+        let targets = build_objective_targets_for_section(content_snapshot, &module);
+        for target_id in targets {
+            let key = (AnswerHistoryTargetType::Objective, target_id.clone());
+            if !seen.insert(key) {
+                continue;
+            }
+            let next = objective_count_by_module
+                .entry(module.clone())
+                .and_modify(|index| *index += 1)
+                .or_insert(1);
+            entries.push(TargetCatalogEntry {
+                module: module.clone(),
+                target_id,
+                target_type: AnswerHistoryTargetType::Objective,
+                label: format!("Question {}", next),
+            });
+        }
     }
 
     for task_id in build_writing_task_ids(config_snapshot, content_snapshot) {
-        module_by_target
-            .entry((AnswerHistoryTargetType::Writing, task_id))
-            .or_insert_with(|| "writing".to_string());
+        let key = (AnswerHistoryTargetType::Writing, task_id.clone());
+        if !seen.insert(key) {
+            continue;
+        }
+        writing_count += 1;
+        entries.push(TargetCatalogEntry {
+            module: "writing".to_string(),
+            target_id: task_id,
+            target_type: AnswerHistoryTargetType::Writing,
+            label: format!("Task {}", writing_count),
+        });
     }
 
-    let mut entries = module_by_target
-        .into_iter()
-        .map(|((target_type, target_id), module)| TargetCatalogEntry {
-            module,
-            target_id,
-            target_type,
-        })
-        .collect::<Vec<_>>();
-    entries.sort_by(|left, right| {
-        left.target_id
-            .cmp(&right.target_id)
-            .then(target_type_rank(&left.target_type).cmp(&target_type_rank(&right.target_type)))
-    });
     entries
 }
 
@@ -968,6 +1026,20 @@ fn build_target_catalog_index(entries: &[TargetCatalogEntry]) -> TargetCatalogIn
         writing_ids,
         objective_slot_targets,
     }
+}
+
+fn build_target_catalog_lookup(
+    entries: &[TargetCatalogEntry],
+) -> HashMap<(AnswerHistoryTargetType, String), TargetCatalogEntry> {
+    entries
+        .iter()
+        .map(|entry| {
+            (
+                (entry.target_type.clone(), entry.target_id.clone()),
+                entry.clone(),
+            )
+        })
+        .collect::<HashMap<_, _>>()
 }
 
 fn resolve_objective_target_id(
@@ -1033,8 +1105,9 @@ fn extract_payload_usize(payload: &Value, keys: &[&str]) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
-fn build_writing_task_ids(config_snapshot: &Value, content_snapshot: &Value) -> HashSet<String> {
-    let mut ids = HashSet::new();
+fn build_writing_task_ids(config_snapshot: &Value, content_snapshot: &Value) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
     if let Some(tasks) = config_snapshot
         .get("sections")
         .and_then(|sections| sections.get("writing"))
@@ -1043,7 +1116,10 @@ fn build_writing_task_ids(config_snapshot: &Value, content_snapshot: &Value) -> 
     {
         for task in tasks {
             if let Some(id) = task.get("id").and_then(Value::as_str) {
-                ids.insert(id.to_owned());
+                let value = id.to_owned();
+                if seen.insert(value.clone()) {
+                    ids.push(value);
+                }
             }
         }
     }
@@ -1054,77 +1130,106 @@ fn build_writing_task_ids(config_snapshot: &Value, content_snapshot: &Value) -> 
     {
         for task in tasks {
             if let Some(id) = task.get("id").and_then(Value::as_str) {
-                ids.insert(id.to_owned());
+                let value = id.to_owned();
+                if seen.insert(value.clone()) {
+                    ids.push(value);
+                }
             }
         }
     }
     ids
 }
 
-fn build_objective_target_sections(content_snapshot: &Value) -> HashMap<String, String> {
-    let mut sections = HashMap::new();
-
-    if let Some(passages) = content_snapshot
-        .get("reading")
-        .and_then(|reading| reading.get("passages"))
-        .and_then(Value::as_array)
-    {
-        for passage in passages {
-            if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
-                for block in blocks {
-                    index_objective_block_sections(block, "reading", &mut sections);
-                }
-            }
+fn build_objective_module_order(config_snapshot: &Value) -> Vec<String> {
+    let mut enabled = Vec::<(String, i64)>::new();
+    for section_key in ["listening", "reading"] {
+        let section_config = config_snapshot
+            .get("sections")
+            .and_then(|sections| sections.get(section_key));
+        let is_enabled = section_config
+            .and_then(|section| section.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        if !is_enabled {
+            continue;
         }
+        let order = section_config
+            .and_then(|section| section.get("order"))
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        enabled.push((section_key.to_string(), order));
     }
 
-    if let Some(parts) = content_snapshot
-        .get("listening")
-        .and_then(|listening| listening.get("parts"))
-        .and_then(Value::as_array)
-    {
-        for part in parts {
-            if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
-                for block in blocks {
-                    index_objective_block_sections(block, "listening", &mut sections);
-                }
-            }
+    enabled.sort_by(|left, right| left.1.cmp(&right.1).then(left.0.cmp(&right.0)));
+    let mut ordered = enabled.into_iter().map(|(section, _)| section).collect::<Vec<_>>();
+
+    for fallback in ["listening", "reading"] {
+        if !ordered.iter().any(|section| section == fallback) {
+            ordered.push(fallback.to_string());
         }
     }
-
-    if let Some(questions) = content_snapshot
-        .get("reading")
-        .and_then(|reading| reading.get("questions"))
-        .and_then(Value::as_array)
-    {
-        for question in questions {
-            if let Some(id) = question.get("id").and_then(Value::as_str) {
-                register_answer_section(&mut sections, id, "reading");
-            }
-        }
-    }
-
-    if let Some(questions) = content_snapshot
-        .get("listening")
-        .and_then(|listening| listening.get("questions"))
-        .and_then(Value::as_array)
-    {
-        for question in questions {
-            if let Some(id) = question.get("id").and_then(Value::as_str) {
-                register_answer_section(&mut sections, id, "listening");
-            }
-        }
-    }
-
-    sections
+    ordered
 }
 
-fn index_objective_block_sections(
+fn build_objective_targets_for_section(content_snapshot: &Value, section_key: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    let mut seen = HashSet::<String>::new();
+
+    match section_key {
+        "reading" => {
+            if let Some(passages) = content_snapshot
+                .get("reading")
+                .and_then(|reading| reading.get("passages"))
+                .and_then(Value::as_array)
+            {
+                for passage in passages {
+                    if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
+                        for block in blocks {
+                            index_objective_block_targets(block, &mut targets, &mut seen);
+                        }
+                    }
+                }
+            }
+        }
+        "listening" => {
+            if let Some(parts) = content_snapshot
+                .get("listening")
+                .and_then(|listening| listening.get("parts"))
+                .and_then(Value::as_array)
+            {
+                for part in parts {
+                    if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
+                        for block in blocks {
+                            index_objective_block_targets(block, &mut targets, &mut seen);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    if let Some(questions) = content_snapshot
+        .get(section_key)
+        .and_then(|section| section.get("questions"))
+        .and_then(Value::as_array)
+    {
+        for question in questions {
+            if let Some(id) = question.get("id").and_then(Value::as_str) {
+                register_target_id(&mut targets, &mut seen, id);
+            }
+        }
+    }
+
+    targets
+}
+
+fn index_objective_block_targets(
     block: &Value,
-    section_key: &str,
-    sections: &mut HashMap<String, String>,
+    targets: &mut Vec<String>,
+    seen: &mut HashSet<String>,
 ) {
-    if register_sub_answer_tree_sections(block, section_key, sections) {
+    if register_sub_answer_tree_targets(block, targets, seen) {
         return;
     }
 
@@ -1135,7 +1240,7 @@ fn index_objective_block_sections(
 
     match block_type {
         "TFNG" | "CLOZE" | "MATCHING" | "MAP" | "SHORT_ANSWER" => {
-            register_question_array_sections(block, section_key, sections);
+            register_question_array_targets(block, targets, seen);
         }
         "SENTENCE_COMPLETION" | "NOTE_COMPLETION" => {
             if let Some(questions) = block.get("questions").and_then(Value::as_array) {
@@ -1143,14 +1248,14 @@ fn index_objective_block_sections(
                     let Some(question_id) = question.get("id").and_then(Value::as_str) else {
                         continue;
                     };
-                    register_answer_section(sections, question_id, section_key);
+                    register_target_id(targets, seen, question_id);
                     if let Some(blanks) = question.get("blanks").and_then(Value::as_array) {
                         for blank in blanks {
                             if let Some(blank_id) = blank.get("id").and_then(Value::as_str) {
-                                register_answer_section(
-                                    sections,
+                                register_target_id(
+                                    targets,
+                                    seen,
                                     &format!("{question_id}:{blank_id}"),
-                                    section_key,
                                 );
                             }
                         }
@@ -1160,32 +1265,32 @@ fn index_objective_block_sections(
         }
         "MULTI_MCQ" | "SINGLE_MCQ" => {
             if let Some(block_id) = block_id {
-                register_answer_section(sections, block_id, section_key);
+                register_target_id(targets, seen, block_id);
             }
         }
         "DIAGRAM_LABELING" => {
-            register_block_slot_sections(block, block_id, "labels", section_key, sections);
+            register_block_slot_targets(block, block_id, "labels", targets, seen);
         }
         "FLOW_CHART" => {
-            register_block_slot_sections(block, block_id, "steps", section_key, sections);
+            register_block_slot_targets(block, block_id, "steps", targets, seen);
         }
         "TABLE_COMPLETION" => {
-            register_block_slot_sections(block, block_id, "cells", section_key, sections);
+            register_block_slot_targets(block, block_id, "cells", targets, seen);
         }
         "CLASSIFICATION" => {
-            register_block_slot_sections(block, block_id, "items", section_key, sections);
+            register_block_slot_targets(block, block_id, "items", targets, seen);
         }
         "MATCHING_FEATURES" => {
-            register_block_slot_sections(block, block_id, "features", section_key, sections);
+            register_block_slot_targets(block, block_id, "features", targets, seen);
         }
         _ => {}
     }
 }
 
-fn register_sub_answer_tree_sections(
+fn register_sub_answer_tree_targets(
     block: &Value,
-    section_key: &str,
-    sections: &mut HashMap<String, String>,
+    targets: &mut Vec<String>,
+    seen: &mut HashSet<String>,
 ) -> bool {
     let enabled = block
         .get("subAnswerModeEnabled")
@@ -1215,10 +1320,10 @@ fn register_sub_answer_tree_sections(
             let is_leaf = children.map(|items| items.is_empty()).unwrap_or(true);
             if is_leaf {
                 if let Some(node_id) = node.get("id").and_then(Value::as_str) {
-                    register_answer_section(
-                        sections,
+                    register_target_id(
+                        targets,
+                        seen,
                         &format!("{block_id}::tree::{root_id}::{node_id}"),
-                        section_key,
                     );
                 }
                 continue;
@@ -1234,46 +1339,43 @@ fn register_sub_answer_tree_sections(
     true
 }
 
-fn register_question_array_sections(
+fn register_question_array_targets(
     block: &Value,
-    section_key: &str,
-    sections: &mut HashMap<String, String>,
+    targets: &mut Vec<String>,
+    seen: &mut HashSet<String>,
 ) {
     if let Some(questions) = block.get("questions").and_then(Value::as_array) {
         for question in questions {
             if let Some(question_id) = question.get("id").and_then(Value::as_str) {
-                register_answer_section(sections, question_id, section_key);
+                register_target_id(targets, seen, question_id);
             }
         }
     }
 }
 
-fn register_block_slot_sections(
+fn register_block_slot_targets(
     block: &Value,
     block_id: Option<&str>,
     slot_key: &str,
-    section_key: &str,
-    sections: &mut HashMap<String, String>,
+    targets: &mut Vec<String>,
+    seen: &mut HashSet<String>,
 ) {
     let Some(block_id) = block_id else {
         return;
     };
-    register_answer_section(sections, block_id, section_key);
+    register_target_id(targets, seen, block_id);
     if let Some(slots) = block.get(slot_key).and_then(Value::as_array) {
         for slot in slots {
             if let Some(slot_id) = slot.get("id").and_then(Value::as_str) {
-                register_answer_section(sections, &format!("{block_id}:{slot_id}"), section_key);
+                register_target_id(targets, seen, &format!("{block_id}:{slot_id}"));
             }
         }
     }
 }
 
-fn register_answer_section(
-    sections: &mut HashMap<String, String>,
-    answer_key: &str,
-    section_key: &str,
-) {
-    sections
-        .entry(answer_key.to_owned())
-        .or_insert_with(|| section_key.to_owned());
+fn register_target_id(targets: &mut Vec<String>, seen: &mut HashSet<String>, target_id: &str) {
+    let target = target_id.to_owned();
+    if seen.insert(target.clone()) {
+        targets.push(target);
+    }
 }
