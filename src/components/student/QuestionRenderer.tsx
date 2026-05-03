@@ -94,6 +94,8 @@ export function QuestionRenderer({
   const isCompactPane = tabletMode && compactPane;
   const fieldIndentClass = tabletMode ? 'ml-0' : 'ml-9';
   const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
+  const inlineAnswerInputClass =
+    'min-w-[8rem] w-fit max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
 
   const getSlotId = (index: number, fallback: string) => slotIds[index] ?? fallback;
   const getSlotClassName = (slotId: string) => {
@@ -494,7 +496,7 @@ export function QuestionRenderer({
                     name={getSlotId(index, `${q.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
+                    className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-0' : ''} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -536,7 +538,7 @@ export function QuestionRenderer({
                     name={getSlotId(index, `${noteQuestion.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
+                    className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-0' : ''} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
@@ -673,7 +675,7 @@ export function QuestionRenderer({
                       className="border border-gray-200 px-3 py-2 align-middle"
                     >
                       {useInlineBlanks ? (
-                        <div className={`text-gray-800 ${isCompactPane ? 'space-y-2' : 'flex items-center justify-between gap-3'}`}>
+                        <div className={`text-gray-800 ${isCompactPane ? 'space-y-2' : 'flex flex-wrap items-center justify-between gap-3'}`}>
                           <div className={`${isCompactPane ? 'flex flex-wrap items-center gap-2' : 'flex flex-wrap items-center gap-2'}`}>
                             <FormattedText
                               as="span"
@@ -695,7 +697,7 @@ export function QuestionRenderer({
                                 onChange={(event) =>
                                   updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
                                 }
-                                className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-[9rem]' : 'w-36'}`}
+                                className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
                                 placeholder="Answer..."
                                 security={security}
                                 sessionId={sessionId}

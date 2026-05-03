@@ -581,6 +581,40 @@ describe('student question experience', () => {
     );
   });
 
+  it('uses responsive sizing classes for sentence-completion inline blanks', () => {
+    const question = {
+      id: 'sentence-1',
+      sentence: 'The library is open ____ and ____.',
+      blanks: [
+        { id: 'blank-1', correctAnswer: 'daily', position: 0 },
+        { id: 'blank-2', correctAnswer: 'late', position: 1 },
+      ],
+      answerRule: 'TWO_WORDS' as const,
+    };
+
+    const block: SentenceCompletionBlock = {
+      id: 'sentence-block-1',
+      type: 'SENTENCE_COMPLETION',
+      instruction: 'Complete the sentence.',
+      questions: [question],
+    };
+
+    render(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={7}
+        answer={['a very long answer value', '']}
+        onChange={() => {}}
+      />,
+    );
+
+    const firstInput = screen.getByRole('textbox', { name: 'Answer for question 7' });
+    expect(firstInput).toHaveClass('min-w-[8rem]');
+    expect(firstInput).toHaveClass('w-fit');
+    expect(firstInput).toHaveClass('max-w-full');
+  });
+
   it('renders table blanks inline and keeps row-major numbering stable', () => {
     const onChange = vi.fn();
     const block: TableCompletionBlock = {
@@ -623,6 +657,61 @@ describe('student question experience', () => {
         slotCount: 2,
       }),
     );
+  });
+
+  it('uses wrapping and responsive sizing classes for table inline blanks', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-inline-1',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      answerRule: 'ONE_WORD',
+      headers: ['Field', 'Value'],
+      rows: [['Name: ____', 'Country: ____']],
+      cells: [
+        { id: 'cell-country', row: 0, col: 1, correctAnswer: 'India' },
+        { id: 'cell-name', row: 0, col: 0, correctAnswer: 'Anu' },
+      ],
+    };
+
+    const { container } = render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={10}
+        answer={['very long inline answer value for test', 'india']}
+        onChange={() => {}}
+      />,
+    );
+
+    const firstInput = screen.getByRole('textbox', { name: 'Answer for question 10' });
+    expect(firstInput).toHaveClass('min-w-[8rem]');
+    expect(firstInput).toHaveClass('w-fit');
+    expect(firstInput).toHaveClass('max-w-full');
+    expect(container.querySelector('.flex.flex-wrap.items-center.justify-between.gap-3')).not.toBeNull();
+  });
+
+  it('uses responsive sizing classes for note-completion inline blanks', () => {
+    const noteQuestion = {
+      id: 'note-1',
+      noteText: 'Synaptic homeostasis: sleep may reduce ____ connections.',
+      blanks: [{ id: 'blank-1', correctAnswer: 'weaker', position: 0 }],
+      answerRule: 'NO_MORE_THAN_TWO_WORDS' as const,
+    } as any;
+
+    render(
+      <QuestionRenderer
+        question={noteQuestion}
+        block={{ id: 'note-block-1', type: 'NOTE_COMPLETION', instruction: 'Complete notes.' } as any}
+        number={37}
+        answer={['a long answer value']}
+        onChange={() => {}}
+      />,
+    );
+
+    const input = screen.getByRole('textbox', { name: 'Answer for question 37' });
+    expect(input).toHaveClass('min-w-[8rem]');
+    expect(input).toHaveClass('w-fit');
+    expect(input).toHaveClass('max-w-full');
   });
 
   it('renders diagram-labeling answers below a sticky diagram reference', () => {

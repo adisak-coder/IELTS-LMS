@@ -124,7 +124,7 @@ export function ExamPreviewRoute() {
 
   return (
     <>
-      <div className="fixed top-3 left-1/2 -translate-x-1/2 z-[120] rounded-md border border-gray-200 bg-white/95 shadow-sm px-3 py-1.5 backdrop-blur">
+      <div className="fixed top-20 right-3 md:right-4 lg:right-6 z-[120] rounded-md border border-gray-200 bg-white/95 shadow-sm px-3 py-1.5 backdrop-blur">
         <label className="text-xs font-semibold text-gray-700">
           Preview section
           <select
