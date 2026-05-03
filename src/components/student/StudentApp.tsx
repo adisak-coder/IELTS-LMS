@@ -110,23 +110,6 @@ function formatRuntimeTime(seconds: number) {
   return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
 }
 
-function isEditableInputTarget(target: EventTarget | null): target is HTMLElement {
-  if (!(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  const contentEditableAttr = target.getAttribute('contenteditable');
-  const hasExplicitContentEditable =
-    contentEditableAttr !== null && contentEditableAttr.toLowerCase() !== 'false';
-
-  return (
-    target.tagName === 'INPUT' ||
-    target.tagName === 'TEXTAREA' ||
-    target.isContentEditable ||
-    hasExplicitContentEditable
-  );
-}
-
 interface StudentAppProps {
   showSubmitControls?: boolean | undefined;
 }
@@ -168,9 +151,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
-  const latestAnswersRef = useRef(runtimeState.answers);
-  const liveObjectiveAnswersRef = useRef<Record<string, Parameters<typeof runtimeActions.setAnswer>[1]>>({});
-  const liveWritingAnswersRef = useRef<Record<string, string>>({});
   const viewportLockForExamSessionRef = useRef<boolean | null>(null);
   const lockedViewportHeightRef = useRef<number | null>(null);
   const moduleSubmitInFlightRef = useRef<Promise<void> | null>(null);
@@ -260,28 +240,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     liveObjectiveAnswersRef.current = runtimeState.answers;
     liveWritingAnswersRef.current = runtimeState.writingAnswers;
   }, [runtimeState]);
-
-  const reconcileLiveAnswerCacheNow = useCallback(() => {
-    const state = runtimeStateRef.current;
-    const objectiveLive = liveObjectiveAnswersRef.current;
-    const writingLive = liveWritingAnswersRef.current;
-
-    Object.entries(objectiveLive).forEach(([questionId, liveValue]) => {
-      const current = state.answers[questionId];
-      if (JSON.stringify(current) !== JSON.stringify(liveValue)) {
-        runtimeActions.setAnswer(questionId, liveValue);
-        attemptActions.persistAnswer(questionId, liveValue);
-      }
-    });
-
-    Object.entries(writingLive).forEach(([taskId, liveText]) => {
-      const current = state.writingAnswers[taskId] ?? '';
-      if (current !== liveText) {
-        runtimeActions.setWritingAnswer(taskId, liveText);
-        attemptActions.persistWritingAnswer(taskId, liveText);
-      }
-    });
-  }, [attemptActions, runtimeActions]);
 
   useEffect(() => {
     if (effectivePhase !== 'exam') {
@@ -548,23 +506,15 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
 
     const root = document.documentElement;
     const body = document.body;
-    let editableFocused = isEditableInputTarget(document.activeElement);
-    let stableViewportHeight = Math.round(window.visualViewport?.height ?? window.innerHeight);
-    let pinchLockActive = false;
+    const tabletViewportSessionLocked = viewportLockForExamSessionRef.current === true;
+    let stableViewportHeight =
+      tabletViewportSessionLocked && lockedViewportHeightRef.current !== null
+        ? lockedViewportHeightRef.current
+        : Math.round(window.visualViewport?.height ?? window.innerHeight);
     let pinchGestureActive = false;
-    let layoutRebasePending = false;
 
     const applyViewportHeight = (height: number) => {
       root.style.setProperty('--student-viewport-height', `${Math.max(0, Math.round(height))}px`);
-    };
-
-    const requestLayoutRebase = () => {
-      if (!tabletMode) {
-        updateViewportHeight();
-        return;
-      }
-      layoutRebasePending = true;
-      updateViewportHeight();
     };
 
     const updateViewportHeight = () => {
@@ -576,52 +526,46 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
           : 1;
       const isPinchZooming = nextViewportScale > 1.01;
 
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         applyViewportHeight(nextViewportHeight);
         return;
       }
 
-      if (pinchGestureActive || isPinchZooming) {
-        pinchLockActive = true;
+      if (lockedViewportHeightRef.current === null) {
+        lockedViewportHeightRef.current = stableViewportHeight;
+      } else {
+        stableViewportHeight = lockedViewportHeightRef.current;
       }
 
-      if (layoutRebasePending) {
-        stableViewportHeight = nextViewportHeight;
-        pinchLockActive = false;
-        pinchGestureActive = false;
-        layoutRebasePending = false;
-      } else if (!editableFocused && !pinchLockActive) {
-        stableViewportHeight = nextViewportHeight;
+      if (pinchGestureActive || isPinchZooming) {
       }
 
       applyViewportHeight(stableViewportHeight);
     };
 
     const handleTouchStart = (event: TouchEvent) => {
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         return;
       }
 
       if (event.touches.length >= 2) {
         pinchGestureActive = true;
-        pinchLockActive = true;
         updateViewportHeight();
       }
     };
 
     const handleTouchMove = (event: TouchEvent) => {
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         return;
       }
 
       if (event.touches.length >= 2) {
         pinchGestureActive = true;
-        pinchLockActive = true;
       }
     };
 
     const handleTouchEnd = (event: TouchEvent) => {
-      if (!tabletMode) {
+      if (!tabletViewportSessionLocked) {
         return;
       }
 
@@ -629,48 +573,17 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       updateViewportHeight();
     };
 
-    const handleFocusIn = (event: FocusEvent) => {
-      if (!tabletMode) {
-        return;
-      }
-
-      if (isEditableInputTarget(event.target)) {
-        editableFocused = true;
-      }
-    };
-
-    const handleFocusOut = (event: FocusEvent) => {
-      if (!tabletMode) {
-        return;
-      }
-
-      if (!isEditableInputTarget(event.target)) {
-        return;
-      }
-
-      editableFocused = isEditableInputTarget(event.relatedTarget);
-      updateViewportHeight();
-    };
-
     const handleWindowResize = () => {
       updateViewportHeight();
-    };
-
-    const handleOrientationChange = () => {
-      requestLayoutRebase();
     };
 
     updateViewportHeight();
     root.classList.add('student-exam-active');
     body.classList.add('student-exam-active');
     window.addEventListener('resize', handleWindowResize);
-    window.addEventListener('orientationchange', handleOrientationChange);
+    window.addEventListener('orientationchange', handleWindowResize);
     window.visualViewport?.addEventListener('resize', updateViewportHeight);
     window.visualViewport?.addEventListener('scroll', updateViewportHeight);
-    document.addEventListener('focus', handleFocusIn, true);
-    document.addEventListener('blur', handleFocusOut, true);
-    document.addEventListener('focusin', handleFocusIn);
-    document.addEventListener('focusout', handleFocusOut);
     document.addEventListener('touchstart', handleTouchStart, true);
     document.addEventListener('touchmove', handleTouchMove, true);
     document.addEventListener('touchend', handleTouchEnd, true);
@@ -684,13 +597,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       body.classList.remove('student-exam-active');
       root.style.removeProperty('--student-viewport-height');
       window.removeEventListener('resize', handleWindowResize);
-      window.removeEventListener('orientationchange', handleOrientationChange);
+      window.removeEventListener('orientationchange', handleWindowResize);
       window.visualViewport?.removeEventListener('resize', updateViewportHeight);
       window.visualViewport?.removeEventListener('scroll', updateViewportHeight);
-      document.removeEventListener('focus', handleFocusIn, true);
-      document.removeEventListener('blur', handleFocusOut, true);
-      document.removeEventListener('focusin', handleFocusIn);
-      document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('touchstart', handleTouchStart, true);
       document.removeEventListener('touchmove', handleTouchMove, true);
       document.removeEventListener('touchend', handleTouchEnd, true);
