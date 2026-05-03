@@ -1,4 +1,4 @@
-import React, { useEffect, type ReactNode } from 'react';
+import React, { useEffect, useRef, type ReactNode } from 'react';
 import { useProctoring } from './StudentProctoringProvider';
 import { useStudentAttempt } from './StudentAttemptProvider';
 import { useStudentRuntime } from './StudentRuntimeProvider';
@@ -47,6 +47,23 @@ function isEditingTarget(target: EventTarget | null) {
   );
 }
 
+function isIpadSafari(userAgent: string): boolean {
+  const normalized = userAgent.toLowerCase();
+  const isIpad = normalized.includes('ipad');
+  const isSafari = normalized.includes('safari');
+  const hasAlternateEngine = normalized.includes('crios') || normalized.includes('fxios') || normalized.includes('edgios');
+  return isIpad && isSafari && !hasAlternateEngine;
+}
+
+function isScreenshotShortcut(event: KeyboardEvent): boolean {
+  if (event.key === 'PrintScreen') {
+    return true;
+  }
+
+  const normalizedKey = event.key.toLowerCase();
+  return Boolean(event.metaKey && event.shiftKey && ['3', '4', '5'].includes(normalizedKey));
+}
+
 export function KeyboardProvider({ children }: KeyboardProviderProps) {
   const { state: runtimeState, actions: runtimeActions, examState } = useStudentRuntime();
   const { state: attemptState, actions: attemptActions } = useStudentAttempt();
@@ -56,8 +73,32 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
   const sessionId = attemptState.attempt?.scheduleId;
   const studentId = attemptState.attemptId ?? undefined;
   const shouldBlockClipboard = examState.config.security.blockClipboard !== false;
+  const shouldEnableAntiScreenshotGuard = examState.config.security.antiScreenshotGuardEnabled !== false;
+  const screenshotUnsupportedLoggedRef = useRef(false);
 
   useEffect(() => {
+    const screenshotShortcutCooldownMs = 2_000;
+    let lastScreenshotShortcutAt = 0;
+
+    if (
+      shouldEnableAntiScreenshotGuard &&
+      runtimeState.phase === 'exam' &&
+      isIpadSafari(navigator.userAgent) &&
+      !screenshotUnsupportedLoggedRef.current
+    ) {
+      screenshotUnsupportedLoggedRef.current = true;
+      void saveStudentAuditEvent(
+        sessionId,
+        'SCREENSHOT_DETECTION_UNSUPPORTED',
+        {
+          platform: 'iPad Safari',
+          userAgent: navigator.userAgent,
+          reason: 'Hardware button screenshots are not detectable by browser JavaScript.',
+        },
+        studentId,
+      );
+    }
+
     const handleRestrictedInteraction = (
       event: Event,
       type: string,
@@ -81,6 +122,24 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
       const target = event.target;
       const editingTarget = isEditingTarget(target);
       const normalizedKey = event.key.toLowerCase();
+
+      if (shouldEnableAntiScreenshotGuard && isScreenshotShortcut(event)) {
+        const now = Date.now();
+        event.preventDefault();
+        event.stopPropagation();
+
+        if (now - lastScreenshotShortcutAt < screenshotShortcutCooldownMs) {
+          return;
+        }
+        lastScreenshotShortcutAt = now;
+
+        handleViolation(
+          'SCREENSHOT_ATTEMPT',
+          'Screenshot attempt detected. The exam screen has been hidden. Acknowledge to continue.',
+          'high',
+        );
+        return;
+      }
 
       if (event.key === 'F12') {
         handleRestrictedInteraction(
@@ -299,6 +358,7 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
     attemptActions,
     attemptState.attempt?.scheduleId,
     attemptState.attemptId,
+    examState.config.security.antiScreenshotGuardEnabled,
     examState.config.security.blockClipboard,
     handleViolation,
     runtimeActions,

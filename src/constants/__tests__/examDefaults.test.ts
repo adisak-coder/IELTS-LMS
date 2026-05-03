@@ -12,6 +12,7 @@ describe('examDefaults standards', () => {
     const config = createDefaultConfig('Academic', 'Academic');
 
     expect(config.security.blockClipboard).toBe(true);
+    expect(config.security.antiScreenshotGuardEnabled).toBe(true);
     expect(config.standards.passageWordCount).toEqual({
       optimalMin: 700,
       optimalMax: 1000,
@@ -137,5 +138,15 @@ describe('examDefaults standards', () => {
     expect(config.delivery.allowedExtensionMinutes).toEqual([]);
     expect(config.standards.writingTasks.task1).toEqual({ minWords: 150, recommendedTime: 20 });
     expect(config.standards.writingTasks.task2).toEqual({ minWords: 250, recommendedTime: 40 });
+  });
+
+  it('normalizes anti-screenshot guard to enabled when missing from legacy config', () => {
+    const config = normalizeExamConfig({
+      security: {
+        antiScreenshotGuardEnabled: undefined,
+      },
+    });
+
+    expect(config.security.antiScreenshotGuardEnabled).toBe(true);
   });
 });

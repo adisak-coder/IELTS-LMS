@@ -378,6 +378,7 @@ const buildDefaultConfig = (
       tabSwitchRule: 'warn',
       detectSecondaryScreen: true,
       blockClipboard: true,
+      antiScreenshotGuardEnabled: true,
       preventAutofill: true,
       preventAutocorrect: true,
       preventTranslation: true,
@@ -522,6 +523,8 @@ export const normalizeExamConfig = (config?: DeepPartial<ExamConfig>): ExamConfi
     security: {
       ...base.security,
       ...config.security,
+      antiScreenshotGuardEnabled:
+        config.security?.antiScreenshotGuardEnabled ?? base.security.antiScreenshotGuardEnabled,
       proctoringFlags: {
         ...base.security.proctoringFlags,
         ...config.security?.proctoringFlags

@@ -97,6 +97,7 @@ const mockConfig: ExamConfig = {
     tabSwitchRule: 'warn',
     detectSecondaryScreen: true,
     blockClipboard: true,
+    antiScreenshotGuardEnabled: true,
     preventAutofill: true,
     preventAutocorrect: true,
     preventTranslation: true,

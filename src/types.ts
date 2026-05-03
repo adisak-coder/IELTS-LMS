@@ -595,6 +595,7 @@ export interface ExamConfig {
     tabSwitchRule: 'none' | 'warn' | 'terminate';
     detectSecondaryScreen: boolean;
     blockClipboard: boolean;
+    antiScreenshotGuardEnabled: boolean;
     preventAutofill: boolean;
     preventAutocorrect: boolean;
     preventTranslation: boolean;

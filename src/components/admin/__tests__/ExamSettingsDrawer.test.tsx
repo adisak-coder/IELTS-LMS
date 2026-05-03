@@ -106,6 +106,28 @@ describe('ExamSettingsDrawer standards tab', () => {
   });
 });
 
+describe('ExamSettingsDrawer security tab', () => {
+  it('allows toggling anti-screenshot guard', () => {
+    const config = createDefaultConfig('Academic', 'Academic');
+    const onChange = vi.fn();
+
+    render(
+      <ExamSettingsDrawer
+        isOpen
+        onClose={() => {}}
+        config={config}
+        onChange={onChange}
+      />
+    );
+
+    fireEvent.click(screen.getByText('Security'));
+    fireEvent.click(screen.getByLabelText(/anti-screenshot guard/i));
+
+    const nextConfig = onChange.mock.calls.at(-1)?.[0];
+    expect(nextConfig.security.antiScreenshotGuardEnabled).toBe(false);
+  });
+});
+
 describe('ExamSettingsDrawer publish tab', () => {
   it('merges readiness and actions into one release status section', () => {
     const config = createDefaultConfig('Academic', 'Academic');

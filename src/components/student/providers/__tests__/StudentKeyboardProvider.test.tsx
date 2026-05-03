@@ -298,4 +298,62 @@ describe('StudentKeyboardProvider', () => {
     expect(event.defaultPrevented).toBe(false);
     expect(harness.runtime.state.violations).toHaveLength(0);
   });
+
+  it('records a screenshot-attempt violation for PrintScreen', () => {
+    const harness = renderHarness();
+    const event = new KeyboardEvent('keydown', {
+      key: 'PrintScreen',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(harness.runtime.state.violations.at(-1)?.type).toBe('SCREENSHOT_ATTEMPT');
+  });
+
+  it('deduplicates rapid screenshot shortcut bursts', () => {
+    const harness = renderHarness();
+    const first = new KeyboardEvent('keydown', {
+      key: 'PrintScreen',
+      bubbles: true,
+      cancelable: true,
+    });
+    const second = new KeyboardEvent('keydown', {
+      key: 'PrintScreen',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      document.dispatchEvent(first);
+      document.dispatchEvent(second);
+    });
+
+    const screenshotViolations = harness.runtime.state.violations.filter(
+      (violation) => violation.type === 'SCREENSHOT_ATTEMPT',
+    );
+    expect(screenshotViolations).toHaveLength(1);
+  });
+
+  it('does not enforce screenshot blocking when anti-screenshot guard is disabled', () => {
+    const harness = renderHarness((state) => {
+      state.config.security.antiScreenshotGuardEnabled = false;
+    });
+    const event = new KeyboardEvent('keydown', {
+      key: 'PrintScreen',
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.runtime.state.violations).toHaveLength(0);
+  });
 });

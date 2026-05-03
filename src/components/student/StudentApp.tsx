@@ -196,6 +196,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     useState<string | null>(null);
   const [lastAcknowledgedTranslationViolationId, setLastAcknowledgedTranslationViolationId] =
     useState<string | null>(null);
+  const [lastAcknowledgedScreenshotViolationId, setLastAcknowledgedScreenshotViolationId] =
+    useState<string | null>(null);
   const [fullscreenWarningOpen, setFullscreenWarningOpen] = useState(false);
   const [fullscreenWarningMessage, setFullscreenWarningMessage] = useState(
     'Fullscreen mode is required. Please return to fullscreen to continue.',
@@ -385,6 +387,25 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     Boolean(latestSecondaryScreenViolation) &&
     latestSecondaryScreenViolation?.id !== lastAcknowledgedSecondaryScreenViolationId &&
     !fullscreenWarningOpen;
+
+  const latestScreenshotViolation = useMemo(() => {
+    if (effectivePhase !== 'exam') {
+      return null;
+    }
+
+    if (examState.config.security.antiScreenshotGuardEnabled === false) {
+      return null;
+    }
+
+    const violations = runtimeState.violations.filter(
+      (violation) => violation.type === 'SCREENSHOT_ATTEMPT',
+    );
+    return violations[violations.length - 1] ?? null;
+  }, [effectivePhase, examState.config.security.antiScreenshotGuardEnabled, runtimeState.violations]);
+
+  const shouldShowScreenshotWarning =
+    Boolean(latestScreenshotViolation) &&
+    latestScreenshotViolation?.id !== lastAcknowledgedScreenshotViolationId;
 
   const latestTranslationViolation = useMemo(() => {
     if (effectivePhase !== 'exam') {
@@ -1227,6 +1248,24 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
               void attemptActions.acknowledgeProctorWarning(latestPendingWarning.id);
             }
             setWarningOpen(false);
+          }}
+        />
+      ) : null}
+
+      {shouldShowScreenshotWarning ? (
+        <WarningOverlay
+          isOpen
+          severity="high"
+          appearance="blackout"
+          message={
+            latestScreenshotViolation?.description ??
+            'Screenshot attempt detected. The exam screen has been hidden. Acknowledge to continue.'
+          }
+          showCountdown={false}
+          onAcknowledge={() => {
+            if (latestScreenshotViolation) {
+              setLastAcknowledgedScreenshotViolationId(latestScreenshotViolation.id);
+            }
           }}
         />
       ) : null}

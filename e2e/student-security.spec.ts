@@ -172,4 +172,45 @@ test.describe('Student security guardrails (LRW)', () => {
 
     await context.close();
   });
+
+  test('shows screenshot blackout overlay and records screenshot-attempt violation', async ({ browser }, testInfo) => {
+    const manifest = readBackendE2EManifest();
+    const wcode = deterministicWcode(`${testInfo.project.name}:${testInfo.title}`);
+
+    const context = await browser.newContext();
+    await stubScreenDetails(context);
+    const page = await context.newPage();
+
+    await enterRuntimeBackedExam(page, manifest.student.scheduleId, wcode);
+    await page.waitForTimeout(1_500);
+
+    await page.evaluate(() => {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'PrintScreen',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+
+    const screenshotOverlay = page.getByText(/screen capture blocked/i);
+    await expect(screenshotOverlay).toBeVisible({ timeout: 10_000 });
+    await page.getByRole('button', { name: /continue exam/i }).click();
+    await expect(screenshotOverlay).toBeHidden({ timeout: 10_000 });
+
+    await expect
+      .poll(
+        () =>
+          hasViolation(
+            page,
+            manifest.student.scheduleId,
+            'SCREENSHOT_ATTEMPT',
+          ),
+        { timeout: 12_000 },
+      )
+      .toBe(true);
+
+    await context.close();
+  });
 });

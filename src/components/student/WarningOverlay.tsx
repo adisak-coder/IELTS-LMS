@@ -8,6 +8,7 @@ interface WarningOverlayProps {
   severity: 'medium' | 'high' | 'critical';
   message: string;
   onAcknowledge: () => void;
+  appearance?: 'default' | 'blackout';
   actionButton?: {
     label: string;
     onClick: () => void;
@@ -15,7 +16,15 @@ interface WarningOverlayProps {
   showCountdown?: boolean;
 }
 
-export function WarningOverlay({ isOpen, severity, message, onAcknowledge, actionButton, showCountdown = true }: WarningOverlayProps) {
+export function WarningOverlay({
+  isOpen,
+  severity,
+  message,
+  onAcknowledge,
+  appearance = 'default',
+  actionButton,
+  showCountdown = true,
+}: WarningOverlayProps) {
   const [countdown, setCountdown] = useState(30);
 
   useEffect(() => {
@@ -60,6 +69,26 @@ export function WarningOverlay({ isOpen, severity, message, onAcknowledge, actio
   const config = severityConfig[severity];
 
   if (!isOpen) return null;
+
+  if (appearance === 'blackout') {
+    return (
+      <div className="fixed inset-0 z-[220] bg-black flex items-center justify-center p-6" role="dialog" aria-modal="true">
+        <div className="w-full max-w-xl rounded-2xl border border-white/20 bg-black/80 px-8 py-10 text-center shadow-2xl">
+          <p className="text-xs font-bold uppercase tracking-[0.3em] text-white/70 mb-4">Security Hold</p>
+          <h2 className="text-3xl font-black text-white mb-6">Screen Capture Blocked</h2>
+          <p className="text-base leading-relaxed text-white/90 mb-8">{message}</p>
+          <Button
+            variant="primary"
+            size="lg"
+            className="h-14 px-10 text-base font-bold uppercase tracking-[0.2em]"
+            onClick={onAcknowledge}
+          >
+            Continue Exam
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">

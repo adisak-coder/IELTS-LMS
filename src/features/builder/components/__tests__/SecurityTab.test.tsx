@@ -13,6 +13,7 @@ describe('SecurityTab', () => {
 
     expect(screen.getByText(/fullscreen warning/i)).toBeInTheDocument();
     expect(screen.getByText(/translation warning/i)).toBeInTheDocument();
+    expect(screen.getByText(/anti-screenshot guard/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText(/fullscreen warning/i));
     expect(onChange).toHaveBeenCalledWith(
@@ -25,6 +26,13 @@ describe('SecurityTab', () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         security: expect.objectContaining({ preventTranslation: false }),
+      }),
+    );
+
+    fireEvent.click(screen.getByLabelText(/anti-screenshot guard/i));
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        security: expect.objectContaining({ antiScreenshotGuardEnabled: false }),
       }),
     );
   });

@@ -1348,6 +1348,19 @@ function ExamSettingsDrawerComponent({
                   <Lock size={16} className="text-blue-500" /> Input Field Protection
                 </h3>
                 <div className="bg-white border border-gray-100 rounded-xl overflow-hidden shadow-sm">
+                  <label className="p-4 border-b border-gray-50 flex items-center justify-between cursor-pointer">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">Anti-screenshot guard (best effort)</p>
+                      <p className="text-[10px] text-gray-500">Detect screenshot shortcuts and temporarily black out exam content</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      aria-label="Anti-screenshot guard"
+                      checked={config.security.antiScreenshotGuardEnabled !== false}
+                      onChange={(e) => updateConfig('security', { antiScreenshotGuardEnabled: e.target.checked })}
+                      className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    />
+                  </label>
                   <div className="p-4 border-b border-gray-50 flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold text-gray-900">Prevent Autofill</p>
