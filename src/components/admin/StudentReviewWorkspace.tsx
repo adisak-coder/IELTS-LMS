@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   ArrowLeft, Save, CheckCircle, Clock, FileText,
-  MessageSquare, BookOpen, ChevronLeft, ChevronRight, Eye, Calendar,
+  MessageSquare, ChevronLeft, ChevronRight, Eye, Calendar,
   CheckSquare, AlertTriangle, Printer
 } from 'lucide-react';
 import { 
@@ -20,13 +20,6 @@ import { StudentReportPreview } from './StudentReportPreview';
 import { QuestionTracebackPanel } from './QuestionTracebackPanel';
 import { logger } from '../../utils/logger';
 import { SectionLoadingSkeleton } from '@components/ui';
-import {
-  extractObjectiveAnswerMap,
-  getCorrectAnswerDisplay,
-  getQuestionPrompt,
-  getStudentAnswerDisplay,
-  isStudentAnswerCorrect,
-} from './gradingAnswerUtils';
 import { htmlToPlainText } from '../../utils/htmlText';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
@@ -156,20 +149,41 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
         return;
       }
 
+      if (seq !== submissionLoadSeq.current) return;
+
       setSubmission(subData);
       setLoading(false);
 
-      setSectionsLoading(true);
-      try {
-        const sectionsData = await gradingRepository.getSectionSubmissionsBySubmissionId(submissionId);
+      // Load or create review draft
+      const existingDraft = await gradingRepository.getReviewDraftBySubmission(submissionId);
+      if (seq !== submissionLoadSeq.current) return;
+
+      if (existingDraft) {
+        setReviewDraft(existingDraft);
+      } else if (
+        subData &&
+        ['submitted', 'in_progress', 'reopened'].includes(subData.gradingStatus)
+      ) {
+        const result = await gradingService.startReview(submissionId, currentTeacherId, currentTeacherName);
         if (seq !== submissionLoadSeq.current) return;
-        setSectionSubmissions(sectionsData);
-      } catch (error) {
-        if (seq !== submissionLoadSeq.current) return;
-        setSectionsError(error instanceof Error ? error.message : 'Failed to load section answers.');
-      } finally {
-        if (seq === submissionLoadSeq.current) {
-          setSectionsLoading(false);
+        if (result.success && result.data) {
+          // Initialize with default checklist
+          const initializedDraft = {
+            ...result.data,
+            releaseStatus: 'draft' as ReleaseStatus,
+            drawings: [],
+            checklist: {
+              listeningReviewed: false,
+              readingReviewed: false,
+              writingTask1Reviewed: false,
+              writingTask2Reviewed: false,
+              speakingReviewed: false,
+              overallFeedbackWritten: false,
+              rubricComplete: false,
+              annotationsComplete: false
+            }
+          };
+          setReviewDraft(initializedDraft);
         }
       }
 
@@ -224,8 +238,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
       }
     } catch (error) {
       if (seq !== submissionLoadSeq.current) return;
-      logger.error('Failed to load submission summary:', error);
-      setSummaryError(error instanceof Error ? error.message : 'Failed to load submission summary.');
+      logger.error('Failed to load submission:', error);
     } finally {
       if (seq === submissionLoadSeq.current) {
         setLoading(false);
@@ -242,12 +255,6 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     setReviewDraft(null);
     setExamState(null);
     setExamError(null);
-    setSummaryError(null);
-    setSectionsLoading(false);
-    setSectionsError(null);
-    setWritingLoading(false);
-    setWritingError(null);
-    setDraftError(null);
     setActiveSection('reading');
     setActiveTask('task1');
     setSaving(false);
@@ -535,8 +542,8 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
 
   const currentSectionSubmission = getSectionSubmission(activeSection);
   const currentWritingTaskId = activeSection === 'writing' ? activeTask : null;
-  const currentWritingPrompt = currentWritingTaskId ? getWritingPrompt(currentWritingTaskId) : '';
-  const currentWritingText = currentWritingTaskId ? getWritingResponseText(currentWritingTaskId) : '';
+  const currentWritingPrompt = currentWritingTaskId ? htmlToPlainText(getWritingPrompt(currentWritingTaskId)) : '';
+  const currentWritingText = currentWritingTaskId ? htmlToPlainText(getWritingResponseText(currentWritingTaskId)) : '';
   const currentWritingTaskSubmission = currentWritingTaskId ? getWritingTaskSubmission(currentWritingTaskId) : null;
   const currentWritingAssessment = currentWritingTaskId
     ? (reviewDraft?.sectionDrafts as any)?.writing?.[currentWritingTaskId]
@@ -570,7 +577,8 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
 
     return (['task1', 'task2'] as const).map((slot) => {
       const taskIdForPrompt = promptTaskIdsBySlot.get(slot) ?? slot;
-      const text = getWritingResponseText(taskIdForPrompt);
+      const rawText = getWritingResponseText(taskIdForPrompt);
+      const text = htmlToPlainText(rawText);
       const taskSubmission = submissionTaskBySlot.get(slot);
 
       return {
@@ -643,7 +651,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     writingTasks.forEach((task) => {
       const slot = task.taskId === 'task2' ? 'task2' : 'task1';
       const rubric = (reviewDraft.sectionDrafts as any)?.writing?.[task.taskId];
-      const taskText = getWritingResponseText(task.taskId);
+      const taskText = htmlToPlainText(getWritingResponseText(task.taskId));
       results[slot] = {
         taskId: task.taskId,
         taskLabel: task.taskId === 'task1' ? 'Task 1' : 'Task 2',
@@ -674,45 +682,13 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     return results;
   }, [getWritingPrompt, getWritingResponseText, reviewDraft, writingTasks]);
 
-  if (loading) {
+  if (loading || !submission) {
     return (
       <div className="h-full bg-gray-50">
         <SectionLoadingSkeleton message="Loading review workspace..." />
       </div>
     );
   }
-
-  const currentSectionSubmission = getSectionSubmission(activeSection);
-  const objectiveAnswerMap = currentSectionSubmission
-    ? extractObjectiveAnswerMap(currentSectionSubmission.answers)
-    : {};
-  const objectiveDescriptors: StudentQuestionDescriptor[] =
-    examState && (activeSection === 'reading' || activeSection === 'listening')
-      ? getStudentQuestionsForModule(examState, activeSection)
-      : [];
-  const currentWritingTaskId = activeSection === 'writing' ? activeTask : null;
-  const currentWritingPrompt = currentWritingTaskId ? htmlToPlainText(getWritingPrompt(currentWritingTaskId)) : '';
-  const currentWritingText = currentWritingTaskId ? htmlToPlainText(getWritingResponseText(currentWritingTaskId)) : '';
-  const printableWritingTasks = writingTasks.map((task, index) => {
-    const rawText = getWritingResponseText(task.taskId);
-    const text = htmlToPlainText(rawText);
-    const taskSubmission = getWritingTaskSubmission(task.taskId);
-
-    return {
-      taskId: task.taskId,
-      label:
-        task.taskId === 'task1'
-          ? 'Task 1'
-          : task.taskId === 'task2'
-            ? 'Task 2'
-            : `Task ${index + 1}`,
-      promptHtml: sanitizeHtml(getWritingPrompt(task.taskId)),
-      responseHtml: sanitizeHtml(rawText),
-      text,
-      wordCount: taskSubmission?.wordCount ?? (text ? text.trim().split(/\s+/).filter(Boolean).length : 0),
-    };
-  });
-
   return (
     <div className="flex flex-col h-full bg-gray-50">
       <style>{`
@@ -721,6 +697,11 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
         }
 
         @media print {
+          @page {
+            size: A4;
+            margin: 11mm 10mm;
+          }
+
           body * {
             visibility: hidden !important;
           }
@@ -735,123 +716,213 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             position: absolute;
             inset: 0 auto auto 0;
             width: 100%;
-            padding: 24px;
             color: #111827;
             background: #ffffff;
-            font-family: Arial, "Times New Roman", serif;
-            font-size: 12pt;
-            line-height: 1.45;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9.8pt;
+            line-height: 1.42;
+          }
+
+          .writing-print-task-page {
+            break-before: page;
+            page-break-before: always;
+          }
+
+          .writing-print-task-page.writing-print-task-page-first {
+            break-before: auto;
+            page-break-before: auto;
+          }
+
+          .writing-print-page-header {
+            border: 1px solid #cbd5e1;
+            background: #f8fafc;
+            padding: 3mm;
+            margin-bottom: 4mm;
+          }
+
+          .writing-print-page-header h1 {
+            margin: 0 0 2mm;
+            font-size: 13pt;
+            line-height: 1.2;
+          }
+
+          .writing-print-meta {
+            display: grid;
+            grid-template-columns: 24mm 1fr 24mm 1fr;
+            gap: 1.5mm 5mm;
+            font-size: 9.2pt;
           }
 
           .writing-print-task {
-            break-inside: avoid;
-            page-break-inside: avoid;
-            margin-top: 24px;
-            border-top: 1px solid #d1d5db;
-            padding-top: 18px;
+            margin-top: 0;
+          }
+
+          .writing-print-task h2 {
+            margin: 0 0 2mm;
+            font-size: 12pt;
+            line-height: 1.2;
+          }
+
+          .writing-print-task-summary {
+            margin-bottom: 3mm;
+            color: #374151;
+            font-size: 9pt;
+          }
+
+          .writing-print-block {
+            margin-top: 3mm;
+          }
+
+          .writing-print-block h3,
+          .writing-print-block h4 {
+            margin: 0 0 1.5mm;
+            font-size: 9pt;
+            letter-spacing: 0;
+            text-transform: uppercase;
           }
 
           .writing-print-rich {
+            border: 1px solid #cbd5e1;
+            padding: 2.5mm 3mm;
             white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+          }
+
+          .writing-print-response {
+            border: 1px solid #cbd5e1;
+            padding: 2.5mm 3mm;
+            color: #111827;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 9.8pt;
+            line-height: 1.42;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            word-break: break-word;
           }
 
           .writing-print-rich p {
-            margin: 0 0 10px;
+            margin: 0 0 2mm;
           }
 
           .writing-print-rich div {
-            margin: 0 0 10px;
+            margin: 0 0 2mm;
           }
 
           .writing-print-assessment-table {
             width: 100%;
+            table-layout: fixed;
             border-collapse: collapse;
-            margin-top: 8px;
-            font-size: 11pt;
+            margin-top: 2mm;
           }
 
           .writing-print-assessment-table th,
           .writing-print-assessment-table td {
             border: 1px solid #9ca3af;
-            padding: 8px;
+            padding: 2mm 2.5mm;
             vertical-align: top;
           }
 
+          .writing-print-assessment-table th {
+            background: #f3f4f6;
+            text-align: left;
+            font-size: 8.8pt;
+          }
+
+          .writing-print-criterion {
+            width: 29%;
+            font-weight: 700;
+          }
+
+          .writing-print-band {
+            width: 12%;
+            text-align: center;
+            font-weight: 700;
+          }
+
+          .writing-print-comment {
+            width: 59%;
+          }
+
           .writing-print-band-box {
-            height: 28px;
+            min-height: 10mm;
           }
 
           .writing-print-comment-box {
-            height: 68px;
+            min-height: 10mm;
           }
         }
       `}</style>
       <div className="writing-print-root">
-        <h1 className="text-2xl font-bold">Writing Results</h1>
-        <div className="mt-2 text-sm">
-          <div><strong>Student:</strong> {submission.studentName}</div>
-          <div><strong>Student ID:</strong> {submission.studentId}</div>
-          <div><strong>Email:</strong> {submission.studentEmail ?? ''}</div>
-          <div><strong>Cohort:</strong> {submission.cohortName}</div>
-          <div><strong>Submitted:</strong> {new Date(submission.submittedAt).toLocaleString()}</div>
-        </div>
-
-        {printableWritingTasks.map((task) => (
-          <section key={task.taskId} className="writing-print-task">
-            <h2 className="text-xl font-bold">{task.label}</h2>
-            <div className="mt-2 text-sm"><strong>Word Count:</strong> {task.wordCount}</div>
-            <div className="mt-3">
-              <h3 className="text-base font-bold">Prompt</h3>
-              {task.promptHtml ? (
-                <div
-                  className="writing-print-rich mt-1"
-                  dangerouslySetInnerHTML={{ __html: task.promptHtml }}
-                />
-              ) : (
-                <p className="mt-1">Prompt unavailable.</p>
-              )}
-            </div>
-            <div className="mt-4">
-              <h3 className="text-base font-bold">Student Response</h3>
-              {task.responseHtml ? (
-                <div
-                  className="writing-print-rich mt-1"
-                  dangerouslySetInnerHTML={{ __html: task.responseHtml }}
-                />
-              ) : (
-                <p className="mt-1">No writing response recorded.</p>
-              )}
-            </div>
-            <div className="mt-4">
-              <h3 className="text-base font-bold">Assessment</h3>
-              <table className="writing-print-assessment-table">
-                <thead>
-                  <tr>
-                    <th>Criterion</th>
-                    <th>Band</th>
-                    <th>Teacher Comment</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {['Task Response', 'Coherence & Cohesion', 'Lexical Resource', 'Grammar'].map((criterion) => (
-                    <tr key={`${task.taskId}-${criterion}`}>
-                      <td>{criterion}</td>
-                      <td className="writing-print-band-box" />
-                      <td className="writing-print-comment-box" />
-                    </tr>
-                  ))}
-                  <tr>
-                    <td><strong>Overall Band</strong></td>
-                    <td className="writing-print-band-box" />
-                    <td className="writing-print-comment-box" />
-                  </tr>
-                </tbody>
-              </table>
-              <div className="mt-4">
-                <h4 className="text-sm font-bold">Overall Teacher Comment</h4>
-                <div className="writing-print-comment-box mt-2 border border-gray-400" />
+        {printableWritingTasks.map((task, index) => (
+          <section
+            key={task.taskId}
+            className={`writing-print-task-page${index === 0 ? ' writing-print-task-page-first' : ''}`}
+          >
+            <header className="writing-print-page-header">
+              <h1>{submission.studentName}</h1>
+              <div className="writing-print-meta">
+                <div><strong>Student ID</strong></div>
+                <div>{submission.studentId || submission.submissionId}</div>
+                <div><strong>Task</strong></div>
+                <div>{task.label}</div>
+                <div><strong>Submitted</strong></div>
+                <div>{task.submittedAt ? new Date(task.submittedAt).toLocaleString() : 'Not submitted'}</div>
               </div>
-            </div>
+            </header>
+            <article className="writing-print-task">
+              <h2>{task.label}</h2>
+              <div className="writing-print-task-summary"><strong>Word Count:</strong> {task.wordCount}</div>
+              <div className="writing-print-block">
+                <h3>Prompt</h3>
+                {task.promptHtml ? (
+                  <div
+                    className="writing-print-rich"
+                    dangerouslySetInnerHTML={{ __html: task.promptHtml }}
+                  />
+                ) : (
+                  <p>Prompt unavailable.</p>
+                )}
+              </div>
+              <div className="writing-print-block">
+                <h3>Student Response</h3>
+                {task.text ? (
+                  <div className="writing-print-response">{task.text}</div>
+                ) : (
+                  <p>No writing response recorded.</p>
+                )}
+              </div>
+              <div className="writing-print-block">
+                <h3>Assessment</h3>
+                <table className="writing-print-assessment-table">
+                  <thead>
+                    <tr>
+                      <th className="writing-print-criterion">Criterion</th>
+                      <th className="writing-print-band">Band</th>
+                      <th className="writing-print-comment">Teacher Comment</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {['Task Response', 'Coherence & Cohesion', 'Lexical Resource', 'Grammar'].map((criterion) => (
+                      <tr key={`${task.taskId}-${criterion}`}>
+                        <td className="writing-print-criterion">{criterion}</td>
+                        <td className="writing-print-band writing-print-band-box" />
+                        <td className="writing-print-comment writing-print-comment-box" />
+                      </tr>
+                    ))}
+                    <tr>
+                      <td className="writing-print-criterion"><strong>Overall Band</strong></td>
+                      <td className="writing-print-band writing-print-band-box" />
+                      <td className="writing-print-comment writing-print-comment-box" />
+                    </tr>
+                  </tbody>
+                </table>
+                <div className="writing-print-block">
+                  <h4>Overall Teacher Comment</h4>
+                  <div className="writing-print-comment-box border border-gray-400" />
+                </div>
+              </div>
+            </article>
           </section>
         ))}
       </div>
