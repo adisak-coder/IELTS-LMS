@@ -481,6 +481,7 @@ export interface GradingQueueFilters {
   exam?: string[] | undefined;
   isFlagged?: boolean | undefined;
   isOverdue?: boolean | undefined;
+  recentDays?: number | undefined;
   searchQuery?: string | undefined;
 }
 

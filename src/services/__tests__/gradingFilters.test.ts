@@ -71,6 +71,59 @@ describe('grading filters', () => {
     ).toBe('s2');
   });
 
+  it('filters grading sessions by recentDays', () => {
+    const now = Date.now();
+    const sessions: GradingSession[] = [
+      {
+        id: 'recent-session',
+        scheduleId: 'sched-recent',
+        examId: 'exam-recent',
+        examTitle: 'IELTS Recent',
+        publishedVersionId: 'ver-recent',
+        cohortName: 'Recent Cohort',
+        institution: 'X',
+        startTime: new Date(now - (2 * 24 * 60 * 60 * 1000)).toISOString(),
+        endTime: new Date(now - (2 * 24 * 60 * 60 * 1000) + (60 * 60 * 1000)).toISOString(),
+        status: 'scheduled',
+        totalStudents: 0,
+        submittedCount: 0,
+        pendingManualReviews: 0,
+        inProgressReviews: 0,
+        finalizedReviews: 0,
+        overdueReviews: 0,
+        assignedTeachers: [],
+        createdAt: new Date(now).toISOString(),
+        createdBy: 'admin',
+        updatedAt: new Date(now).toISOString(),
+      },
+      {
+        id: 'older-session',
+        scheduleId: 'sched-older',
+        examId: 'exam-older',
+        examTitle: 'IELTS Older',
+        publishedVersionId: 'ver-older',
+        cohortName: 'Older Cohort',
+        institution: 'Y',
+        startTime: new Date(now - (5 * 24 * 60 * 60 * 1000)).toISOString(),
+        endTime: new Date(now - (5 * 24 * 60 * 60 * 1000) + (60 * 60 * 1000)).toISOString(),
+        status: 'scheduled',
+        totalStudents: 0,
+        submittedCount: 0,
+        pendingManualReviews: 0,
+        inProgressReviews: 0,
+        finalizedReviews: 0,
+        overdueReviews: 0,
+        assignedTeachers: [],
+        createdAt: new Date(now).toISOString(),
+        createdBy: 'admin',
+        updatedAt: new Date(now).toISOString(),
+      },
+    ];
+
+    expect(filterGradingSessions(sessions, { recentDays: 3 })).toEqual([sessions[0]]);
+    expect(filterGradingSessions(sessions, { recentDays: 7 })).toHaveLength(2);
+  });
+
   it('filters student submissions by status/assignedTeacher/flags/searchQuery', () => {
     const submissions: StudentSubmission[] = [
       {
@@ -134,4 +187,3 @@ describe('grading filters', () => {
     expect(filterStudentSubmissions(submissions, { searchQuery: 'alice' })).toEqual([submissions[0]]);
   });
 });
-

@@ -16,7 +16,13 @@ import { StudentReading } from './StudentReading';
 import { StudentSpeaking } from './StudentSpeaking';
 import { StudentWriting } from './StudentWriting';
 import { StudentUIProvider, useStudentUI } from './providers/StudentUIProvider';
-import { getStudentTypographyScale } from './accessibilityScale';
+import {
+  canDecreaseStudentPassageReadability,
+  canIncreaseStudentPassageReadability,
+  getStudentPassageReadabilityLabel,
+  getStudentReadingTypographyScale,
+  getStudentTypographyScale,
+} from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
@@ -98,6 +104,19 @@ function StudentExamPreviewInner({
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
   const studentTypography = getStudentTypographyScale(uiState.accessibilitySettings.fontSize);
+  const readingTypography = getStudentReadingTypographyScale(
+    studentTypography,
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const canDecreasePassageReadability = canDecreaseStudentPassageReadability(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const passageReadabilityLabel = getStudentPassageReadabilityLabel(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
   useZoomScrollAnchoring(uiState.accessibilitySettings.zoom * studentTypography.fontScale);
   const highlightColor = uiState.accessibilitySettings.highlightColor;
   const highlightClassName = getStudentHighlightClassName(highlightColor);
@@ -113,12 +132,17 @@ function StudentExamPreviewInner({
     ['--student-chip-font-size' as string]: studentTypography.chipFontSize,
     ['--student-control-font-size' as string]: studentTypography.controlFontSize,
     ['--student-preview-font-size' as string]: studentTypography.previewFontSize,
-    ['--student-passage-font-size' as string]: studentTypography.passageFontSize,
-    ['--student-passage-title-font-size' as string]: studentTypography.passageTitleFontSize,
-    ['--student-passage-h1-font-size' as string]: studentTypography.passageH1FontSize,
-    ['--student-passage-h2-font-size' as string]: studentTypography.passageH2FontSize,
-    ['--student-passage-h3-font-size' as string]: studentTypography.passageH3FontSize,
-    ['--student-passage-line-height' as string]: studentTypography.passageLineHeight,
+    ['--student-passage-font-size' as string]: readingTypography.passageFontSize,
+    ['--student-passage-title-font-size' as string]: readingTypography.passageTitleFontSize,
+    ['--student-passage-h1-font-size' as string]: readingTypography.passageH1FontSize,
+    ['--student-passage-h2-font-size' as string]: readingTypography.passageH2FontSize,
+    ['--student-passage-h3-font-size' as string]: readingTypography.passageH3FontSize,
+    ['--student-passage-line-height' as string]: readingTypography.passageLineHeight,
+    ['--student-reading-paragraph-spacing' as string]: readingTypography.passageParagraphSpacing,
+    ['--student-reading-question-font-size' as string]: readingTypography.questionFontSize,
+    ['--student-reading-question-line-height' as string]: readingTypography.questionLineHeight,
+    ['--student-reading-instruction-font-size' as string]: readingTypography.instructionFontSize,
+    ['--student-reading-instruction-line-height' as string]: readingTypography.instructionLineHeight,
   } as React.CSSProperties;
 
   const enabledModules = useMemo(() => getEnabledModules(state.config), [state.config]);
@@ -281,13 +305,19 @@ function StudentExamPreviewInner({
             answers={answers}
             onAnswerChange={handleAnswerChange}
             currentQuestionId={currentQuestionId}
-          onNavigate={setCurrentQuestionId}
-          flags={flags}
-          onToggleFlag={handleFlagToggle}
-          tabletMode={tabletMode}
-          highlightEnabled={uiState.accessibilitySettings.highlightMode}
-          highlightColor={highlightColor}
-          highlightClassName={highlightClassName}
+            onNavigate={setCurrentQuestionId}
+            flags={flags}
+            onToggleFlag={handleFlagToggle}
+            tabletMode={tabletMode}
+            highlightEnabled={uiState.accessibilitySettings.highlightMode}
+            highlightColor={highlightColor}
+            highlightClassName={highlightClassName}
+            onIncreasePassageReadability={uiActions.increasePassageReadability}
+            onDecreasePassageReadability={uiActions.decreasePassageReadability}
+            onResetPassageReadability={uiActions.resetPassageReadability}
+            passageReadabilityLabel={passageReadabilityLabel}
+            canIncreasePassageReadability={canIncreasePassageReadability}
+            canDecreasePassageReadability={canDecreasePassageReadability}
           />
         ) : null}
 
@@ -297,13 +327,13 @@ function StudentExamPreviewInner({
             answers={answers}
             onAnswerChange={handleAnswerChange}
             currentQuestionId={currentQuestionId}
-          onNavigate={setCurrentQuestionId}
-          flags={flags}
-          onToggleFlag={handleFlagToggle}
-          tabletMode={tabletMode}
-          highlightEnabled={uiState.accessibilitySettings.highlightMode}
-          highlightColor={highlightColor}
-          highlightClassName={highlightClassName}
+            onNavigate={setCurrentQuestionId}
+            flags={flags}
+            onToggleFlag={handleFlagToggle}
+            tabletMode={tabletMode}
+            highlightEnabled={uiState.accessibilitySettings.highlightMode}
+            highlightColor={highlightColor}
+            highlightClassName={highlightClassName}
           />
         ) : null}
 

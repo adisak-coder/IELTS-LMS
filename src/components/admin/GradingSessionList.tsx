@@ -13,7 +13,7 @@ interface GradingSessionListProps {
 export const GradingSessionList = React.memo(function GradingSessionList({ onSessionSelect }: GradingSessionListProps) {
   const [sessions, setSessions] = useState<GradingSession[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filters, setFilters] = useState<GradingQueueFilters>({});
+  const [filters, setFilters] = useState<GradingQueueFilters>({ recentDays: 3 });
   const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
@@ -43,8 +43,16 @@ export const GradingSessionList = React.memo(function GradingSessionList({ onSes
 
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
-    setFilters({ ...filters, searchQuery: query });
-  }, [filters]);
+    setFilters((previous) => ({ ...previous, searchQuery: query }));
+  }, []);
+
+  const handleRecentDaysChange = useCallback((value: string) => {
+    const recentDays = Number(value);
+    setFilters((previous) => ({
+      ...previous,
+      recentDays: recentDays === 0 ? undefined : recentDays,
+    }));
+  }, []);
 
   const formatDate = useCallback((dateString: string) => {
     const date = new Date(dateString);
@@ -131,10 +139,21 @@ export const GradingSessionList = React.memo(function GradingSessionList({ onSes
               className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
             />
           </div>
-          <button className="flex items-center gap-2 px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
-            <Filter size={16} />
-            Filter
-          </button>
+          <div className="relative">
+            <Filter className="absolute left-3 top-2.5 text-gray-400 pointer-events-none" size={16} />
+            <select
+              value={filters.recentDays ?? 0}
+              onChange={(e) => handleRecentDaysChange(e.target.value)}
+              className="pl-9 pr-8 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              aria-label="Filter sessions by recent date"
+            >
+              <option value={3}>Last 3 days</option>
+              <option value={7}>Last 7 days</option>
+              <option value={14}>Last 14 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={0}>All dates</option>
+            </select>
+          </div>
           <button
             onClick={handleExportCsv}
             disabled={loading || sessions.length === 0}

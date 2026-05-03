@@ -16,7 +16,13 @@ import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
 import { getFullscreenElement, requestStudentFullscreen } from './fullscreen';
-import { getStudentTypographyScale } from './accessibilityScale';
+import {
+  canDecreaseStudentPassageReadability,
+  canIncreaseStudentPassageReadability,
+  getStudentPassageReadabilityLabel,
+  getStudentReadingTypographyScale,
+  getStudentTypographyScale,
+} from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
 import { useStudentTabletMode } from './tabletMode';
@@ -145,6 +151,19 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
   const studentTypography = getStudentTypographyScale(uiState.accessibilitySettings.fontSize);
+  const readingTypography = getStudentReadingTypographyScale(
+    studentTypography,
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const canDecreasePassageReadability = canDecreaseStudentPassageReadability(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const passageReadabilityLabel = getStudentPassageReadabilityLabel(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
   useZoomScrollAnchoring(uiState.accessibilitySettings.zoom * studentTypography.fontScale);
   const [finalSubmitStatus, setFinalSubmitStatus] = useState<'idle' | 'submitting' | 'retrying' | 'failed'>('idle');
   const blockingCopy = getBlockingCopy(runtimeState.blocking.reason);
@@ -167,12 +186,17 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     ['--student-chip-font-size' as string]: studentTypography.chipFontSize,
     ['--student-control-font-size' as string]: studentTypography.controlFontSize,
     ['--student-preview-font-size' as string]: studentTypography.previewFontSize,
-    ['--student-passage-font-size' as string]: studentTypography.passageFontSize,
-    ['--student-passage-title-font-size' as string]: studentTypography.passageTitleFontSize,
-    ['--student-passage-h1-font-size' as string]: studentTypography.passageH1FontSize,
-    ['--student-passage-h2-font-size' as string]: studentTypography.passageH2FontSize,
-    ['--student-passage-h3-font-size' as string]: studentTypography.passageH3FontSize,
-    ['--student-passage-line-height' as string]: studentTypography.passageLineHeight,
+    ['--student-passage-font-size' as string]: readingTypography.passageFontSize,
+    ['--student-passage-title-font-size' as string]: readingTypography.passageTitleFontSize,
+    ['--student-passage-h1-font-size' as string]: readingTypography.passageH1FontSize,
+    ['--student-passage-h2-font-size' as string]: readingTypography.passageH2FontSize,
+    ['--student-passage-h3-font-size' as string]: readingTypography.passageH3FontSize,
+    ['--student-passage-line-height' as string]: readingTypography.passageLineHeight,
+    ['--student-reading-paragraph-spacing' as string]: readingTypography.passageParagraphSpacing,
+    ['--student-reading-question-font-size' as string]: readingTypography.questionFontSize,
+    ['--student-reading-question-line-height' as string]: readingTypography.questionLineHeight,
+    ['--student-reading-instruction-font-size' as string]: readingTypography.instructionFontSize,
+    ['--student-reading-instruction-line-height' as string]: readingTypography.instructionLineHeight,
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
@@ -1153,6 +1177,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
+            onIncreasePassageReadability={uiActions.increasePassageReadability}
+            onDecreasePassageReadability={uiActions.decreasePassageReadability}
+            onResetPassageReadability={uiActions.resetPassageReadability}
+            passageReadabilityLabel={passageReadabilityLabel}
+            canIncreasePassageReadability={canIncreasePassageReadability}
+            canDecreasePassageReadability={canDecreasePassageReadability}
           />
         ) : null}
         {runtimeState.currentModule === 'listening' ? (

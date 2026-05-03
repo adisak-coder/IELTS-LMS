@@ -1003,7 +1003,8 @@ describe('student question experience', () => {
     );
 
     const passageTitle = screen.getByRole('heading', { name: 'Accessible Passage' });
-    const passagePanel = passageTitle.parentElement;
+    const passagePanel = passageTitle.closest('[data-student-zoom-scroll]');
+    const passageContent = passagePanel?.querySelector('.student-reading-passage-content');
 
     expect(passagePanel).toHaveStyle({
       fontSize: 'var(--student-passage-font-size)',
@@ -1012,7 +1013,7 @@ describe('student question experience', () => {
     expect(passagePanel?.className).not.toContain('text-sm');
     expect(passagePanel?.className).not.toContain('md:text-base');
     expect(passageTitle).toHaveStyle({ fontSize: 'var(--student-passage-title-font-size)' });
-    expect(passageTitle.nextElementSibling?.className).toContain('--student-passage-h1-font-size');
+    expect(passageContent?.className).toContain('--student-passage-h1-font-size');
   });
 
   it('renders HTML reading passages with normal whitespace handling', () => {
@@ -1133,11 +1134,16 @@ describe('student question experience', () => {
 
     const readingHighlighter = container.querySelector('[data-student-highlightable="true"]') as HTMLElement | null;
     expect(readingHighlighter).not.toBeNull();
-    expect(readingHighlighter).toHaveClass('whitespace-pre-wrap');
-    expect(readingHighlighter).not.toHaveClass('whitespace-normal');
-    expect(readingHighlighter?.textContent).toBe(
-      'You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1 below.\n\nFrozen Food',
+    expect(readingHighlighter).toHaveClass('whitespace-normal');
+    expect(readingHighlighter).not.toHaveClass('whitespace-pre-wrap');
+    expect(readingHighlighter?.querySelectorAll('p')).toHaveLength(1);
+    expect(readingHighlighter?.querySelectorAll('h3')).toHaveLength(1);
+    expect(readingHighlighter?.innerHTML).toContain('<p>');
+    expect(readingHighlighter?.innerHTML).toContain('<h3>');
+    expect(readingHighlighter?.textContent).toContain(
+      'You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1 below.',
     );
+    expect(readingHighlighter?.textContent).toContain('Frozen Food');
   });
 
   it('keeps reading split-screen side by side in tablet mode with simple highlight guidance', () => {

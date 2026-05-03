@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo } from 'react';
 import { ExamState, QuestionAnswer, QuestionBlock } from '../../types';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { QuestionRenderer } from './QuestionRenderer';
-import { ArrowLeft, ArrowRight, ArrowLeftRight, Flag } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowLeftRight, Flag, RotateCcw } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
@@ -36,6 +36,12 @@ interface StudentReadingProps {
   highlightClassName?: string | undefined;
   tabletMode?: boolean | undefined;
   contentZoom?: number | undefined;
+  onIncreasePassageReadability?: (() => void) | undefined;
+  onDecreasePassageReadability?: (() => void) | undefined;
+  onResetPassageReadability?: (() => void) | undefined;
+  passageReadabilityLabel?: string | undefined;
+  canIncreasePassageReadability?: boolean | undefined;
+  canDecreasePassageReadability?: boolean | undefined;
 }
 
 export function StudentReading({
@@ -51,6 +57,12 @@ export function StudentReading({
   highlightClassName,
   tabletMode = false,
   contentZoom = 1,
+  onIncreasePassageReadability,
+  onDecreasePassageReadability,
+  onResetPassageReadability,
+  passageReadabilityLabel,
+  canIncreasePassageReadability = false,
+  canDecreasePassageReadability = false,
 }: StudentReadingProps) {
   const isTabletMode = Boolean(tabletMode);
   const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
@@ -91,9 +103,13 @@ export function StudentReading({
     const content = activePassage?.content ?? '';
     return passageHasHtml ? content : normalizeReadingPlainTextForDisplay(content);
   }, [activePassage?.content, passageHasHtml]);
-  const passageContentClassName = passageHasHtml
-    ? 'whitespace-normal break-words [overflow-wrap:anywhere]'
-    : 'whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
+  const passageContentClassName = 'whitespace-normal break-words [overflow-wrap:anywhere]';
+  const showPassageReadabilityControls = Boolean(
+    onIncreasePassageReadability &&
+      onDecreasePassageReadability &&
+      onResetPassageReadability &&
+      passageReadabilityLabel,
+  );
   const currentIndex = allQuestions.findIndex((question) => question.id === currentQuestionId);
   const hasPrev = currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < allQuestions.length - 1;
@@ -104,7 +120,7 @@ export function StudentReading({
       <div className={`rounded-lg border border-gray-200 bg-gray-50 ${answerCompact ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
         <FormattedText
           as="p"
-          className={`${answerCompact ? 'text-xs md:text-sm' : 'text-sm md:text-base'} leading-relaxed text-gray-800 break-words [overflow-wrap:anywhere]`}
+          className="student-reading-instruction-text text-gray-800 break-words [overflow-wrap:anywhere]"
           text={instruction}
           highlightEnabled={highlightEnabled}
           highlightColor={highlightColor}
@@ -285,13 +301,55 @@ export function StudentReading({
           }}
           data-student-zoom-scroll
         >
-          <h2 className={`${materialCompact ? 'mb-2' : 'mb-4 md:mb-6'} font-bold leading-tight text-gray-950 break-words [overflow-wrap:anywhere]`} style={{ fontSize: 'var(--student-passage-title-font-size)' }}>
-            {activePassage.title}
-          </h2>
-          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} break-words [overflow-wrap:anywhere] text-gray-900 [&_h1]:font-black [&_h1]:leading-tight [&_h1]:[font-size:var(--student-passage-h1-font-size)] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:[font-size:var(--student-passage-h2-font-size)] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:[font-size:var(--student-passage-h3-font-size)] [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_p]:my-3 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
+          <div className={`flex items-start justify-between gap-3 ${materialCompact ? 'mb-2' : 'mb-4 md:mb-6'}`}>
+            <h2
+              className="font-bold leading-tight text-gray-950 break-words [overflow-wrap:anywhere]"
+              style={{ fontSize: 'var(--student-passage-title-font-size)' }}
+            >
+              {activePassage.title}
+            </h2>
+            {showPassageReadabilityControls ? (
+              <div
+                className="flex flex-wrap items-center justify-end gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-2 py-1"
+                data-testid="passage-readability-controls"
+              >
+                <button
+                  type="button"
+                  onClick={onDecreasePassageReadability}
+                  disabled={!canDecreasePassageReadability}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Decrease passage text size"
+                >
+                  A-
+                </button>
+                <span className="px-1 text-[10px] font-black uppercase tracking-[0.16em] text-gray-500">
+                  {passageReadabilityLabel}
+                </span>
+                <button
+                  type="button"
+                  onClick={onIncreasePassageReadability}
+                  disabled={!canIncreasePassageReadability}
+                  className="rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-800 transition-colors hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="Increase passage text size"
+                >
+                  A+
+                </button>
+                <button
+                  type="button"
+                  onClick={onResetPassageReadability}
+                  className="inline-flex items-center gap-1 rounded border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-700 transition-colors hover:bg-gray-100"
+                  aria-label="Reset passage readability"
+                >
+                  <RotateCcw size={11} />
+                  Reset
+                </button>
+              </div>
+            ) : null}
+          </div>
+          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} student-reading-passage-content break-words [overflow-wrap:anywhere] text-gray-900 [&_h1]:font-black [&_h1]:leading-tight [&_h1]:[font-size:var(--student-passage-h1-font-size)] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:[font-size:var(--student-passage-h2-font-size)] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:[font-size:var(--student-passage-h3-font-size)] [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
             <RichTextHighlighter
               content={renderedPassageContent}
-              contentType={passageHasHtml ? 'html' : 'text'}
+              contentType="html"
               enabled={highlightEnabled}
               className={passageContentClassName}
               highlightColor={highlightColor}
@@ -329,7 +387,7 @@ export function StudentReading({
 
         <div className={`relative flex h-full min-w-0 flex-col min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)] min-w-[48px]' : 'w-full md:min-w-[320px] lg:w-[var(--question-pane-width)]'}`}>
           <div
-            className={`flex-1 overflow-y-auto break-words [overflow-wrap:anywhere] ${
+            className={`flex-1 overflow-y-auto break-words [overflow-wrap:anywhere] student-reading-question-typography ${
               answerCompact ? 'p-2.5 md:p-3 space-y-4 md:space-y-5' : 'p-4 md:p-5 lg:p-8 space-y-6 md:space-y-8'
             } pb-20 md:pb-24 ${
               isTabletMode ? 'pb-28 md:pb-28' : ''
@@ -337,7 +395,11 @@ export function StudentReading({
             ref={questionContainerRef}
             data-student-zoom-scroll
             data-testid="reading-question-scroll"
-            style={tabletContentZoomStyle}
+            style={{
+              ...(tabletContentZoomStyle ?? {}),
+              fontSize: 'var(--student-reading-question-font-size)',
+              lineHeight: 'var(--student-reading-question-line-height)',
+            }}
           >
             {activePassage.blocks.map((block) => {
               const blockQuestions = allQuestions.filter((question) => question.blockId === block.id);
@@ -362,7 +424,10 @@ export function StudentReading({
               return (
                 <div key={block.id} className={`${answerCompact ? 'space-y-3 mb-3 md:mb-4' : 'space-y-4 md:space-y-6 mb-4 md:mb-6'}`}>
                   <div className={answerCompact ? 'mb-2' : 'mb-3 md:mb-4'}>
-                    <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
+                    <h3
+                      className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}
+                      style={{ fontSize: 'var(--student-reading-instruction-font-size)', lineHeight: 'var(--student-reading-instruction-line-height)' }}
+                    >
                       Questions {formatQuestionRange(numberedBlockStart, numberedBlockEnd)}
                     </h3>
                     {renderBlockInstruction(block.instruction)}

@@ -1,6 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { defaultStudentHighlightColor, type StudentHighlightColor } from '../highlightPalette';
-import type { StudentFontSize } from '../accessibilityScale';
+import {
+  clampStudentPassageReadabilityLevel,
+  DEFAULT_STUDENT_PASSAGE_READABILITY_LEVEL,
+  type StudentFontSize,
+  type StudentPassageReadabilityLevel,
+} from '../accessibilityScale';
 
 interface UIState {
   showNavigator: boolean;
@@ -15,6 +20,7 @@ interface UIState {
     fontSize: StudentFontSize;
     highContrast: boolean;
     zoom: number;
+    passageReadabilityLevel: StudentPassageReadabilityLevel;
     highlightMode: boolean;
     highlightColor: StudentHighlightColor;
   };
@@ -34,6 +40,9 @@ interface UIActions {
   zoomIn: () => void;
   zoomOut: () => void;
   resetZoom: () => void;
+  increasePassageReadability: () => void;
+  decreasePassageReadability: () => void;
+  resetPassageReadability: () => void;
   toggleHighlightMode: () => void;
   setHighlightColor: (color: StudentHighlightColor) => void;
 }
@@ -62,6 +71,7 @@ export function StudentUIProvider({ children }: UIProviderProps) {
     fontSize: 'normal' as StudentFontSize,
     highContrast: false,
     zoom: 1,
+    passageReadabilityLevel: DEFAULT_STUDENT_PASSAGE_READABILITY_LEVEL,
     highlightMode: false,
     highlightColor: defaultStudentHighlightColor,
   });
@@ -104,6 +114,27 @@ export function StudentUIProvider({ children }: UIProviderProps) {
     setZoom(1);
   }, [setZoom]);
 
+  const increasePassageReadability = useCallback(() => {
+    setAccessibilitySettings((prev) => ({
+      ...prev,
+      passageReadabilityLevel: clampStudentPassageReadabilityLevel(prev.passageReadabilityLevel + 1),
+    }));
+  }, []);
+
+  const decreasePassageReadability = useCallback(() => {
+    setAccessibilitySettings((prev) => ({
+      ...prev,
+      passageReadabilityLevel: clampStudentPassageReadabilityLevel(prev.passageReadabilityLevel - 1),
+    }));
+  }, []);
+
+  const resetPassageReadability = useCallback(() => {
+    setAccessibilitySettings((prev) => ({
+      ...prev,
+      passageReadabilityLevel: DEFAULT_STUDENT_PASSAGE_READABILITY_LEVEL,
+    }));
+  }, []);
+
   const toggleHighlightMode = useCallback(() => {
     setAccessibilitySettings(prev => ({ ...prev, highlightMode: !prev.highlightMode }));
   }, []);
@@ -138,6 +169,9 @@ export function StudentUIProvider({ children }: UIProviderProps) {
     zoomIn,
     zoomOut,
     resetZoom,
+    increasePassageReadability,
+    decreasePassageReadability,
+    resetPassageReadability,
     toggleHighlightMode,
     setHighlightColor,
   };
