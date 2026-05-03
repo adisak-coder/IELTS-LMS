@@ -55,7 +55,7 @@ describe('StudentWriting clipboard', () => {
   it('blocks paste in the writing editor and emits an audit event', () => {
     const state = createExamState();
     const onWritingChange = vi.fn();
-    const { container } = render(
+    render(
       <StudentWriting
         state={state}
         writingAnswers={{}}
@@ -69,10 +69,8 @@ describe('StudentWriting clipboard', () => {
       />,
     );
 
-    const editor = container.querySelector('[contenteditable="true"]');
-    if (!editor) {
-      throw new Error('Expected writing editor to render');
-    }
+    const editor = document.querySelector('textarea[aria-label="Writing response"]');
+    if (!editor) throw new Error('Expected writing editor to render');
 
     const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
     fireEvent(editor, pasteEvent);
@@ -83,9 +81,9 @@ describe('StudentWriting clipboard', () => {
       'sched-1',
       'PASTE_BLOCKED',
       {
-        targetName: 'DIV',
+        targetName: 'TEXTAREA',
         targetType: 'writing-editor',
-        isContentEditable: true,
+        isContentEditable: false,
       },
       'attempt-1',
     );
@@ -93,7 +91,7 @@ describe('StudentWriting clipboard', () => {
 
   it('blocks copy, cut, drop, and context menu in the writing editor', () => {
     const state = createExamState();
-    const { container } = render(
+    render(
       <StudentWriting
         state={state}
         writingAnswers={{}}
@@ -104,10 +102,8 @@ describe('StudentWriting clipboard', () => {
       />,
     );
 
-    const editor = container.querySelector('[contenteditable="true"]');
-    if (!editor) {
-      throw new Error('Expected writing editor to render');
-    }
+    const editor = document.querySelector('textarea[aria-label="Writing response"]');
+    if (!editor) throw new Error('Expected writing editor to render');
 
     for (const eventName of ['copy', 'cut', 'drop', 'contextmenu']) {
       const event = new Event(eventName, { bubbles: true, cancelable: true });

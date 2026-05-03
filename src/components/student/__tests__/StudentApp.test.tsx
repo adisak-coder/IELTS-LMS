@@ -793,8 +793,8 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    const editor = await screen.findByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>Visible iPad final draft</p>';
+    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement;
+    fireEvent.change(editor, { target: { value: 'Visible iPad final draft' } });
 
     rerender(
       <StudentAppWrapper
@@ -814,7 +814,7 @@ describe('StudentApp runtime-backed mode', () => {
             type: 'writing_answer',
             payload: expect.objectContaining({
               taskId: 'task1',
-              value: '<p>Visible iPad final draft</p>',
+              value: 'Visible iPad final draft',
             }),
           }),
         ]),
@@ -1247,12 +1247,12 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    const editor = await screen.findByRole('textbox', { name: /writing response/i });
-    fireEvent.input(editor, {
-      target: { innerHTML: 'Server seed LOCAL_TYPED' },
-      currentTarget: { innerHTML: 'Server seed LOCAL_TYPED' },
+    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement;
+    fireEvent.change(editor, {
+      target: { value: 'Server seed LOCAL_TYPED' },
+      currentTarget: { value: 'Server seed LOCAL_TYPED' },
     });
-    expect(editor).toHaveTextContent(/LOCAL_TYPED/);
+    expect(editor.value).toContain('LOCAL_TYPED');
 
     attemptSnapshot = {
       ...attemptSnapshot,
@@ -1269,7 +1269,7 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    expect(await screen.findByRole('textbox', { name: /writing response/i })).toHaveTextContent(/LOCAL_TYPED/);
+    expect(((await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement).value).toContain('LOCAL_TYPED');
   });
 
   it('keeps local choice selection stable during same-attempt refresh', async () => {

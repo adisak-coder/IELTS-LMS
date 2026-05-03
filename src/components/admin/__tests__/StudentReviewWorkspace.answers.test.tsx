@@ -377,7 +377,7 @@ describe('StudentReviewWorkspace objective answers', () => {
     expect(await screen.findByText('Strengths')).toBeInTheDocument();
   });
 
-  test('renders writing responses as plain text without stored html tags', async () => {
+  test('renders writing responses as raw plain text', async () => {
     const { createInitialExamState } = await import('../../../services/examAdapterService');
     const { gradingRepository } = await import('../../../services/gradingRepository');
     const { examRepository } = await import('../../../services/examRepository');
@@ -422,7 +422,7 @@ describe('StudentReviewWorkspace objective answers', () => {
         taskId: 'task1',
         taskLabel: 'Task 1',
         prompt: '<p class="MsoNormal"><span>You should write something.</span></p><p><b>Use details.</b></p>',
-        studentText: '<div>Hello&nbsp;world</div><div>Second line</div>',
+        studentText: 'Hello  world\nSecond line',
         wordCount: 4,
         rubricAssessment: undefined,
         annotations: [],
@@ -472,10 +472,7 @@ describe('StudentReviewWorkspace objective answers', () => {
 
     expect((await screen.findAllByText(/You should write something/)).length).toBeGreaterThan(0);
     expect((await screen.findAllByText(/Use details/)).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(/Hello world/)).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(/Second line/)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/<div>/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/MsoNormal/)).not.toBeInTheDocument();
+    expect(document.querySelector('.writing-print-response')?.textContent).toBe('Hello  world\nSecond line');
 
     const printSpy = vi.spyOn(window, 'print').mockImplementation(() => undefined);
     fireEvent.click(screen.getByRole('button', { name: /print writing/i }));
@@ -483,7 +480,7 @@ describe('StudentReviewWorkspace objective answers', () => {
     printSpy.mockRestore();
   });
 
-  test('renders normalized writing text from writing task submissions payload', async () => {
+  test('renders writing task submission text without whitespace normalization', async () => {
     const { createInitialExamState } = await import('../../../services/examAdapterService');
     const { gradingRepository } = await import('../../../services/gradingRepository');
     const { examRepository } = await import('../../../services/examRepository');
@@ -528,8 +525,7 @@ describe('StudentReviewWorkspace objective answers', () => {
         taskId: 'task1',
         taskLabel: 'Task 1',
         prompt: '<p>Describe the data.</p>',
-        studentText:
-          '<div class="MsoNormal">  First&nbsp;line &amp; detail  </div><div>Second   line</div>',
+        studentText: '  First line & detail  \nSecond   line',
         wordCount: 6,
         rubricAssessment: undefined,
         annotations: [],
@@ -576,14 +572,10 @@ describe('StudentReviewWorkspace objective answers', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /writing/i }));
 
-    expect((await screen.findAllByText(/First line & detail/)).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(/Second line/)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/<div class=/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/MsoNormal/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/&nbsp;/)).not.toBeInTheDocument();
+    expect(document.querySelector('.writing-print-response')?.textContent).toBe('  First line & detail  \nSecond   line');
   });
 
-  test('falls back to section writing tasks and keeps normalized plain text format', async () => {
+  test('falls back to section writing tasks and preserves raw plain text format', async () => {
     const { createInitialExamState } = await import('../../../services/examAdapterService');
     const { gradingRepository } = await import('../../../services/gradingRepository');
     const { examRepository } = await import('../../../services/examRepository');
@@ -633,7 +625,7 @@ describe('StudentReviewWorkspace objective answers', () => {
           tasks: [
             {
               taskId: 'task1',
-              text: '<p class="MsoNormal">Fallback&nbsp;line</p><p>Another   line</p>',
+              text: 'Fallback  line\nAnother   line',
             },
           ],
         },
@@ -682,9 +674,6 @@ describe('StudentReviewWorkspace objective answers', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /writing/i }));
 
-    expect((await screen.findAllByText(/Fallback line/)).length).toBeGreaterThan(0);
-    expect((await screen.findAllByText(/Another line/)).length).toBeGreaterThan(0);
-    expect(screen.queryByText(/MsoNormal/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/<p class=/)).not.toBeInTheDocument();
+    expect(document.querySelector('.writing-print-response')?.textContent).toBe('Fallback  line\nAnother   line');
   });
 });

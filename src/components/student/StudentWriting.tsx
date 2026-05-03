@@ -9,7 +9,6 @@ import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { WritingChartPreview } from '../writing/WritingChartPreview';
 import { useSplitPaneResize } from './useSplitPaneResize';
-import { registerAnswerUndoRedoGuard } from './answerUndoRedoGuard';
 
 interface StudentWritingProps {
   state: ExamState;
@@ -59,11 +58,10 @@ export function StudentWriting({
   const resolvedStudentId = studentId ?? attemptContext?.state.attemptId ?? undefined;
   const writingConfig = state.config.sections.writing;
   const [activeTaskId, setActiveTaskId] = useState<string>(currentQuestionId || writingConfig.tasks[0]?.id || 'task1');
-  const [isEditorFocused, setIsEditorFocused] = useState(false);
-  const editorRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
-  const latestEditorHtmlRef = useRef<string>('');
+  const latestEditorTextRef = useRef<string>('');
   const lastCommittedDraftByTaskRef = useRef<Record<string, string>>({});
   const deferredBlurCommitTimerRef = useRef<number | null>(null);
   const editorHasFocusRef = useRef(false);
@@ -78,22 +76,19 @@ export function StudentWriting({
 
   const currentTask = writingConfig.tasks.find(t => t.id === activeTaskId) || writingConfig.tasks[0];
   const currentText = writingAnswers[activeTaskId] || '';
-  const currentPlainText = currentText.replace(/<[^>]*>/g, '').trim();
-  const showEditorPlaceholder = !isEditorFocused && currentPlainText.length === 0;
 
-  const commitDraftHtml = useCallback(
-    (taskId: string, rawHtml: string, options?: { flushDurability?: boolean }) => {
-      const sanitized = sanitizeHtml(rawHtml);
+  const commitDraftText = useCallback(
+    (taskId: string, rawText: string, options?: { flushDurability?: boolean }) => {
       const previous = lastCommittedDraftByTaskRef.current[taskId] ?? '';
-      if (sanitized !== previous) {
-        onWritingChange(taskId, sanitized);
-        lastCommittedDraftByTaskRef.current[taskId] = sanitized;
+      if (rawText !== previous) {
+        onWritingChange(taskId, rawText);
+        lastCommittedDraftByTaskRef.current[taskId] = rawText;
       }
-      latestEditorHtmlRef.current = sanitized;
+      latestEditorTextRef.current = rawText;
       if (options?.flushDurability !== false) {
         attemptContext?.actions.flushAnswerDurabilityNow?.();
       }
-      return sanitized;
+      return rawText;
     },
     [attemptContext, onWritingChange],
   );
@@ -103,11 +98,11 @@ export function StudentWriting({
       return;
     }
 
-    const committed = commitDraftHtml(activeTaskId, editorRef.current.innerHTML);
-    if (committed !== editorRef.current.innerHTML) {
-      editorRef.current.innerHTML = committed;
+    const committed = commitDraftText(activeTaskId, editorRef.current.value);
+    if (committed !== editorRef.current.value) {
+      editorRef.current.value = committed;
     }
-  }, [activeTaskId, commitDraftHtml]);
+  }, [activeTaskId, commitDraftText]);
 
   const scheduleDeferredBlurCommit = useCallback(
     (taskId: string) => {
@@ -119,13 +114,13 @@ export function StudentWriting({
         if (!editorRef.current) {
           return;
         }
-        const committed = commitDraftHtml(taskId, editorRef.current.innerHTML);
-        if (committed !== editorRef.current.innerHTML) {
-          editorRef.current.innerHTML = committed;
+        const committed = commitDraftText(taskId, editorRef.current.value);
+        if (committed !== editorRef.current.value) {
+          editorRef.current.value = committed;
         }
       }, 0);
     },
-    [commitDraftHtml],
+    [commitDraftText],
   );
 
   useEffect(() => {
@@ -150,12 +145,12 @@ export function StudentWriting({
     const editor = editorRef.current;
     if (!editor) return;
     if (editorHasFocusRef.current) return;
-    if (currentText !== editor.innerHTML) {
-      editor.innerHTML = currentText;
-      previousValueRef.current = editor.innerHTML;
+    if (currentText !== editor.value) {
+      editor.value = currentText;
+      previousValueRef.current = editor.value;
     }
-    latestEditorHtmlRef.current = editor.innerHTML;
-    lastCommittedDraftByTaskRef.current[activeTaskId] = editor.innerHTML;
+    latestEditorTextRef.current = editor.value;
+    lastCommittedDraftByTaskRef.current[activeTaskId] = editor.value;
   }, [activeTaskId, currentText]);
 
   useEffect(() => {
@@ -227,12 +222,12 @@ export function StudentWriting({
     };
 
     const handleInput = (event: Event) => {
-      const target = event.target as HTMLDivElement;
-      const newValue = target.innerHTML;
+      const target = event.target as HTMLTextAreaElement;
+      const newValue = target.value;
       const previousValue = previousValueRef.current;
       
-      const textLength = newValue.replace(/<[^>]*>/g, '').length;
-      const previousTextLength = previousValue.replace(/<[^>]*>/g, '').length;
+      const textLength = newValue.length;
+      const previousTextLength = previousValue.length;
       const textChange = Math.abs(textLength - previousTextLength);
       const timeSinceKeydown = Date.now() - lastKeydownRef.current;
       
@@ -257,55 +252,6 @@ export function StudentWriting({
       lastKeydownRef.current = Date.now();
     };
 
-    const releaseUndoRedoGuard = registerAnswerUndoRedoGuard({
-      element: editor,
-      readLatestSnapshot: () => {
-        const committedForTask = lastCommittedDraftByTaskRef.current[activeTaskId];
-        if (typeof committedForTask === 'string') {
-          return committedForTask;
-        }
-        return latestEditorHtmlRef.current || editor.innerHTML;
-      },
-      restoreLatestSnapshot: (snapshot) => {
-        const normalized = sanitizeHtml(snapshot);
-        if (editor.innerHTML !== normalized) {
-          editor.innerHTML = normalized;
-        }
-        latestEditorHtmlRef.current = normalized;
-        previousValueRef.current = normalized;
-        void commitDraftHtml(activeTaskId, normalized, { flushDurability: false });
-      },
-      flushPersist: () => {
-        attemptContext?.actions.flushAnswerDurabilityNow?.();
-      },
-      onBlocked: (signal) => {
-        saveStudentAuditEvent(
-          resolvedSessionId,
-          signal.kind === 'undo' ? 'UNDO_BLOCKED' : 'REDO_BLOCKED',
-          {
-            surface: 'writing',
-            taskId: activeTaskId,
-            via: signal.via,
-            cancelable: signal.cancelable,
-          },
-          resolvedStudentId,
-        );
-      },
-      onRestored: (signal) => {
-        saveStudentAuditEvent(
-          resolvedSessionId,
-          signal.kind === 'undo' ? 'UNDO_RESTORED' : 'REDO_RESTORED',
-          {
-            surface: 'writing',
-            taskId: activeTaskId,
-            via: signal.via,
-            cancelable: signal.cancelable,
-          },
-          resolvedStudentId,
-        );
-      },
-    });
-
     editor.addEventListener('beforeinput', handleBeforeInput);
     editor.addEventListener('input', handleInput);
     editor.addEventListener('keydown', handleKeydown);
@@ -314,9 +260,8 @@ export function StudentWriting({
       editor.removeEventListener('beforeinput', handleBeforeInput);
       editor.removeEventListener('input', handleInput);
       editor.removeEventListener('keydown', handleKeydown);
-      releaseUndoRedoGuard();
     };
-  }, [activeTaskId, attemptContext, commitDraftHtml, resolvedSessionId, resolvedStudentId]);
+  }, [resolvedSessionId, resolvedStudentId]);
 
   if (!currentTask) {
     return null;
@@ -329,7 +274,7 @@ export function StudentWriting({
   const minWords = currentTask.minWords || 150;
   const currentChart = currentTaskContent?.chart;
 
-  const wordCount = currentText.trim() === '' ? 0 : currentText.replace(/<[^>]*>/g, '').trim().split(/\s+/).length;
+  const wordCount = currentText.trim() === '' ? 0 : currentText.trim().split(/\s+/).length;
 
   const isWordCountMet = wordCount >= minWords;
   const isWordCountWarning = wordCount > 0 && wordCount < minWords && wordCount >= minWords * 0.9;
@@ -355,28 +300,17 @@ export function StudentWriting({
   const isTimeCritical = resolvedTimeRemaining <= 300;
   const isTimeWarning = resolvedTimeRemaining <= 600;
 
-  // Rich text formatting commands
-  const handleFormat = (command: string, value?: string) => {
-    document.execCommand(command, false, value);
-    if (editorRef.current) {
-      const htmlContent = editorRef.current.innerHTML;
-      commitDraftHtml(activeTaskId, htmlContent, { flushDurability: false });
-    }
-  };
-
-  const handleEditorInput = () => {
-    if (editorRef.current) {
-      const htmlContent = editorRef.current.innerHTML;
-      latestEditorHtmlRef.current = htmlContent;
-      commitDraftHtml(activeTaskId, htmlContent, { flushDurability: false });
-    }
+  const handleEditorInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const nextValue = event.target.value;
+    latestEditorTextRef.current = nextValue;
+    commitDraftText(activeTaskId, nextValue, { flushDurability: false });
   };
 
   const blockWritingEditorInteraction = (
     event:
-      | React.ClipboardEvent<HTMLDivElement>
-      | React.DragEvent<HTMLDivElement>
-      | React.MouseEvent<HTMLDivElement>,
+      | React.ClipboardEvent<HTMLTextAreaElement>
+      | React.DragEvent<HTMLTextAreaElement>
+      | React.MouseEvent<HTMLTextAreaElement>,
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -385,9 +319,9 @@ export function StudentWriting({
         resolvedSessionId,
         'PASTE_BLOCKED',
         {
-          targetName: 'DIV',
+          targetName: 'TEXTAREA',
           targetType: 'writing-editor',
-          isContentEditable: true,
+          isContentEditable: false,
         },
         resolvedStudentId,
       );
@@ -533,42 +467,34 @@ export function StudentWriting({
                   </span>
                 </div>
               </div>
-              {showEditorPlaceholder && (
-                  <div className="pointer-events-none absolute left-4 top-14 md:left-6 md:top-16 lg:left-8 lg:top-20 text-base md:text-lg leading-relaxed text-gray-400 font-serif select-none">
-                    Write your answer here…
-                  </div>
-              )}
-	              <div
-	                ref={editorRef}
-	                contentEditable
-	                onInput={handleEditorInput}
-                  suppressContentEditableWarning
-                  role="textbox"
-                  aria-multiline="true"
-                  aria-label="Writing response"
-                  onFocus={() => {
-                    editorHasFocusRef.current = true;
-                    setIsEditorFocused(true);
-                  }}
-                  onCompositionEnd={commitEditorDraft}
-                  onBlur={() => {
-                    editorHasFocusRef.current = false;
-                    setIsEditorFocused(false);
-                    commitEditorDraft();
-                    scheduleDeferredBlurCommit(activeTaskId);
-                  }}
-                  onPaste={blockWritingEditorInteraction}
-                  onCopy={blockWritingEditorInteraction}
-                  onCut={blockWritingEditorInteraction}
-                  onDrop={blockWritingEditorInteraction}
-                  onContextMenu={blockWritingEditorInteraction}
-	                className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-                  data-student-zoom-scroll
-	                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
-	                spellCheck={!security.preventAutocorrect}
-	                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
-	                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
-	              />
+              <textarea
+                ref={editorRef}
+                onChange={handleEditorInput}
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Writing response"
+                onFocus={() => {
+                  editorHasFocusRef.current = true;
+                }}
+                onCompositionEnd={commitEditorDraft}
+                onBlur={() => {
+                  editorHasFocusRef.current = false;
+                  commitEditorDraft();
+                  scheduleDeferredBlurCommit(activeTaskId);
+                }}
+                onPaste={blockWritingEditorInteraction}
+                onCopy={blockWritingEditorInteraction}
+                onCut={blockWritingEditorInteraction}
+                onDrop={blockWritingEditorInteraction}
+                onContextMenu={blockWritingEditorInteraction}
+                className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 whitespace-pre-wrap"
+                data-student-zoom-scroll
+                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
+                spellCheck={!security.preventAutocorrect}
+                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
+                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
+                placeholder="Write your answer here..."
+              />
               </div>
 	          </div>
 
@@ -621,7 +547,7 @@ export function StudentWriting({
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {writingConfig.tasks.map((task) => {
                 const text = writingAnswers[task.id] || '';
-                const previewText = text.replace(/<[^>]*>/g, '').trim();
+                const hasResponse = text.length > 0;
 
                 return (
                   <div key={task.id} className="border border-gray-200 rounded-xl p-4">
@@ -629,7 +555,11 @@ export function StudentWriting({
                       <h3 className="font-bold text-gray-900">{task.label}</h3>
                     </div>
                     <div className="text-sm text-gray-600 max-h-32 overflow-y-auto bg-gray-50 rounded-lg p-3">
-                      {previewText || <span className="text-gray-400 italic">No response written</span>}
+                      {hasResponse ? (
+                        <pre className="m-0 whitespace-pre-wrap font-sans">{text}</pre>
+                      ) : (
+                        <span className="text-gray-400 italic">No response written</span>
+                      )}
                     </div>
                   </div>
                 );

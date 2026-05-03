@@ -16,7 +16,6 @@ import {
 } from './gradingReviewUtils';
 import type { ExamState } from '../../types';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
-import { htmlToPlainText } from '../../utils/htmlText';
 
 interface SessionWritingPrintStudent {
   submission: StudentSubmission;
@@ -605,7 +604,7 @@ export function GradingSessionDetail({
                     <div className="session-writing-print-block">
                       <h4>Student Response</h4>
                       <div className="session-writing-print-response">
-                        {htmlToPlainText(task.studentText) || 'No writing response recorded.'}
+                        {task.studentText || 'No writing response recorded.'}
                       </div>
                     </div>
 

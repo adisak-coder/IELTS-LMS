@@ -68,11 +68,11 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>Composed draft</p>';
+    fireEvent.change(editor, { target: { value: 'Composed draft' } });
 
     fireEvent.compositionEnd(editor);
 
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Composed draft</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Composed draft');
   });
 
   it('commits the current editor draft when the page is hidden or unloaded', () => {
@@ -91,9 +91,9 @@ describe('StudentWriting lifecycle durability', () => {
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
 
-    editor.innerHTML = '<p>Draft before pagehide</p>';
+    fireEvent.change(editor, { target: { value: 'Draft before pagehide' } });
     fireEvent(window, new Event('pagehide'));
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Draft before pagehide</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before pagehide');
 
     onWritingChange.mockClear();
     const originalDescriptor = Object.getOwnPropertyDescriptor(document, 'visibilityState');
@@ -102,9 +102,9 @@ describe('StudentWriting lifecycle durability', () => {
       get: () => 'hidden',
     });
 
-    editor.innerHTML = '<p>Draft before hidden</p>';
+    fireEvent.change(editor, { target: { value: 'Draft before hidden' } });
     fireEvent(document, new Event('visibilitychange'));
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Draft before hidden</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before hidden');
 
     if (originalDescriptor) {
       Object.defineProperty(document, 'visibilityState', originalDescriptor);
@@ -127,14 +127,14 @@ describe('StudentWriting lifecycle durability', () => {
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
 
-    editor.innerHTML = '<p>Draft before freeze</p>';
+    fireEvent.change(editor, { target: { value: 'Draft before freeze' } });
     fireEvent(document, new Event('freeze'));
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Draft before freeze</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before freeze');
 
     onWritingChange.mockClear();
-    editor.innerHTML = '<p>Draft before unload</p>';
+    fireEvent.change(editor, { target: { value: 'Draft before unload' } });
     fireEvent(window, new Event('beforeunload'));
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Draft before unload</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before unload');
   });
 
   it('commits the current editor draft before switching writing tasks', () => {
@@ -153,11 +153,11 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>Task 1 visible draft</p>';
+    fireEvent.change(editor, { target: { value: 'Task 1 visible draft' } });
 
     fireEvent.click(screen.getByRole('button', { name: 'Task 2' }));
 
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Task 1 visible draft</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Task 1 visible draft');
     expect(onNavigate).toHaveBeenCalledWith('task2');
   });
 
@@ -176,11 +176,11 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>Final visible draft</p>';
+    fireEvent.change(editor, { target: { value: 'Final visible draft' } });
 
     fireEvent.click(screen.getByRole('button', { name: /review & submit/i }));
 
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>Final visible draft</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Final visible draft');
   });
 
   it('commits a deferred blur draft when iPad applies a late editor value', () => {
@@ -199,14 +199,14 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>blur value</p>';
+    fireEvent.change(editor, { target: { value: 'blur value' } });
     fireEvent.blur(editor);
 
-    editor.innerHTML = '<p>late iPad value</p>';
+    fireEvent.change(editor, { target: { value: 'late iPad value' } });
     vi.runAllTimers();
 
-    expect(onWritingChange).toHaveBeenNthCalledWith(1, 'task1', '<p>blur value</p>');
-    expect(onWritingChange).toHaveBeenNthCalledWith(2, 'task1', '<p>late iPad value</p>');
+    expect(onWritingChange).toHaveBeenNthCalledWith(1, 'task1', 'blur value');
+    expect(onWritingChange).toHaveBeenNthCalledWith(2, 'task1', 'late iPad value');
   });
 
   it('dedupes deferred blur commit when editor value does not change', () => {
@@ -225,22 +225,22 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>stable value</p>';
+    fireEvent.change(editor, { target: { value: 'stable value' } });
     fireEvent.blur(editor);
 
     vi.runAllTimers();
 
     expect(onWritingChange).toHaveBeenCalledTimes(1);
-    expect(onWritingChange).toHaveBeenCalledWith('task1', '<p>stable value</p>');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'stable value');
   });
 
-  it('blocks historyUndo in writing beforeinput and preserves the latest snapshot', async () => {
+  it('preserves exact whitespace and line breaks in writing input commits', () => {
     const onWritingChange = vi.fn();
 
     render(
       <StudentWriting
         state={createExamState()}
-        writingAnswers={{ task1: '<p>LATEST</p>' }}
+        writingAnswers={{}}
         onWritingChange={onWritingChange}
         onSubmit={() => undefined}
         currentQuestionId="task1"
@@ -249,45 +249,10 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    editor.innerHTML = '<p>older history value</p>';
+    const exact = '  line 1 with  spaces\n\n\tline 3 after blank\n  ';
+    fireEvent.change(editor, { target: { value: exact } });
+    fireEvent.blur(editor);
 
-    const undoBeforeInput = new Event('beforeinput', { bubbles: true, cancelable: true });
-    Object.assign(undoBeforeInput, { inputType: 'historyUndo' });
-    const preventDefaultSpy = vi.spyOn(undoBeforeInput, 'preventDefault');
-    fireEvent(editor, undoBeforeInput);
-    expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
-
-    const undoInput = new Event('input', { bubbles: true, cancelable: false });
-    Object.assign(undoInput, { inputType: 'historyUndo' });
-    fireEvent(editor, undoInput);
-    await Promise.resolve();
-
-    expect(editor.innerHTML).toBe('<p>LATEST</p>');
-  });
-
-  it('blocks keyboard undo shortcut in writing editor', () => {
-    render(
-      <StudentWriting
-        state={createExamState()}
-        writingAnswers={{ task1: '<p>LATEST</p>' }}
-        onWritingChange={vi.fn()}
-        onSubmit={() => undefined}
-        currentQuestionId="task1"
-        onNavigate={() => undefined}
-      />,
-    );
-
-    const editor = screen.getByRole('textbox', { name: /writing response/i });
-    const undoShortcut = new KeyboardEvent('keydown', {
-      bubbles: true,
-      cancelable: true,
-      key: 'z',
-      metaKey: true,
-    });
-    const preventDefaultSpy = vi.spyOn(undoShortcut, 'preventDefault');
-
-    fireEvent(editor, undoShortcut);
-
-    expect(preventDefaultSpy).toHaveBeenCalledTimes(1);
+    expect(onWritingChange).toHaveBeenLastCalledWith('task1', exact);
   });
 });

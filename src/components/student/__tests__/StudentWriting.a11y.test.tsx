@@ -42,7 +42,7 @@ function createExamState(): ExamState {
 
 describe('StudentWriting a11y', () => {
   it('renders an accessible writing editor', () => {
-    const { container } = render(
+    render(
       <StudentWriting
         state={createExamState()}
         writingAnswers={{}}
@@ -53,10 +53,8 @@ describe('StudentWriting a11y', () => {
       />,
     );
 
-    const editor = container.querySelector('[contenteditable="true"]');
-    if (!editor) {
-      throw new Error('Expected writing editor to render');
-    }
+    const editor = screen.getByRole('textbox', { name: /writing response/i });
+    expect(editor.tagName).toBe('TEXTAREA');
     expect(editor.getAttribute('class')).toMatch(/focus-visible/);
   });
 

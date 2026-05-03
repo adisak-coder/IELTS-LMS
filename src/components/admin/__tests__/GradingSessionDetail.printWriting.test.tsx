@@ -94,7 +94,7 @@ const makeWritingTask = (submissionId: string, taskId: string, response: string)
   taskId,
   taskLabel: taskId === 'task1' ? 'Task 1' : 'Task 2',
   prompt: '<p>Describe the chart.</p>',
-  studentText: `<p><strong>${response}</strong></p>`,
+  studentText: response,
   wordCount: response.split(/\s+/).length,
   annotations: [],
   gradingStatus: 'needs_review',
@@ -122,7 +122,13 @@ describe('GradingSessionDetail print writing', () => {
     (gradingRepository.getSubmissionsBySession as any).mockResolvedValue([studentOne, studentTwo]);
     (gradingRepository.getWritingSubmissionsBySubmissionId as any).mockImplementation((submissionId: string) =>
       Promise.resolve([
-        makeWritingTask(submissionId, 'task1', submissionId === 'sub-1' ? 'Ada response text' : 'Ben response text'),
+        makeWritingTask(
+          submissionId,
+          'task1',
+          submissionId === 'sub-1'
+            ? 'Ada  response text\n\nLine 3'
+            : 'Ben response text',
+        ),
       ]),
     );
   });
@@ -152,7 +158,7 @@ describe('GradingSessionDetail print writing', () => {
     expect(document.querySelector('.session-writing-print-root')).toHaveTextContent('Ada Student');
     expect(document.querySelector('.session-writing-print-root')).toHaveTextContent('Ben Student');
     expect(document.querySelector('.session-writing-print-root')).toHaveTextContent('Assessment Form');
-    expect(document.querySelector('.session-writing-print-response')).toHaveTextContent('Ada response text');
+    expect(document.querySelector('.session-writing-print-response')?.textContent).toBe('Ada  response text\n\nLine 3');
     expect(document.querySelector('.session-writing-print-response strong')).toBeNull();
     const printStyle = Array.from(document.querySelectorAll('style'))
       .map((style) => style.textContent ?? '')
