@@ -104,11 +104,12 @@ impl AnswerHistoryService {
         submission_id: Uuid,
     ) -> Result<AnswerHistoryOverview, AnswerHistoryError> {
         let context = self.load_context(submission_id).await?;
+        let history_attempt_id = self.resolve_history_attempt_id(&context).await?;
         let target_catalog =
             build_target_catalog(&context.content_snapshot, &context.config_snapshot);
         let catalog_index = build_target_catalog_index(&target_catalog);
         let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
-        let mutations = self.load_mutations(&context.attempt_id).await?;
+        let mutations = self.load_mutations(&history_attempt_id).await?;
         let target_mutations = mutations
             .iter()
             .filter_map(|row| classify_target_mutation(row, &catalog_index))
@@ -221,7 +222,7 @@ impl AnswerHistoryService {
         let signals = self
             .build_global_signals(
                 &context.schedule_id,
-                &context.attempt_id,
+                &history_attempt_id,
                 &target_mutations,
                 context.submitted_at,
             )
@@ -229,7 +230,7 @@ impl AnswerHistoryService {
 
         Ok(AnswerHistoryOverview {
             submission_id: context.submission_id,
-            attempt_id: context.attempt_id,
+            attempt_id: history_attempt_id,
             schedule_id: context.schedule_id,
             exam_id: context.exam_id,
             exam_title: context.exam_title,
@@ -255,11 +256,12 @@ impl AnswerHistoryService {
         limit: usize,
     ) -> Result<AnswerHistoryTargetDetail, AnswerHistoryError> {
         let context = self.load_context(submission_id).await?;
+        let history_attempt_id = self.resolve_history_attempt_id(&context).await?;
         let target_catalog =
             build_target_catalog(&context.content_snapshot, &context.config_snapshot);
         let catalog_index = build_target_catalog_index(&target_catalog);
         let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
-        let rows = self.load_mutations(&context.attempt_id).await?;
+        let rows = self.load_mutations(&history_attempt_id).await?;
         let mut matching = rows
             .into_iter()
             .filter_map(|row| classify_target_mutation(&row, &catalog_index))
@@ -381,7 +383,7 @@ impl AnswerHistoryService {
 
         Ok(AnswerHistoryTargetDetail {
             submission_id: context.submission_id,
-            attempt_id: context.attempt_id,
+            attempt_id: history_attempt_id,
             schedule_id: context.schedule_id,
             target_id: target_id.to_string(),
             target_label: target_id.to_string(),
@@ -502,6 +504,47 @@ impl AnswerHistoryService {
         .bind(attempt_id)
         .fetch_all(&self.pool)
         .await?)
+    }
+
+    async fn resolve_history_attempt_id(
+        &self,
+        context: &SubmissionAttemptContextRow,
+    ) -> Result<String, AnswerHistoryError> {
+        let primary_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
+                .bind(&context.attempt_id)
+                .fetch_one(&self.pool)
+                .await?;
+        if primary_count > 0 {
+            return Ok(context.attempt_id.clone());
+        }
+
+        let anchor_time = context.submitted_at.unwrap_or(context.started_at);
+        let fallback_attempt_id = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT
+                attempts.id
+            FROM student_attempts attempts
+            JOIN student_attempt_mutations mutations
+                ON mutations.attempt_id = attempts.id
+            WHERE attempts.schedule_id = ?
+              AND attempts.candidate_id = ?
+            GROUP BY attempts.id, attempts.submitted_at, attempts.updated_at
+            ORDER BY
+                CASE WHEN attempts.submitted_at IS NULL THEN 1 ELSE 0 END ASC,
+                ABS(TIMESTAMPDIFF(SECOND, COALESCE(attempts.submitted_at, attempts.updated_at), ?)) ASC,
+                COUNT(mutations.id) DESC,
+                MAX(mutations.server_received_at) DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(&context.schedule_id)
+        .bind(&context.candidate_id)
+        .bind(anchor_time)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(fallback_attempt_id.unwrap_or_else(|| context.attempt_id.clone()))
     }
 
     async fn build_global_signals(
