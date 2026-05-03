@@ -125,6 +125,17 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
                 .any(|item| item["targetId"] == "task1" && item["targetType"] == "writing")
         })
         .unwrap_or(false));
+    assert!(overview_json["data"]["questionSummaries"]
+        .as_array()
+        .map(|items| {
+            items.iter().any(|item| {
+                item["targetId"] == "q2"
+                    && item["targetType"] == "objective"
+                    && item["revisionCount"] == 0
+                    && item["answered"] == false
+            })
+        })
+        .unwrap_or(false));
     assert!(
         overview_json["data"]["totalRevisions"]
             .as_i64()
@@ -167,6 +178,114 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
     let export_json = json_body(export).await;
     let content = export_json["data"]["content"].as_str().unwrap_or("");
     assert!(content.contains("checkpointIndex"));
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn overview_includes_catalog_targets_without_mutations_and_detail_uses_submitted_snapshot() {
+    let database = mysql::TestDatabase::new(ANSWER_HISTORY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+
+    let attempt_id = bootstrap_and_submit(
+        database.pool(),
+        schedule_id,
+        "catalog-only",
+        json!({ "q1": "submitted-only" }),
+        json!({ "task1": "essay only" }),
+    )
+    .await;
+    let submission_id = submission_id_for_attempt(database.pool(), attempt_id).await;
+
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Admin,
+        "admin-catalog@example.com",
+        "Admin Catalog",
+    )
+    .await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let overview = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/submissions/{}/overview",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(overview.status(), StatusCode::OK);
+    let overview_json = json_body(overview).await;
+    assert_eq!(overview_json["data"]["totalRevisions"], 0);
+    assert_eq!(overview_json["data"]["totalTargetsEdited"], 0);
+    assert!(overview_json["data"]["questionSummaries"]
+        .as_array()
+        .map(|items| {
+            items.iter().any(|item| {
+                item["targetId"] == "q1"
+                    && item["targetType"] == "objective"
+                    && item["revisionCount"] == 0
+                    && item["answered"] == true
+                    && item["finalValue"] == "submitted-only"
+            }) && items.iter().any(|item| {
+                item["targetId"] == "q2"
+                    && item["targetType"] == "objective"
+                    && item["revisionCount"] == 0
+                    && item["answered"] == false
+                    && item["finalValue"].is_null()
+            }) && items.iter().any(|item| {
+                item["targetId"] == "task1"
+                    && item["targetType"] == "writing"
+                    && item["revisionCount"] == 0
+                    && item["answered"] == true
+                    && item["finalValue"] == "essay only"
+            })
+        })
+        .unwrap_or(false));
+
+    let detail_answered = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/submissions/{}/targets/q1?targetType=objective",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_answered.status(), StatusCode::OK);
+    let detail_answered_json = json_body(detail_answered).await;
+    assert_eq!(detail_answered_json["data"]["finalState"], "submitted-only");
+    assert_eq!(detail_answered_json["data"]["checkpoints"], json!([]));
+    assert_eq!(detail_answered_json["data"]["technicalLogs"], json!([]));
+
+    let detail_unanswered = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/submissions/{}/targets/q2?targetType=objective",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail_unanswered.status(), StatusCode::OK);
+    let detail_unanswered_json = json_body(detail_unanswered).await;
+    assert!(detail_unanswered_json["data"]["finalState"].is_null());
+    assert_eq!(detail_unanswered_json["data"]["checkpoints"], json!([]));
+    assert_eq!(detail_unanswered_json["data"]["technicalLogs"], json!([]));
 
     database.shutdown().await;
 }

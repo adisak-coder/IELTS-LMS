@@ -40,6 +40,7 @@ const overviewFixture = {
       module: 'listening',
       targetType: 'objective' as const,
       revisionCount: 3,
+      answered: true,
       finalValue: ['environment', 'policy', 'government'],
     },
   ],
@@ -255,5 +256,52 @@ describe('AnswerHistoryPage', () => {
         JSON.stringify({ questionId: 'Q18', slotIndex: 2, value: 'government' }, null, 2),
       );
     });
+  });
+
+  it('renders unanswered targets and empty timeline states', () => {
+    mockOverviewHook.mockReturnValue({
+      data: {
+        ...overviewFixture,
+        questionSummaries: [
+          {
+            targetId: 'Q19',
+            label: 'Q19',
+            module: 'listening',
+            targetType: 'objective' as const,
+            revisionCount: 0,
+            answered: false,
+            finalValue: null,
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    });
+    mockDetailHook.mockReturnValue({
+      data: {
+        ...detailFixture,
+        targetId: 'Q19',
+        targetLabel: 'Q19',
+        finalState: null,
+        checkpoints: [],
+        replaySteps: [],
+        technicalLogs: [],
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <AnswerHistoryPage
+        submissionId="sub-1"
+        headingPrefix="Grading"
+        backLabel="Back"
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(screen.getAllByText('Unanswered').length).toBeGreaterThan(0);
+    expect(screen.getByText('No checkpoints were recorded for this target.')).toBeInTheDocument();
+    expect(screen.getByText('No technical logs available for this target.')).toBeInTheDocument();
   });
 });

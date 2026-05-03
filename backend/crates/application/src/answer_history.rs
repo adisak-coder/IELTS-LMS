@@ -31,6 +31,9 @@ struct SubmissionAttemptContextRow {
     schedule_id: String,
     exam_id: String,
     exam_title: String,
+    content_snapshot: Value,
+    config_snapshot: Value,
+    final_submission: Option<Value>,
     candidate_id: String,
     candidate_name: String,
     candidate_email: String,
@@ -64,6 +67,13 @@ struct TargetMutation {
     row: MutationRow,
 }
 
+#[derive(Debug, Clone)]
+struct TargetCatalogEntry {
+    module: String,
+    target_id: String,
+    target_type: AnswerHistoryTargetType,
+}
+
 impl AnswerHistoryService {
     pub fn new(pool: MySqlPool) -> Self {
         Self { pool }
@@ -87,6 +97,9 @@ impl AnswerHistoryService {
         submission_id: Uuid,
     ) -> Result<AnswerHistoryOverview, AnswerHistoryError> {
         let context = self.load_context(submission_id).await?;
+        let target_catalog =
+            build_target_catalog(&context.content_snapshot, &context.config_snapshot);
+        let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
         let mutations = self.load_mutations(&context.attempt_id).await?;
         let target_mutations = mutations
             .iter()
@@ -109,31 +122,69 @@ impl AnswerHistoryService {
             final_states.insert(key, next);
         }
 
+        for catalog_entry in &target_catalog {
+            target_modules
+                .entry((
+                    catalog_entry.target_type.clone(),
+                    catalog_entry.target_id.clone(),
+                ))
+                .or_insert_with(|| catalog_entry.module.clone());
+        }
+
+        let mut all_keys = HashSet::<(AnswerHistoryTargetType, String)>::new();
+        for key in revision_counts.keys() {
+            all_keys.insert(key.clone());
+        }
+        for key in final_states.keys() {
+            all_keys.insert(key.clone());
+        }
+        for key in submitted_states.keys() {
+            all_keys.insert(key.clone());
+        }
+        for catalog_entry in &target_catalog {
+            all_keys.insert((
+                catalog_entry.target_type.clone(),
+                catalog_entry.target_id.clone(),
+            ));
+        }
+
         let mut section_revision_counts = HashMap::<String, i64>::new();
         let mut section_targets = HashMap::<String, HashSet<String>>::new();
         let mut question_summaries = Vec::<AnswerHistoryQuestionSummary>::new();
 
-        let mut keys = revision_counts.keys().cloned().collect::<Vec<_>>();
-        keys.sort_by(|left, right| left.1.cmp(&right.1));
+        let mut keys = all_keys.into_iter().collect::<Vec<_>>();
+        keys.sort_by(|left, right| {
+            left.1
+                .cmp(&right.1)
+                .then(target_type_rank(&left.0).cmp(&target_type_rank(&right.0)))
+        });
 
         for (target_type, target_id) in keys {
             let module = target_modules
                 .get(&(target_type.clone(), target_id.clone()))
                 .cloned()
-                .unwrap_or_else(|| "unknown".to_string());
+                .unwrap_or_else(|| default_module_for_type(&target_type).to_string());
             let revision_count = *revision_counts
                 .get(&(target_type.clone(), target_id.clone()))
                 .unwrap_or(&0);
             let final_value = final_states
                 .get(&(target_type.clone(), target_id.clone()))
                 .cloned()
+                .or_else(|| {
+                    submitted_states
+                        .get(&(target_type.clone(), target_id.clone()))
+                        .cloned()
+                })
                 .unwrap_or(Value::Null);
+            let answered = is_answered_value(&final_value);
 
-            *section_revision_counts.entry(module.clone()).or_insert(0) += revision_count;
-            section_targets
-                .entry(module.clone())
-                .or_default()
-                .insert(format!("{:?}:{target_id}", target_type));
+            if revision_count > 0 {
+                *section_revision_counts.entry(module.clone()).or_insert(0) += revision_count;
+                section_targets
+                    .entry(module.clone())
+                    .or_default()
+                    .insert(format!("{:?}:{target_id}", target_type));
+            }
 
             question_summaries.push(AnswerHistoryQuestionSummary {
                 target_id: target_id.clone(),
@@ -141,6 +192,7 @@ impl AnswerHistoryService {
                 module,
                 target_type,
                 revision_count,
+                answered,
                 final_value,
             });
         }
@@ -179,7 +231,7 @@ impl AnswerHistoryService {
             started_at: Some(context.started_at),
             submitted_at: context.submitted_at,
             total_revisions: target_mutations.len() as i64,
-            total_targets_edited: question_summaries.len() as i64,
+            total_targets_edited: revision_counts.len() as i64,
             question_summaries,
             section_stats,
             signals,
@@ -195,6 +247,9 @@ impl AnswerHistoryService {
         limit: usize,
     ) -> Result<AnswerHistoryTargetDetail, AnswerHistoryError> {
         let context = self.load_context(submission_id).await?;
+        let target_catalog =
+            build_target_catalog(&context.content_snapshot, &context.config_snapshot);
+        let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
         let rows = self.load_mutations(&context.attempt_id).await?;
         let mut matching = rows
             .into_iter()
@@ -215,7 +270,13 @@ impl AnswerHistoryService {
 
         let mut checkpoints = Vec::<AnswerHistoryCheckpoint>::new();
         let mut technical_logs = Vec::<AnswerHistoryTechnicalLogRow>::new();
-        let mut state = Value::Null;
+        let mut state = submitted_states
+            .get(&(target_type.clone(), target_id.to_string()))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if !matching.is_empty() {
+            state = Value::Null;
+        }
         let mut previous_seen = BTreeMap::<String, usize>::new();
         let mut replay_signals = Vec::<AnswerHistorySignal>::new();
         let mut emitted = 0usize;
@@ -278,13 +339,36 @@ impl AnswerHistoryService {
             .await?;
         signals.extend(replay_signals);
 
+        let resolved_from_catalog = target_catalog
+            .iter()
+            .find(|entry| entry.target_type == target_type && entry.target_id == target_id)
+            .cloned()
+            .or_else(|| {
+                target_catalog
+                    .iter()
+                    .find(|entry| entry.target_id == target_id)
+                    .cloned()
+            });
+        let resolved_target_type = resolved_from_catalog
+            .as_ref()
+            .map(|entry| entry.target_type.clone())
+            .unwrap_or_else(|| target_type.clone());
+
         let module = matching
             .first()
             .map(|item| item.module.clone())
-            .unwrap_or_else(|| match target_type {
-                AnswerHistoryTargetType::Objective => "objective".to_string(),
-                AnswerHistoryTargetType::Writing => "writing".to_string(),
-            });
+            .or_else(|| {
+                resolved_from_catalog
+                    .as_ref()
+                    .map(|entry| entry.module.clone())
+            })
+            .unwrap_or_else(|| default_module_for_type(&resolved_target_type).to_string());
+        if matching.is_empty() {
+            state = submitted_states
+                .get(&(resolved_target_type.clone(), target_id.to_string()))
+                .cloned()
+                .unwrap_or(Value::Null);
+        }
 
         Ok(AnswerHistoryTargetDetail {
             submission_id: context.submission_id,
@@ -293,7 +377,7 @@ impl AnswerHistoryService {
             target_id: target_id.to_string(),
             target_label: target_id.to_string(),
             module,
-            target_type,
+            target_type: resolved_target_type,
             final_state: state,
             replay_steps: checkpoints.clone(),
             checkpoints,
@@ -366,6 +450,9 @@ impl AnswerHistoryService {
                 submissions.schedule_id AS schedule_id,
                 submissions.exam_id AS exam_id,
                 submissions.cohort_name AS exam_title,
+                versions.content_snapshot AS content_snapshot,
+                versions.config_snapshot AS config_snapshot,
+                attempts.final_submission AS final_submission,
                 attempts.candidate_id AS candidate_id,
                 attempts.candidate_name AS candidate_name,
                 attempts.candidate_email AS candidate_email,
@@ -373,6 +460,7 @@ impl AnswerHistoryService {
                 submissions.submitted_at AS submitted_at
             FROM student_submissions submissions
             JOIN student_attempts attempts ON attempts.id = submissions.attempt_id
+            JOIN exam_versions versions ON versions.id = submissions.published_version_id
             WHERE submissions.id = ?
             LIMIT 1
             "#,
@@ -701,4 +789,339 @@ fn value_char_len(value: &Value) -> i64 {
 
 fn canonical_value(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "null".to_string())
+}
+
+fn default_module_for_type(target_type: &AnswerHistoryTargetType) -> &'static str {
+    match target_type {
+        AnswerHistoryTargetType::Objective => "objective",
+        AnswerHistoryTargetType::Writing => "writing",
+    }
+}
+
+fn target_type_rank(target_type: &AnswerHistoryTargetType) -> u8 {
+    match target_type {
+        AnswerHistoryTargetType::Objective => 0,
+        AnswerHistoryTargetType::Writing => 1,
+    }
+}
+
+fn is_answered_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(items) => items.iter().any(is_answered_value),
+        _ => true,
+    }
+}
+
+fn build_submitted_target_states(
+    final_submission: Option<&Value>,
+) -> HashMap<(AnswerHistoryTargetType, String), Value> {
+    let mut states = HashMap::new();
+    let Some(final_submission) = final_submission else {
+        return states;
+    };
+    let Some(submission_obj) = final_submission.as_object() else {
+        return states;
+    };
+
+    if let Some(answers) = submission_obj.get("answers").and_then(Value::as_object) {
+        for (question_id, value) in answers {
+            states.insert(
+                (AnswerHistoryTargetType::Objective, question_id.to_owned()),
+                value.clone(),
+            );
+        }
+    }
+
+    if let Some(writing_answers) = submission_obj
+        .get("writingAnswers")
+        .and_then(Value::as_object)
+    {
+        for (task_id, value) in writing_answers {
+            states.insert(
+                (AnswerHistoryTargetType::Writing, task_id.to_owned()),
+                value.clone(),
+            );
+        }
+    }
+
+    states
+}
+
+fn build_target_catalog(
+    content_snapshot: &Value,
+    config_snapshot: &Value,
+) -> Vec<TargetCatalogEntry> {
+    let mut module_by_target = HashMap::<(AnswerHistoryTargetType, String), String>::new();
+    let objective_sections = build_objective_target_sections(content_snapshot);
+    for (target_id, module) in objective_sections {
+        module_by_target.insert((AnswerHistoryTargetType::Objective, target_id), module);
+    }
+
+    for task_id in build_writing_task_ids(config_snapshot, content_snapshot) {
+        module_by_target
+            .entry((AnswerHistoryTargetType::Writing, task_id))
+            .or_insert_with(|| "writing".to_string());
+    }
+
+    let mut entries = module_by_target
+        .into_iter()
+        .map(|((target_type, target_id), module)| TargetCatalogEntry {
+            module,
+            target_id,
+            target_type,
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| {
+        left.target_id
+            .cmp(&right.target_id)
+            .then(target_type_rank(&left.target_type).cmp(&target_type_rank(&right.target_type)))
+    });
+    entries
+}
+
+fn build_writing_task_ids(config_snapshot: &Value, content_snapshot: &Value) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    if let Some(tasks) = config_snapshot
+        .get("sections")
+        .and_then(|sections| sections.get("writing"))
+        .and_then(|writing| writing.get("tasks"))
+        .and_then(Value::as_array)
+    {
+        for task in tasks {
+            if let Some(id) = task.get("id").and_then(Value::as_str) {
+                ids.insert(id.to_owned());
+            }
+        }
+    }
+    if let Some(tasks) = content_snapshot
+        .get("writing")
+        .and_then(|writing| writing.get("tasks"))
+        .and_then(Value::as_array)
+    {
+        for task in tasks {
+            if let Some(id) = task.get("id").and_then(Value::as_str) {
+                ids.insert(id.to_owned());
+            }
+        }
+    }
+    ids
+}
+
+fn build_objective_target_sections(content_snapshot: &Value) -> HashMap<String, String> {
+    let mut sections = HashMap::new();
+
+    if let Some(passages) = content_snapshot
+        .get("reading")
+        .and_then(|reading| reading.get("passages"))
+        .and_then(Value::as_array)
+    {
+        for passage in passages {
+            if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
+                for block in blocks {
+                    index_objective_block_sections(block, "reading", &mut sections);
+                }
+            }
+        }
+    }
+
+    if let Some(parts) = content_snapshot
+        .get("listening")
+        .and_then(|listening| listening.get("parts"))
+        .and_then(Value::as_array)
+    {
+        for part in parts {
+            if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
+                for block in blocks {
+                    index_objective_block_sections(block, "listening", &mut sections);
+                }
+            }
+        }
+    }
+
+    if let Some(questions) = content_snapshot
+        .get("reading")
+        .and_then(|reading| reading.get("questions"))
+        .and_then(Value::as_array)
+    {
+        for question in questions {
+            if let Some(id) = question.get("id").and_then(Value::as_str) {
+                register_answer_section(&mut sections, id, "reading");
+            }
+        }
+    }
+
+    if let Some(questions) = content_snapshot
+        .get("listening")
+        .and_then(|listening| listening.get("questions"))
+        .and_then(Value::as_array)
+    {
+        for question in questions {
+            if let Some(id) = question.get("id").and_then(Value::as_str) {
+                register_answer_section(&mut sections, id, "listening");
+            }
+        }
+    }
+
+    sections
+}
+
+fn index_objective_block_sections(
+    block: &Value,
+    section_key: &str,
+    sections: &mut HashMap<String, String>,
+) {
+    if register_sub_answer_tree_sections(block, section_key, sections) {
+        return;
+    }
+
+    let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+        return;
+    };
+    let block_id = block.get("id").and_then(Value::as_str);
+
+    match block_type {
+        "TFNG" | "CLOZE" | "MATCHING" | "MAP" | "SHORT_ANSWER" => {
+            register_question_array_sections(block, section_key, sections);
+        }
+        "SENTENCE_COMPLETION" | "NOTE_COMPLETION" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                for question in questions {
+                    let Some(question_id) = question.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    register_answer_section(sections, question_id, section_key);
+                    if let Some(blanks) = question.get("blanks").and_then(Value::as_array) {
+                        for blank in blanks {
+                            if let Some(blank_id) = blank.get("id").and_then(Value::as_str) {
+                                register_answer_section(
+                                    sections,
+                                    &format!("{question_id}:{blank_id}"),
+                                    section_key,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "MULTI_MCQ" | "SINGLE_MCQ" => {
+            if let Some(block_id) = block_id {
+                register_answer_section(sections, block_id, section_key);
+            }
+        }
+        "DIAGRAM_LABELING" => {
+            register_block_slot_sections(block, block_id, "labels", section_key, sections);
+        }
+        "FLOW_CHART" => {
+            register_block_slot_sections(block, block_id, "steps", section_key, sections);
+        }
+        "TABLE_COMPLETION" => {
+            register_block_slot_sections(block, block_id, "cells", section_key, sections);
+        }
+        "CLASSIFICATION" => {
+            register_block_slot_sections(block, block_id, "items", section_key, sections);
+        }
+        "MATCHING_FEATURES" => {
+            register_block_slot_sections(block, block_id, "features", section_key, sections);
+        }
+        _ => {}
+    }
+}
+
+fn register_sub_answer_tree_sections(
+    block: &Value,
+    section_key: &str,
+    sections: &mut HashMap<String, String>,
+) -> bool {
+    let enabled = block
+        .get("subAnswerModeEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return false;
+    }
+
+    let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(roots) = block.get("answerTree").and_then(Value::as_array) else {
+        return false;
+    };
+    if roots.is_empty() {
+        return false;
+    }
+
+    for root in roots {
+        let Some(root_id) = root.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut stack: Vec<&Value> = vec![root];
+        while let Some(node) = stack.pop() {
+            let children = node.get("children").and_then(Value::as_array);
+            let is_leaf = children.map(|items| items.is_empty()).unwrap_or(true);
+            if is_leaf {
+                if let Some(node_id) = node.get("id").and_then(Value::as_str) {
+                    register_answer_section(
+                        sections,
+                        &format!("{block_id}::tree::{root_id}::{node_id}"),
+                        section_key,
+                    );
+                }
+                continue;
+            }
+            if let Some(children) = children {
+                for child in children {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+
+    true
+}
+
+fn register_question_array_sections(
+    block: &Value,
+    section_key: &str,
+    sections: &mut HashMap<String, String>,
+) {
+    if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+        for question in questions {
+            if let Some(question_id) = question.get("id").and_then(Value::as_str) {
+                register_answer_section(sections, question_id, section_key);
+            }
+        }
+    }
+}
+
+fn register_block_slot_sections(
+    block: &Value,
+    block_id: Option<&str>,
+    slot_key: &str,
+    section_key: &str,
+    sections: &mut HashMap<String, String>,
+) {
+    let Some(block_id) = block_id else {
+        return;
+    };
+    register_answer_section(sections, block_id, section_key);
+    if let Some(slots) = block.get(slot_key).and_then(Value::as_array) {
+        for slot in slots {
+            if let Some(slot_id) = slot.get("id").and_then(Value::as_str) {
+                register_answer_section(sections, &format!("{block_id}:{slot_id}"), section_key);
+            }
+        }
+    }
+}
+
+fn register_answer_section(
+    sections: &mut HashMap<String, String>,
+    answer_key: &str,
+    section_key: &str,
+) {
+    sections
+        .entry(answer_key.to_owned())
+        .or_insert_with(|| section_key.to_owned());
 }

@@ -15,6 +15,7 @@ export interface AnswerHistoryQuestionSummary {
   module: string;
   targetType: AnswerHistoryTargetType;
   revisionCount: number;
+  answered: boolean;
   finalValue: unknown;
 }
 

@@ -341,6 +341,7 @@ export function AnswerHistoryPage({
                   {items.map((item) => {
                     const selected =
                       item.targetId === selectedTargetId && item.targetType === selectedTargetType;
+                    const unanswered = !item.answered;
                     return (
                       <button
                         key={`${item.targetType}-${item.targetId}`}
@@ -357,9 +358,16 @@ export function AnswerHistoryPage({
                       >
                         <div className="flex items-center justify-between gap-2">
                           <p className="truncate font-medium">{item.label}</p>
-                          <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
-                            {item.revisionCount}
-                          </span>
+                          <div className="flex items-center gap-1.5">
+                            {unanswered ? (
+                              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                                Unanswered
+                              </span>
+                            ) : null}
+                            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600">
+                              {item.revisionCount}
+                            </span>
+                          </div>
                         </div>
                         <p className="mt-1 text-xs text-gray-500">{item.targetType}</p>
                       </button>
@@ -379,7 +387,14 @@ export function AnswerHistoryPage({
             <>
               <div className="flex items-center justify-between gap-3 border-b border-gray-100 pb-3">
                 <div>
-                  <h2 className="text-lg font-semibold text-gray-900">{selectedTargetSummary.label}</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-lg font-semibold text-gray-900">{selectedTargetSummary.label}</h2>
+                    {!selectedTargetSummary.answered ? (
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        Unanswered
+                      </span>
+                    ) : null}
+                  </div>
                   <p className="text-sm text-gray-500">
                     {selectedTargetSummary.targetType} • {selectedTargetSummary.module}
                   </p>

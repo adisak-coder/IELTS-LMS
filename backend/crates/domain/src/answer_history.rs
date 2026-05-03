@@ -17,6 +17,7 @@ pub struct AnswerHistoryQuestionSummary {
     pub module: String,
     pub target_type: AnswerHistoryTargetType,
     pub revision_count: i64,
+    pub answered: bool,
     pub final_value: Value,
 }
 
