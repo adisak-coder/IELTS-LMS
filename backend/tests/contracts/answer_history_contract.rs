@@ -80,7 +80,7 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
         database.pool(),
         schedule_id,
         attempt_id,
-        "SetEssayText",
+        "writing_answer",
         3,
         json!({ "taskId": "task1", "value": "first essay paragraph", "baseRevision": 2, "module": "writing" }),
         Utc.with_ymd_and_hms(2026, 1, 10, 9, 15, 0).unwrap(),
@@ -117,6 +117,14 @@ async fn admin_can_fetch_answer_history_overview_and_detail() {
         overview_json["data"]["submissionId"],
         submission_id.to_string()
     );
+    assert!(overview_json["data"]["questionSummaries"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .any(|item| item["targetId"] == "task1" && item["targetType"] == "writing")
+        })
+        .unwrap_or(false));
     assert!(
         overview_json["data"]["totalRevisions"]
             .as_i64()

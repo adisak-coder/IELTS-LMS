@@ -542,13 +542,14 @@ impl AnswerHistoryService {
 
 fn classify_target_mutation(row: &MutationRow) -> Option<TargetMutation> {
     let payload = &row.payload;
+    let normalized_type = row.mutation_type.as_str();
     let module = payload
         .get("module")
         .and_then(Value::as_str)
         .unwrap_or(
             if matches!(
-                row.mutation_type.as_str(),
-                "SetEssayText" | "ClearEssayText"
+                normalized_type,
+                "SetEssayText" | "ClearEssayText" | "writing_answer"
             ) {
                 "writing"
             } else {
@@ -558,8 +559,8 @@ fn classify_target_mutation(row: &MutationRow) -> Option<TargetMutation> {
         .to_string();
 
     if matches!(
-        row.mutation_type.as_str(),
-        "SetEssayText" | "ClearEssayText"
+        normalized_type,
+        "SetEssayText" | "ClearEssayText" | "writing_answer"
     ) {
         let task_id = payload.get("taskId")?.as_str()?.to_string();
         return Some(TargetMutation {
@@ -570,17 +571,31 @@ fn classify_target_mutation(row: &MutationRow) -> Option<TargetMutation> {
         });
     }
 
-    let question_id = payload.get("questionId")?.as_str()?.to_string();
-    Some(TargetMutation {
-        module,
-        target_id: question_id,
-        target_type: AnswerHistoryTargetType::Objective,
-        row: row.clone(),
-    })
+    if let Some(question_id) = payload.get("questionId").and_then(Value::as_str) {
+        return Some(TargetMutation {
+            module,
+            target_id: question_id.to_string(),
+            target_type: AnswerHistoryTargetType::Objective,
+            row: row.clone(),
+        });
+    }
+
+    if let Some(task_id) = payload.get("taskId").and_then(Value::as_str) {
+        return Some(TargetMutation {
+            module,
+            target_id: task_id.to_string(),
+            target_type: AnswerHistoryTargetType::Writing,
+            row: row.clone(),
+        });
+    }
+
+    None
 }
 
 fn apply_mutation_to_state(state: &Value, row: &MutationRow) -> Value {
     match row.mutation_type.as_str() {
+        "answer" => row.payload.get("value").cloned().unwrap_or(Value::Null),
+        "writing_answer" => row.payload.get("value").cloned().unwrap_or(Value::Null),
         "SetSlot" => {
             let mut slots = state.as_array().cloned().unwrap_or_default();
             let slot_index = row
@@ -637,12 +652,18 @@ fn apply_mutation_to_state(state: &Value, row: &MutationRow) -> Value {
                 .to_string(),
         ),
         "ClearEssayText" => Value::String(String::new()),
+        "flag" => state.clone(),
+        "position" => state.clone(),
         _ => state.clone(),
     }
 }
 
 fn describe_mutation(row: &MutationRow) -> String {
     match row.mutation_type.as_str() {
+        "answer" => "Updated answer".to_string(),
+        "writing_answer" => "Edited essay text".to_string(),
+        "flag" => "Toggled flag".to_string(),
+        "position" => "Moved cursor position".to_string(),
         "SetSlot" => format!(
             "Updated slot {}",
             row.payload
