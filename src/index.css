@@ -268,14 +268,35 @@
     margin-bottom: 0;
   }
 
-  .student-reading-question-typography {
-    font-size: var(--student-reading-question-font-size, 1rem);
-    line-height: var(--student-reading-question-line-height, 1.75);
+  /* Force consistent passage typography regardless of builder-authored tags/styles. */
+  .student-reading-passage-content,
+  .student-reading-passage-content * {
+    font-family: inherit !important;
   }
 
-  .student-reading-instruction-text {
-    font-size: var(--student-reading-instruction-font-size, 1rem);
-    line-height: var(--student-reading-instruction-line-height, 1.75);
+  .student-reading-passage-content :is(
+    p,
+    h1,
+    h2,
+    h3,
+    h4,
+    h5,
+    h6,
+    li,
+    span,
+    strong,
+    b,
+    em,
+    i,
+    a,
+    u
+  ) {
+    font-size: 1em !important;
+    line-height: inherit !important;
+  }
+
+  .student-reading-passage-content :is(h1, h2, h3, h4, h5, h6, strong, b) {
+    font-weight: 700;
   }
 
   .student-reading-passage-pane {

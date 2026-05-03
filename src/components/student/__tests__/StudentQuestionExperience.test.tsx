@@ -1013,7 +1013,7 @@ describe('student question experience', () => {
     expect(passagePanel?.className).not.toContain('text-sm');
     expect(passagePanel?.className).not.toContain('md:text-base');
     expect(passageTitle).toHaveStyle({ fontSize: 'var(--student-passage-title-font-size)' });
-    expect(passageContent?.className).toContain('--student-passage-h1-font-size');
+    expect(passageContent?.className).toContain('student-reading-passage-content');
   });
 
   it('renders HTML reading passages with normal whitespace handling', () => {

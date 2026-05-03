@@ -113,7 +113,7 @@ describe('StudentReading passage readability controls', () => {
     expect(onReset).toHaveBeenCalledTimes(1);
   });
 
-  it('clamps controls via disabled state and applies question readability css vars', () => {
+  it('clamps controls via disabled state and keeps question pane sizing unchanged', () => {
     render(
       <StudentReading
         state={createState()}
@@ -134,9 +134,7 @@ describe('StudentReading passage readability controls', () => {
     expect(screen.getByRole('button', { name: /decrease passage text size/i })).toBeDisabled();
 
     const questionPane = screen.getByTestId('reading-question-scroll');
-    expect(questionPane).toHaveStyle({
-      fontSize: 'var(--student-reading-question-font-size)',
-      lineHeight: 'var(--student-reading-question-line-height)',
-    });
+    expect(questionPane).not.toHaveStyle({ fontSize: 'var(--student-reading-question-font-size)' });
+    expect(questionPane).not.toHaveStyle({ lineHeight: 'var(--student-reading-question-line-height)' });
   });
 });

@@ -188,15 +188,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     ['--student-preview-font-size' as string]: studentTypography.previewFontSize,
     ['--student-passage-font-size' as string]: readingTypography.passageFontSize,
     ['--student-passage-title-font-size' as string]: readingTypography.passageTitleFontSize,
-    ['--student-passage-h1-font-size' as string]: readingTypography.passageH1FontSize,
-    ['--student-passage-h2-font-size' as string]: readingTypography.passageH2FontSize,
-    ['--student-passage-h3-font-size' as string]: readingTypography.passageH3FontSize,
     ['--student-passage-line-height' as string]: readingTypography.passageLineHeight,
     ['--student-reading-paragraph-spacing' as string]: readingTypography.passageParagraphSpacing,
-    ['--student-reading-question-font-size' as string]: readingTypography.questionFontSize,
-    ['--student-reading-question-line-height' as string]: readingTypography.questionLineHeight,
-    ['--student-reading-instruction-font-size' as string]: readingTypography.instructionFontSize,
-    ['--student-reading-instruction-line-height' as string]: readingTypography.instructionLineHeight,
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);

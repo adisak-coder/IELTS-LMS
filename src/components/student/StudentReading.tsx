@@ -120,7 +120,7 @@ export function StudentReading({
       <div className={`rounded-lg border border-gray-200 bg-gray-50 ${answerCompact ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
         <FormattedText
           as="p"
-          className="student-reading-instruction-text text-gray-800 break-words [overflow-wrap:anywhere]"
+          className={`${answerCompact ? 'text-xs md:text-sm' : 'text-sm md:text-base'} leading-relaxed text-gray-800 break-words [overflow-wrap:anywhere]`}
           text={instruction}
           highlightEnabled={highlightEnabled}
           highlightColor={highlightColor}
@@ -346,7 +346,7 @@ export function StudentReading({
               </div>
             ) : null}
           </div>
-          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} student-reading-passage-content break-words [overflow-wrap:anywhere] text-gray-900 [&_h1]:font-black [&_h1]:leading-tight [&_h1]:[font-size:var(--student-passage-h1-font-size)] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:[font-size:var(--student-passage-h2-font-size)] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:[font-size:var(--student-passage-h3-font-size)] [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
+          <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} student-reading-passage-content break-words [overflow-wrap:anywhere] text-gray-900 [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
             <RichTextHighlighter
               content={renderedPassageContent}
               contentType="html"
@@ -395,11 +395,7 @@ export function StudentReading({
             ref={questionContainerRef}
             data-student-zoom-scroll
             data-testid="reading-question-scroll"
-            style={{
-              ...(tabletContentZoomStyle ?? {}),
-              fontSize: 'var(--student-reading-question-font-size)',
-              lineHeight: 'var(--student-reading-question-line-height)',
-            }}
+            style={tabletContentZoomStyle}
           >
             {activePassage.blocks.map((block) => {
               const blockQuestions = allQuestions.filter((question) => question.blockId === block.id);
@@ -424,10 +420,7 @@ export function StudentReading({
               return (
                 <div key={block.id} className={`${answerCompact ? 'space-y-3 mb-3 md:mb-4' : 'space-y-4 md:space-y-6 mb-4 md:mb-6'}`}>
                   <div className={answerCompact ? 'mb-2' : 'mb-3 md:mb-4'}>
-                    <h3
-                      className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}
-                      style={{ fontSize: 'var(--student-reading-instruction-font-size)', lineHeight: 'var(--student-reading-instruction-line-height)' }}
-                    >
+                    <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
                       Questions {formatQuestionRange(numberedBlockStart, numberedBlockEnd)}
                     </h3>
                     {renderBlockInstruction(block.instruction)}
