@@ -2,7 +2,6 @@ import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { ExamState } from '../../types';
 import { ArrowLeftRight, Check, X } from 'lucide-react';
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
-import { MIN_HEIGHTS } from '../../constants/uiConstants';
 import { saveStudentAuditEvent } from '../../services/studentAuditService';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
@@ -449,8 +448,8 @@ export function StudentWriting({
               : 'min-w-[280px] md:min-w-[320px] lg:w-[var(--writing-editor-pane-width)]'
           }`}
         >
-          <div className="flex-1 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
-            <div className="relative flex-1 w-full">
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
+            <div className="relative flex-1 min-h-0 w-full flex flex-col">
               <div className="flex flex-col gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between">
                 <span>Writing Response</span>
                 <div className="flex items-center gap-2" aria-label="Current word count">
@@ -487,9 +486,8 @@ export function StudentWriting({
                 onCut={blockWritingEditorInteraction}
                 onDrop={blockWritingEditorInteraction}
                 onContextMenu={blockWritingEditorInteraction}
-                className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 whitespace-pre-wrap"
+                className="h-full w-full resize-none p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 whitespace-pre-wrap"
                 data-student-zoom-scroll
-                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
                 spellCheck={!security.preventAutocorrect}
                 autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
                 autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}

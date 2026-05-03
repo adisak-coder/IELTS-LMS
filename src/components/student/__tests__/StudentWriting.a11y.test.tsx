@@ -56,6 +56,9 @@ describe('StudentWriting a11y', () => {
     const editor = screen.getByRole('textbox', { name: /writing response/i });
     expect(editor.tagName).toBe('TEXTAREA');
     expect(editor.getAttribute('class')).toMatch(/focus-visible/);
+    expect(editor).toHaveClass('h-full');
+    expect(editor).toHaveClass('resize-none');
+    expect(editor).toHaveClass('overflow-y-auto');
   });
 
   it('resizes writing panes using the workspace bounds', () => {
