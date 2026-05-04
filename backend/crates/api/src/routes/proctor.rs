@@ -151,13 +151,12 @@ pub async fn end_section_now(
     state
         .telemetry
         .observe_db_operation("proctor.end_section_now", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_runtime".to_owned(),
-            id: schedule_id.to_string(),
-            revision: i64::from(runtime.revision),
-            event: "end_section_now".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_runtime".to_owned(),
+        id: schedule_id.to_string(),
+        revision: i64::from(runtime.revision),
+        event: "end_section_now".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 
@@ -178,13 +177,12 @@ pub async fn extend_section(
     state
         .telemetry
         .observe_db_operation("proctor.extend_section", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_runtime".to_owned(),
-            id: schedule_id.to_string(),
-            revision: i64::from(runtime.revision),
-            event: "extend_section".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_runtime".to_owned(),
+        id: schedule_id.to_string(),
+        revision: i64::from(runtime.revision),
+        event: "extend_section".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 
@@ -205,13 +203,12 @@ pub async fn complete_exam(
     state
         .telemetry
         .observe_db_operation("proctor.complete_exam", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_runtime".to_owned(),
-            id: schedule_id.to_string(),
-            revision: i64::from(runtime.revision),
-            event: "complete_exam".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_runtime".to_owned(),
+        id: schedule_id.to_string(),
+        revision: i64::from(runtime.revision),
+        event: "complete_exam".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 
@@ -234,20 +231,18 @@ pub async fn warn_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.warn_attempt", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_roster".to_owned(),
-            id: schedule_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "attempt".to_owned(),
-            id: attempt_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_roster".to_owned(),
+        id: schedule_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "attempt".to_owned(),
+        id: attempt_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -270,20 +265,18 @@ pub async fn pause_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.pause_attempt", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_roster".to_owned(),
-            id: schedule_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "attempt".to_owned(),
-            id: attempt_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_roster".to_owned(),
+        id: schedule_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "attempt".to_owned(),
+        id: attempt_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -306,20 +299,18 @@ pub async fn resume_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.resume_attempt", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_roster".to_owned(),
-            id: schedule_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "attempt".to_owned(),
-            id: attempt_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_roster".to_owned(),
+        id: schedule_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "attempt".to_owned(),
+        id: attempt_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 
@@ -342,20 +333,18 @@ pub async fn terminate_attempt(
     state
         .telemetry
         .observe_db_operation("proctor.terminate_attempt", started.elapsed());
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_roster".to_owned(),
-            id: schedule_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "attempt".to_owned(),
-            id: attempt_id.to_string(),
-            revision: 0,
-            event: "attempt_changed".to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_roster".to_owned(),
+        id: schedule_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "attempt".to_owned(),
+        id: attempt_id.to_string(),
+        revision: 0,
+        event: "attempt_changed".to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(session, request_id.0))
 }
 

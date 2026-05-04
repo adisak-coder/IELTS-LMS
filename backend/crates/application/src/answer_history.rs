@@ -553,11 +553,12 @@ impl AnswerHistoryService {
         &self,
         context: &SubmissionAttemptContextRow,
     ) -> Result<String, AnswerHistoryError> {
-        let primary_count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
-                .bind(&context.attempt_id)
-                .fetch_one(&self.pool)
-                .await?;
+        let primary_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?",
+        )
+        .bind(&context.attempt_id)
+        .fetch_one(&self.pool)
+        .await?;
         if primary_count > 0 {
             return Ok(context.attempt_id.clone());
         }
@@ -805,8 +806,8 @@ fn apply_mutation_to_state(state: &Value, row: &MutationRow) -> Value {
             .unwrap_or(Value::Null),
         "SetSlot" => {
             let mut slots = state.as_array().cloned().unwrap_or_default();
-            let slot_index = extract_payload_usize(&row.payload, &["slotIndex", "slot_index"])
-                .unwrap_or(0);
+            let slot_index =
+                extract_payload_usize(&row.payload, &["slotIndex", "slot_index"]).unwrap_or(0);
             while slots.len() <= slot_index {
                 slots.push(Value::String(String::new()));
             }
@@ -818,17 +819,19 @@ fn apply_mutation_to_state(state: &Value, row: &MutationRow) -> Value {
         }
         "ClearSlot" => {
             let mut slots = state.as_array().cloned().unwrap_or_default();
-            let slot_index = extract_payload_usize(&row.payload, &["slotIndex", "slot_index"])
-                .unwrap_or(0);
+            let slot_index =
+                extract_payload_usize(&row.payload, &["slotIndex", "slot_index"]).unwrap_or(0);
             while slots.len() <= slot_index {
                 slots.push(Value::String(String::new()));
             }
             slots[slot_index] = Value::String(String::new());
             Value::Array(slots)
         }
-        "SetScalar" => {
-            Value::String(extract_payload_string(&row.payload, &["value"]).unwrap_or("").to_string())
-        }
+        "SetScalar" => Value::String(
+            extract_payload_string(&row.payload, &["value"])
+                .unwrap_or("")
+                .to_string(),
+        ),
         "ClearScalar" => Value::String(String::new()),
         "SetChoice" => extract_payload_value(&row.payload, &["value"])
             .cloned()
@@ -1161,7 +1164,10 @@ fn build_objective_module_order(config_snapshot: &Value) -> Vec<String> {
     }
 
     enabled.sort_by(|left, right| left.1.cmp(&right.1).then(left.0.cmp(&right.0)));
-    let mut ordered = enabled.into_iter().map(|(section, _)| section).collect::<Vec<_>>();
+    let mut ordered = enabled
+        .into_iter()
+        .map(|(section, _)| section)
+        .collect::<Vec<_>>();
 
     for fallback in ["listening", "reading"] {
         if !ordered.iter().any(|section| section == fallback) {

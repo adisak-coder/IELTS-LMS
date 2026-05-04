@@ -397,17 +397,19 @@ async fn patch_draft_does_not_delete_versions_referenced_by_schedules() {
     sqlx::query(
         r#"
         INSERT INTO exam_schedules (
-            id, exam_id, organization_id, exam_title, published_version_id, cohort_name,
+            id, exam_id, organization_id, exam_title, proctor_display_name, grading_display_name, published_version_id, cohort_name,
             institution, start_time, end_time, planned_duration_minutes, delivery_mode,
             recurrence_type, recurrence_interval, auto_start, auto_stop, status, created_by,
             created_at, updated_at, revision
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW() + INTERVAL 60 MINUTE, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW() + INTERVAL 60 MINUTE, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
         "#,
     )
     .bind(Uuid::new_v4().to_string())
     .bind(seeded.id.to_string())
     .bind("org-1")
+    .bind(&seeded.title)
+    .bind(&seeded.title)
     .bind(&seeded.title)
     .bind(&protected_version)
     .bind("Batch A")

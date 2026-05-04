@@ -23,6 +23,8 @@ describe('ExamDeliveryService backend scheduling mode', () => {
               id: 'sched-1',
               examId: 'exam-1',
               examTitle: 'Mock Exam',
+              proctorDisplayName: 'Mock Exam',
+              gradingDisplayName: 'Mock Exam',
               publishedVersionId: 'ver-1',
               cohortName: 'Cohort A',
               institution: 'Center',

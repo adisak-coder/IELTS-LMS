@@ -6,7 +6,7 @@ use axum::{
 use chrono::Utc;
 use ielts_backend_application::auth::{AuthService, StudentAccess};
 use ielts_backend_application::delivery::{
-    DeliveryError, DeliveryService, MutationBatchResponseMode,
+    DeliveryConflictReason, DeliveryError, DeliveryService, MutationBatchResponseMode,
 };
 use ielts_backend_domain::attempt::{
     MutationEnvelope, StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
@@ -321,6 +321,14 @@ struct ApiSubmitRequest {
     attempt_id: String,
     last_seen_revision: i32,
     submission_id: String,
+    #[serde(default)]
+    client_final_seq: Option<i64>,
+    #[serde(default)]
+    server_accepted_through_seq: Option<i64>,
+    #[serde(default)]
+    final_answer_patch: Option<Value>,
+    #[serde(default)]
+    final_client_snapshot_hash: Option<String>,
 }
 
 pub async fn save_precheck(
@@ -933,17 +941,49 @@ pub async fn submit_student_session(
         attempt_id: attempt_id.clone(),
         student_key: load_attempt_student_key(&state, &attempt_id).await?,
         last_seen_revision: Some(api_req.last_seen_revision),
-        submission_id: Some(api_req.submission_id),
+        submission_id: Some(api_req.submission_id.clone()),
         client_session_id: Some(claims_client_session_id),
+        client_final_seq: api_req.client_final_seq,
+        server_accepted_through_seq: api_req.server_accepted_through_seq,
+        final_answer_patch: api_req.final_answer_patch.clone(),
+        final_client_snapshot_hash: api_req.final_client_snapshot_hash.clone(),
         answers: None,
         writing_answers: None,
         flags: None,
     };
     let service = delivery_service(&state);
     let started = Instant::now();
-    let mut submission = service
+    let submit_result = service
         .submit_attempt(schedule_id, req, Some(idempotency_key))
-        .await?;
+        .await;
+    let mut submission = match submit_result {
+        Ok(submission) => {
+            if api_req.final_answer_patch.is_some() {
+                state.telemetry.observe_submit_final_patch_applied();
+            }
+            submission
+        }
+        Err(err) => {
+            if let DeliveryError::Conflict {
+                reason: Some(reason),
+                ..
+            } = &err
+            {
+                match reason {
+                    DeliveryConflictReason::FinalFlushRequired => {
+                        state.telemetry.observe_submit_missing_seq();
+                    }
+                    DeliveryConflictReason::FinalPayloadHashMismatch => {
+                        state
+                            .telemetry
+                            .observe_submit_final_snapshot_hash_mismatch();
+                    }
+                    _ => {}
+                }
+            }
+            return Err(err.into());
+        }
+    };
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
     submission.refreshed_attempt_credential = auth_service
         .maybe_refresh_attempt_token(&principal.authorization)
@@ -1239,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn submit_request_rejects_snapshot_fields() {
+    fn submit_request_rejects_legacy_snapshot_fields() {
         let payload = json!({
             "attemptId": "attempt-1",
             "lastSeenRevision": 11,
@@ -1249,6 +1289,29 @@ mod tests {
 
         let parsed = serde_json::from_value::<ApiSubmitRequest>(payload);
         assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn submit_request_accepts_final_patch_metadata() {
+        let payload = json!({
+            "attemptId": "attempt-1",
+            "lastSeenRevision": 11,
+            "submissionId": "submit-1",
+            "clientFinalSeq": 13,
+            "serverAcceptedThroughSeq": 12,
+            "finalAnswerPatch": {
+                "answers": {"q1": "A"},
+                "writingAnswers": {"task1": "Essay"},
+                "flags": {"q1": true}
+            },
+            "finalClientSnapshotHash": "abc123"
+        });
+
+        let parsed = serde_json::from_value::<ApiSubmitRequest>(payload).unwrap();
+        assert_eq!(parsed.client_final_seq, Some(13));
+        assert_eq!(parsed.server_accepted_through_seq, Some(12));
+        assert!(parsed.final_answer_patch.is_some());
+        assert_eq!(parsed.final_client_snapshot_hash.as_deref(), Some("abc123"));
     }
 
     #[test]

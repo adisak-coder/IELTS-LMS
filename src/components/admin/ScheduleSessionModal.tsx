@@ -18,6 +18,8 @@ interface ScheduleDraft {
   examId: string;
   publishedVersionId: string;
   cohortName: string;
+  proctorDisplayName: string;
+  gradingDisplayName: string;
   startTime: string;
   endTime: string;
 }
@@ -42,11 +44,14 @@ export function ScheduleSessionModal({
   onClose,
   onCreateSchedule,
 }: ScheduleSessionModalProps) {
+  const defaultScheduleName = examEntities[0]?.title || exams[0]?.title || '';
   const defaultExamId = initialExamId || examEntities[0]?.id || exams[0]?.id || '';
   const [draft, setDraft] = useState<ScheduleDraft>({
     examId: defaultExamId,
     publishedVersionId: '',
     cohortName: 'Elite 2025-A',
+    proctorDisplayName: defaultScheduleName,
+    gradingDisplayName: defaultScheduleName,
     startTime: toInputValue(new Date().toISOString()),
     endTime: toInputValue(new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()),
   });
@@ -60,11 +65,14 @@ export function ScheduleSessionModal({
 
     const exam = examEntities.find((item) => item.id === defaultExamId) ?? examEntities[0];
     const versionId = exam?.currentPublishedVersionId || exam?.currentDraftVersionId || '';
+    const displayName = exam?.title || '';
 
     setDraft({
       examId: exam?.id || defaultExamId,
       publishedVersionId: versionId,
       cohortName: 'Elite 2025-A',
+      proctorDisplayName: displayName,
+      gradingDisplayName: displayName,
       startTime: toInputValue(new Date().toISOString()),
       endTime: toInputValue(new Date(Date.now() + 3 * 60 * 60 * 1000).toISOString()),
     });
@@ -86,6 +94,14 @@ export function ScheduleSessionModal({
       toIso(draft.endTime),
     );
   }, [draft.endTime, draft.startTime, selectedVersion]);
+
+  const trimmedProctorDisplayName = draft.proctorDisplayName.trim();
+  const trimmedGradingDisplayName = draft.gradingDisplayName.trim();
+  const isProctorDisplayNameValid =
+    trimmedProctorDisplayName.length > 0 && trimmedProctorDisplayName.length <= 255;
+  const isGradingDisplayNameValid =
+    trimmedGradingDisplayName.length > 0 && trimmedGradingDisplayName.length <= 255;
+  const areDisplayNamesValid = isProctorDisplayNameValid && isGradingDisplayNameValid;
 
   useEffect(() => {
     if (!isOpen) {
@@ -124,7 +140,7 @@ export function ScheduleSessionModal({
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!selectedVersion) {
+    if (!selectedVersion || !areDisplayNamesValid) {
       return;
     }
 
@@ -135,6 +151,8 @@ export function ScheduleSessionModal({
       id: `sched-${Date.now()}`,
       examId: draft.examId,
       examTitle: selectedExamEntity?.title || selectedVersion.contentSnapshot.title,
+      proctorDisplayName: trimmedProctorDisplayName,
+      gradingDisplayName: trimmedGradingDisplayName,
       publishedVersionId: draft.publishedVersionId || selectedVersion.id,
       cohortName: draft.cohortName,
       startTime: toIso(draft.startTime),
@@ -189,6 +207,8 @@ export function ScheduleSessionModal({
                     examId: nextExamId,
                     publishedVersionId:
                       nextExam?.currentPublishedVersionId || nextExam?.currentDraftVersionId || '',
+                    proctorDisplayName: nextExam?.title || '',
+                    gradingDisplayName: nextExam?.title || '',
                   }));
                 }}
                 className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
@@ -235,6 +255,45 @@ export function ScheduleSessionModal({
               <option>Morning Batch B</option>
               <option>Weekend Intensive</option>
             </select>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="schedule-proctor-display-name" className="block text-sm font-semibold text-gray-700 mb-1">
+                Proctor Display Name
+              </label>
+              <input
+                id="schedule-proctor-display-name"
+                type="text"
+                value={draft.proctorDisplayName}
+                onChange={(e) => setDraft((prev) => ({ ...prev, proctorDisplayName: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                aria-label="Proctor display name"
+                maxLength={255}
+                required
+              />
+              {!isProctorDisplayNameValid && (
+                <p className="mt-1 text-xs text-red-600">Proctor display name is required (max 255 characters).</p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="schedule-grading-display-name" className="block text-sm font-semibold text-gray-700 mb-1">
+                Grading Display Name
+              </label>
+              <input
+                id="schedule-grading-display-name"
+                type="text"
+                value={draft.gradingDisplayName}
+                onChange={(e) => setDraft((prev) => ({ ...prev, gradingDisplayName: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
+                aria-label="Grading display name"
+                maxLength={255}
+                required
+              />
+              {!isGradingDisplayNameValid && (
+                <p className="mt-1 text-xs text-red-600">Grading display name is required (max 255 characters).</p>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -318,7 +377,7 @@ export function ScheduleSessionModal({
             </button>
             <button
               type="submit"
-              disabled={!selectedVersion || (validation ? !validation.isValid : true)}
+              disabled={!selectedVersion || !areDisplayNamesValid || (validation ? !validation.isValid : true)}
               className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white rounded-md text-sm font-medium shadow-sm transition-colors"
             >
               Create Schedule

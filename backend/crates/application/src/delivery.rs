@@ -18,6 +18,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
 use sqlx::{MySql, MySqlConnection, MySqlPool, QueryBuilder};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
@@ -34,6 +35,8 @@ pub enum DeliveryConflictReason {
     BaseRevisionMismatch,
     ActiveSessionSuperseded,
     AttemptExpired,
+    FinalFlushRequired,
+    FinalPayloadHashMismatch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -59,6 +62,8 @@ impl DeliveryConflictReason {
             DeliveryConflictReason::BaseRevisionMismatch => "BASE_REVISION_MISMATCH",
             DeliveryConflictReason::ActiveSessionSuperseded => "ACTIVE_SESSION_SUPERSEDED",
             DeliveryConflictReason::AttemptExpired => "ATTEMPT_EXPIRED",
+            DeliveryConflictReason::FinalFlushRequired => "FINAL_FLUSH_REQUIRED",
+            DeliveryConflictReason::FinalPayloadHashMismatch => "FINAL_PAYLOAD_HASH_MISMATCH",
         }
     }
 }
@@ -1419,16 +1424,60 @@ impl DeliveryService {
                 "lastSeenRevision is required.".to_owned(),
             ));
         };
-        if last_seen_revision != attempt.revision {
+        let server_accepted_through_seq = req.server_accepted_through_seq.or_else(|| {
+            attempt
+                .recovery
+                .get("serverAcceptedThroughSeq")
+                .and_then(Value::as_i64)
+        });
+        if req.final_answer_patch.is_none() && req.client_final_seq.is_none() {
             return Err(DeliveryError::conflict_with_context(
-                DeliveryConflictReason::BaseRevisionMismatch,
-                "Submit rejected because lastSeenRevision is stale.".to_owned(),
+                DeliveryConflictReason::FinalFlushRequired,
+                "Submit requires final flush metadata (clientFinalSeq or finalAnswerPatch)."
+                    .to_owned(),
                 Some(attempt.revision),
-                attempt
-                    .recovery
-                    .get("serverAcceptedThroughSeq")
-                    .and_then(Value::as_i64),
+                server_accepted_through_seq,
                 active_session_id.clone(),
+            ));
+        }
+        if last_seen_revision != attempt.revision {
+            if req.final_answer_patch.is_some() {
+                // Final patch submit is allowed to bridge last-moment revision drift.
+            } else {
+                return Err(DeliveryError::conflict_with_context(
+                    DeliveryConflictReason::FinalFlushRequired,
+                    "Submit requires final answer patch when revision is stale.".to_owned(),
+                    Some(attempt.revision),
+                    server_accepted_through_seq,
+                    active_session_id.clone(),
+                ));
+            }
+        }
+
+        if let (Some(final_answer_patch), Some(expected_hash)) = (
+            req.final_answer_patch.as_ref(),
+            req.final_client_snapshot_hash.as_ref(),
+        ) {
+            let expected = expected_hash.trim().to_ascii_lowercase();
+            if expected.is_empty() {
+                return Err(DeliveryError::Validation(
+                    "finalClientSnapshotHash cannot be empty.".to_owned(),
+                ));
+            }
+            let actual = sha256_hex(&canonical_json_string(final_answer_patch)?);
+            if actual != expected {
+                return Err(DeliveryError::conflict_with_context(
+                    DeliveryConflictReason::FinalPayloadHashMismatch,
+                    "Submit rejected: final snapshot hash mismatch.".to_owned(),
+                    Some(attempt.revision),
+                    server_accepted_through_seq,
+                    active_session_id.clone(),
+                ));
+            }
+        }
+        if req.final_client_snapshot_hash.is_some() && req.final_answer_patch.is_none() {
+            return Err(DeliveryError::Validation(
+                "finalClientSnapshotHash requires finalAnswerPatch.".to_owned(),
             ));
         }
 
@@ -1479,13 +1528,12 @@ impl DeliveryService {
             .unwrap_or("confirm");
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
-        // Submit uses current server-side state only. Client snapshots are never authoritative.
-        let final_answers = attempt.answers.clone();
-        let final_writing_answers = validate_final_writing_answers_snapshot(
-            Some(&attempt.writing_answers),
+        let (final_answers, final_writing_answers, final_flags) = apply_submit_final_patch(
+            &attempt,
+            req.final_answer_patch.as_ref(),
+            &answer_schema,
             &writing_task_ids,
         )?;
-        let final_flags = validate_final_flags_snapshot(Some(&attempt.flags), &answer_schema)?;
         let completion = compute_answer_completion(&answer_schema, &final_answers);
         let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
 
@@ -1502,12 +1550,21 @@ impl DeliveryService {
 
         let now = Utc::now();
         let submission_id = submission_id.clone();
+        let server_accepted_through_seq = req.server_accepted_through_seq.or_else(|| {
+            attempt
+                .recovery
+                .get("serverAcceptedThroughSeq")
+                .and_then(Value::as_i64)
+        });
         let final_submission = json!({
             "submissionId": submission_id,
             "submittedAt": now,
             "answers": final_answers,
             "writingAnswers": final_writing_answers,
-            "flags": final_flags
+            "flags": final_flags,
+            "clientFinalSeq": req.client_final_seq,
+            "serverAcceptedThroughSeq": server_accepted_through_seq,
+            "finalClientSnapshotHash": req.final_client_snapshot_hash
         });
         let recovery = merge_recovery(
             attempt.recovery.clone(),
@@ -3143,6 +3200,96 @@ fn validate_final_answers_snapshot(
     Ok(Value::Object(items.clone()))
 }
 
+fn canonical_json_string(value: &Value) -> Result<String, DeliveryError> {
+    let mut output = String::new();
+    append_canonical_json(value, &mut output)?;
+    Ok(output)
+}
+
+fn append_canonical_json(value: &Value, output: &mut String) -> Result<(), DeliveryError> {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
+            output.push_str(&serde_json::to_string(value).map_err(|err| {
+                DeliveryError::Internal(format!("Failed to serialize canonical JSON scalar: {err}"))
+            })?);
+        }
+        Value::Array(items) => {
+            output.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                append_canonical_json(item, output)?;
+            }
+            output.push(']');
+        }
+        Value::Object(items) => {
+            output.push('{');
+            let mut keys = items.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    output.push(',');
+                }
+                write!(
+                    output,
+                    "{}:",
+                    serde_json::to_string(key).map_err(|err| {
+                        DeliveryError::Internal(format!(
+                            "Failed to serialize canonical JSON object key: {err}"
+                        ))
+                    })?
+                )
+                .map_err(|err| {
+                    DeliveryError::Internal(format!("Failed to write canonical JSON: {err}"))
+                })?;
+                if let Some(item) = items.get(key) {
+                    append_canonical_json(item, output)?;
+                }
+            }
+            output.push('}');
+        }
+    }
+    Ok(())
+}
+
+fn apply_submit_final_patch(
+    attempt: &StudentAttempt,
+    final_answer_patch: Option<&Value>,
+    answer_schema: &AnswerSchema,
+    writing_task_ids: &HashSet<String>,
+) -> Result<(Value, Value, Value), DeliveryError> {
+    let Some(final_answer_patch) = final_answer_patch else {
+        let answers = validate_final_answers_snapshot(Some(&attempt.answers), answer_schema)?;
+        let writing_answers = validate_final_writing_answers_snapshot(
+            Some(&attempt.writing_answers),
+            writing_task_ids,
+        )?;
+        let flags = validate_final_flags_snapshot(Some(&attempt.flags), answer_schema)?;
+        return Ok((answers, writing_answers, flags));
+    };
+
+    let Some(patch) = final_answer_patch.as_object() else {
+        return Err(DeliveryError::Validation(
+            "finalAnswerPatch must be an object.".to_owned(),
+        ));
+    };
+
+    for key in patch.keys() {
+        if !matches!(key.as_str(), "answers" | "writingAnswers" | "flags") {
+            return Err(DeliveryError::Validation(
+                "finalAnswerPatch contains unknown fields.".to_owned(),
+            ));
+        }
+    }
+
+    let answers = validate_final_answers_snapshot(patch.get("answers"), answer_schema)?;
+    let writing_answers =
+        validate_final_writing_answers_snapshot(patch.get("writingAnswers"), writing_task_ids)?;
+    let flags = validate_final_flags_snapshot(patch.get("flags"), answer_schema)?;
+    Ok((answers, writing_answers, flags))
+}
+
 fn validate_final_writing_answers_snapshot(
     snapshot: Option<&Value>,
     writing_task_ids: &HashSet<String>,
@@ -4641,7 +4788,9 @@ mod tests {
     #[test]
     fn mutation_persistence_invariant_rejects_mismatch() {
         let error = ensure_mutation_persistence_invariant(2, 1).unwrap_err();
-        assert!(matches!(error, DeliveryError::Internal(message) if message.contains("applied_count=2") && message.contains("persisted_count=1")));
+        assert!(
+            matches!(error, DeliveryError::Internal(message) if message.contains("applied_count=2") && message.contains("persisted_count=1"))
+        );
     }
 
     #[test]
@@ -5017,5 +5166,38 @@ mod tests {
             .expect_err("unknown answers should be rejected");
 
         assert!(matches!(err, DeliveryError::Validation(_)));
+    }
+
+    #[test]
+    fn canonical_json_string_sorts_object_keys_recursively() {
+        let payload = json!({
+            "writingAnswers": { "task2": "two", "task1": "one" },
+            "flags": { "q2": false, "q1": true },
+            "answers": { "q2": "B", "q1": "A" }
+        });
+
+        let canonical = canonical_json_string(&payload).expect("canonical json");
+        assert_eq!(
+            canonical,
+            r#"{"answers":{"q1":"A","q2":"B"},"flags":{"q1":true,"q2":false},"writingAnswers":{"task1":"one","task2":"two"}}"#
+        );
+    }
+
+    #[test]
+    fn canonical_hash_is_stable_for_equivalent_key_orderings() {
+        let left = json!({
+            "answers": { "q1": "A", "q2": "B" },
+            "flags": { "q1": true, "q2": false },
+            "writingAnswers": { "task1": "one", "task2": "two" }
+        });
+        let right = json!({
+            "writingAnswers": { "task2": "two", "task1": "one" },
+            "flags": { "q2": false, "q1": true },
+            "answers": { "q2": "B", "q1": "A" }
+        });
+
+        let left_hash = sha256_hex(&canonical_json_string(&left).expect("left canonical"));
+        let right_hash = sha256_hex(&canonical_json_string(&right).expect("right canonical"));
+        assert_eq!(left_hash, right_hash);
     }
 }

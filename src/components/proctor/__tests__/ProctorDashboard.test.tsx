@@ -37,6 +37,8 @@ describe('ProctorDashboard runtime controls', () => {
     id: 'sched-1',
     examId: 'exam-1',
     examTitle: 'Mock Exam',
+    proctorDisplayName: 'Mock Exam',
+    gradingDisplayName: 'Mock Exam',
     publishedVersionId: 'ver-1',
     cohortName: 'Cohort A',
     startTime: '2026-01-01T00:10:00.000Z',

@@ -128,10 +128,9 @@ async fn grading_review_and_result_release_flow_round_trips() {
     let submission_detail = app
         .clone()
         .oneshot(
-            auth.with_auth(Request::builder().uri(format!(
-                "/api/v1/grading/submissions/{}",
-                submission_id
-            )))
+            auth.with_auth(
+                Request::builder().uri(format!("/api/v1/grading/submissions/{}", submission_id)),
+            )
             .body(Body::empty())
             .unwrap(),
         )
@@ -201,10 +200,7 @@ async fn grading_review_and_result_release_flow_round_trips() {
         .iter()
         .find(|entry| entry["taskId"] == "task2")
         .expect("task2 writing payload");
-    assert_eq!(
-        task2["text"],
-        submitted_writing_answers["task2"]["text"]
-    );
+    assert_eq!(task2["text"], submitted_writing_answers["task2"]["text"]);
 
     let writing_task_detail = app
         .clone()
@@ -227,7 +223,10 @@ async fn grading_review_and_result_release_flow_round_trips() {
         .iter()
         .find(|entry| entry["taskId"] == "task1")
         .expect("stored task1");
-    assert_eq!(stored_task1["studentText"], submitted_writing_answers["task1"]);
+    assert_eq!(
+        stored_task1["studentText"],
+        submitted_writing_answers["task1"]
+    );
     let stored_task2 = writing_task_items
         .iter()
         .find(|entry| entry["taskId"] == "task2")
@@ -715,6 +714,10 @@ async fn bootstrap_and_submit(
                 last_seen_revision: Some(0),
                 submission_id: Some(format!("submission-{candidate_id}")),
                 client_session_id: None,
+                client_final_seq: Some(0),
+                server_accepted_through_seq: Some(0),
+                final_answer_patch: None,
+                final_client_snapshot_hash: None,
             },
             None,
         )
@@ -784,6 +787,8 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Grading Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 end_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()

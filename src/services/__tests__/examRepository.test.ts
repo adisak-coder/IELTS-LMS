@@ -77,6 +77,8 @@ describe('examRepository backend API', () => {
             id: '22222222-2222-2222-2222-222222222222',
             examId: 'exam-1',
             examTitle: 'Mock Exam',
+            proctorDisplayName: 'Mock Exam',
+            gradingDisplayName: 'Mock Exam',
             publishedVersionId: 'ver-1',
             cohortName: 'Cohort A',
             institution: 'Center',
@@ -111,6 +113,8 @@ describe('examRepository backend API', () => {
       id: 'sched-local',
       examId: 'exam-1',
       examTitle: 'Mock Exam',
+      proctorDisplayName: 'Mock Exam',
+      gradingDisplayName: 'Mock Exam',
       publishedVersionId: 'ver-1',
       cohortName: 'Cohort A',
       institution: 'Center',
@@ -137,6 +141,8 @@ describe('examRepository backend API', () => {
         examId: 'exam-1',
         cohortName: 'Cohort A',
         publishedVersionId: 'ver-1',
+        proctorDisplayName: 'Mock Exam',
+        gradingDisplayName: 'Mock Exam',
       }),
     );
   });
@@ -153,6 +159,8 @@ describe('examRepository backend API', () => {
             id: 'sched-local',
             examId: 'exam-1',
             examTitle: 'Mock Exam',
+            proctorDisplayName: 'Mock Exam (Proctor)',
+            gradingDisplayName: 'Mock Exam (Grading)',
             publishedVersionId: 'ver-2',
             cohortName: 'Cohort A (Updated)',
             institution: 'Center',
@@ -183,6 +191,8 @@ describe('examRepository backend API', () => {
       id: 'sched-local',
       examId: 'exam-1',
       examTitle: 'Mock Exam',
+      proctorDisplayName: 'Mock Exam (Proctor)',
+      gradingDisplayName: 'Mock Exam (Grading)',
       publishedVersionId: 'ver-2',
       cohortName: 'Cohort A (Updated)',
       institution: 'Center',
@@ -208,6 +218,8 @@ describe('examRepository backend API', () => {
       expect.objectContaining({
         publishedVersionId: 'ver-2',
         cohortName: 'Cohort A (Updated)',
+        proctorDisplayName: 'Mock Exam (Proctor)',
+        gradingDisplayName: 'Mock Exam (Grading)',
         revision: 2,
       }),
     );

@@ -12,7 +12,10 @@ use ielts_backend_application::{
     scheduling::SchedulingService,
 };
 use ielts_backend_domain::{
-    attempt::{MutationEnvelope, StudentBootstrapRequest, StudentMutationBatchRequest},
+    attempt::{
+        MutationEnvelope, StudentBootstrapRequest, StudentMutationBatchRequest,
+        StudentSubmitRequest,
+    },
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
     schedule::CreateScheduleRequest,
 };
@@ -481,6 +484,62 @@ async fn idempotency_hash_mismatch_rejects_conflict_without_partial_writes() {
 }
 
 #[tokio::test]
+async fn submit_rejects_missing_seq_without_final_patch() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service = DeliveryService::new(database.pool().clone());
+    let session = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, "alice"),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+    let attempt = session.attempt.expect("attempt");
+
+    let submit_error = service
+        .submit_attempt(
+            schedule_id,
+            StudentSubmitRequest {
+                attempt_id: attempt.id.clone(),
+                student_key: student_key(schedule_id, "alice"),
+                last_seen_revision: Some(attempt.revision),
+                submission_id: Some("submit-missing-seq".to_owned()),
+                client_session_id: None,
+                client_final_seq: None,
+                server_accepted_through_seq: None,
+                final_answer_patch: None,
+                final_client_snapshot_hash: None,
+                answers: None,
+                writing_answers: None,
+                flags: None,
+            },
+            Some("submit-missing-seq".to_owned()),
+        )
+        .await
+        .expect_err("submit without final flush metadata should conflict");
+
+    match submit_error {
+        DeliveryError::Conflict {
+            reason: Some(reason),
+            ..
+        } => assert_eq!(reason, DeliveryConflictReason::FinalFlushRequired),
+        other => panic!("expected FinalFlushRequired conflict, got: {other:?}"),
+    }
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn operation_set_slot_persists_mutation_and_answer_slot_rows() {
     let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
@@ -773,6 +832,8 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Mutation Replay Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 end_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()

@@ -155,6 +155,14 @@ pub struct StudentSubmitRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_final_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_accepted_through_seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_answer_patch: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_client_snapshot_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answers: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub writing_answers: Option<Value>,

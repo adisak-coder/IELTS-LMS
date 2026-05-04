@@ -96,9 +96,10 @@ impl LiveUpdateBusRepository {
     }
 
     pub async fn latest_sequence_id(&self) -> Result<i64, sqlx::Error> {
-        let value: Option<i64> = sqlx::query_scalar("SELECT MAX(sequence_id) FROM live_update_events")
-            .fetch_one(&self.pool)
-            .await?;
+        let value: Option<i64> =
+            sqlx::query_scalar("SELECT MAX(sequence_id) FROM live_update_events")
+                .fetch_one(&self.pool)
+                .await?;
         Ok(value.unwrap_or(0))
     }
 

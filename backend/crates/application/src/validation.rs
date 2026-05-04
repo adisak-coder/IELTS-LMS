@@ -527,7 +527,10 @@ fn validate_sub_answer_tree_block(
                         });
                     if !has_accepted {
                         result.add_error(
-                            format!("{}.answerTree[{}].acceptedAnswers", field_prefix, root_index),
+                            format!(
+                                "{}.answerTree[{}].acceptedAnswers",
+                                field_prefix, root_index
+                            ),
                             "Required leaf nodes must define at least one accepted answer.",
                         );
                     }

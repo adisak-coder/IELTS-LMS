@@ -949,6 +949,7 @@ async fn submit_finalizes_the_attempt_idempotently() {
                 .method("POST")
                 .uri(format!("/api/v1/student/sessions/{}/submit", schedule_id))
                 .header("content-type", "application/json")
+                .header("idempotency-key", "submission-idempotent-1")
                 .body(Body::from(
                     serde_json::to_vec(&StudentSubmitRequest {
                         attempt_id: attempt_id.clone(),
@@ -959,6 +960,10 @@ async fn submit_finalizes_the_attempt_idempotently() {
                         last_seen_revision: Some(0),
                         submission_id: Some("submission-idempotent-1".to_owned()),
                         client_session_id: None,
+                        client_final_seq: Some(0),
+                        server_accepted_through_seq: Some(0),
+                        final_answer_patch: None,
+                        final_client_snapshot_hash: None,
                     })
                     .unwrap(),
                 ))
@@ -983,6 +988,7 @@ async fn submit_finalizes_the_attempt_idempotently() {
                 .method("POST")
                 .uri(format!("/api/v1/student/sessions/{}/submit", schedule_id))
                 .header("content-type", "application/json")
+                .header("idempotency-key", "submission-idempotent-1")
                 .body(Body::from(
                     serde_json::to_vec(&StudentSubmitRequest {
                         attempt_id,
@@ -993,6 +999,10 @@ async fn submit_finalizes_the_attempt_idempotently() {
                         last_seen_revision: Some(1),
                         submission_id: Some("submission-idempotent-1".to_owned()),
                         client_session_id: None,
+                        client_final_seq: Some(0),
+                        server_accepted_through_seq: Some(0),
+                        final_answer_patch: None,
+                        final_client_snapshot_hash: None,
                     })
                     .unwrap(),
                 ))
@@ -1046,6 +1056,10 @@ async fn submit_replays_cached_response_for_the_same_idempotency_key() {
                         last_seen_revision: Some(0),
                         submission_id: Some("submission-replay-1".to_owned()),
                         client_session_id: None,
+                        client_final_seq: Some(0),
+                        server_accepted_through_seq: Some(0),
+                        final_answer_patch: None,
+                        final_client_snapshot_hash: None,
                     })
                     .unwrap(),
                 ))
@@ -1101,6 +1115,10 @@ async fn submit_replays_cached_response_for_the_same_idempotency_key() {
                         last_seen_revision: Some(0),
                         submission_id: Some("submission-replay-1".to_owned()),
                         client_session_id: None,
+                        client_final_seq: Some(0),
+                        server_accepted_through_seq: Some(0),
+                        final_answer_patch: None,
+                        final_client_snapshot_hash: None,
                     })
                     .unwrap(),
                 ))
@@ -1133,6 +1151,160 @@ async fn submit_replays_cached_response_for_the_same_idempotency_key() {
     .await
     .unwrap();
     assert_eq!(idempotency_count, 1);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn submit_applies_final_patch_even_if_last_seen_revision_is_behind() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+    let (bootstrap, client_session_id) =
+        bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
+    start_runtime(database.pool(), schedule_id, "listening").await;
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let mutation_response = app
+        .clone()
+        .oneshot(
+            with_attempt_token(Request::builder(), &attempt_token)
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/student/sessions/{}/mutations:batch",
+                    schedule_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&StudentMutationBatchRequest {
+                        attempt_id: attempt_id.clone(),
+                        student_key: student_key.clone(),
+                        client_session_id,
+                        mutations: vec![ielts_backend_domain::attempt::MutationEnvelope {
+                            id: "mutation-submit-stale-1".to_owned(),
+                            seq: 1,
+                            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
+                            mutation_type: "answer".to_owned(),
+                            payload: json!({"questionId": "q1", "value": "A"}),
+                            base_revision: None,
+                        }],
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(mutation_response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            with_attempt_token(Request::builder(), &attempt_token)
+                .method("POST")
+                .uri(format!("/api/v1/student/sessions/{}/submit", schedule_id))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "submit-stale-with-patch")
+                .body(Body::from(
+                    serde_json::to_vec(&StudentSubmitRequest {
+                        attempt_id: attempt_id.clone(),
+                        student_key: student_key.clone(),
+                        last_seen_revision: Some(0),
+                        submission_id: Some("submit-stale-with-patch".to_owned()),
+                        client_session_id: None,
+                        client_final_seq: Some(1),
+                        server_accepted_through_seq: Some(1),
+                        final_answer_patch: Some(json!({
+                            "answers": { "q1": "B" },
+                            "writingAnswers": {},
+                            "flags": {}
+                        })),
+                        final_client_snapshot_hash: None,
+                        answers: None,
+                        writing_answers: None,
+                        flags: None,
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let json = json_body(response).await;
+    assert_eq!(json["data"]["attempt"]["answers"]["q1"], "B");
+    assert_eq!(
+        json["data"]["attempt"]["finalSubmission"]["answers"]["q1"],
+        "B"
+    );
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn submit_rejects_missing_seq_without_final_patch() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+    let (bootstrap, _) = bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let response = app
+        .oneshot(
+            with_attempt_token(Request::builder(), &attempt_token)
+                .method("POST")
+                .uri(format!("/api/v1/student/sessions/{}/submit", schedule_id))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "submit-missing-seq")
+                .body(Body::from(
+                    serde_json::to_vec(&StudentSubmitRequest {
+                        attempt_id,
+                        student_key: student_key.clone(),
+                        last_seen_revision: Some(0),
+                        submission_id: Some("submit-missing-seq".to_owned()),
+                        client_session_id: None,
+                        client_final_seq: None,
+                        server_accepted_through_seq: None,
+                        final_answer_patch: None,
+                        final_client_snapshot_hash: None,
+                        answers: None,
+                        writing_answers: None,
+                        flags: None,
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let json = json_body(response).await;
+    assert_eq!(json["error"]["details"]["reason"], "FINAL_FLUSH_REQUIRED");
 
     database.shutdown().await;
 }
@@ -1996,6 +2168,8 @@ async fn seed_schedule_with_slug(
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Delivery Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time,
                 end_time,

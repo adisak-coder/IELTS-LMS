@@ -170,23 +170,30 @@ impl SchedulingService {
         let plan = build_section_plan(&version.config_snapshot)?;
         let planned_duration_minutes = plan_total_minutes(&plan);
         validate_schedule_window(req.start_time, req.end_time, planned_duration_minutes)?;
+        let proctor_display_name =
+            validate_display_name("Proctor display name", &req.proctor_display_name)?;
+        let grading_display_name =
+            validate_display_name("Grading display name", &req.grading_display_name)?;
 
         let schedule_id = Uuid::new_v4();
         sqlx::query(
             r#"
             INSERT INTO exam_schedules (
-                id, exam_id, organization_id, exam_title, published_version_id, cohort_name,
+                id, exam_id, organization_id, exam_title, proctor_display_name, grading_display_name,
+                published_version_id, cohort_name,
                 institution, start_time, end_time, planned_duration_minutes, delivery_mode,
                 recurrence_type, recurrence_interval, auto_start, auto_stop, status, created_by,
                 created_at, updated_at, revision
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), ?)
             "#,
         )
         .bind(schedule_id.to_string())
         .bind(&req.exam_id)
         .bind(&exam.organization_id)
         .bind(&exam.title)
+        .bind(proctor_display_name)
+        .bind(grading_display_name)
         .bind(&req.published_version_id)
         .bind(&req.cohort_name)
         .bind(req.institution)
@@ -305,6 +312,16 @@ impl SchedulingService {
         let version_changed = requested_version_id
             .as_deref()
             .is_some_and(|next| next != existing.published_version_id);
+        let proctor_display_name = req
+            .proctor_display_name
+            .as_ref()
+            .map(|value| validate_display_name("Proctor display name", value))
+            .transpose()?;
+        let grading_display_name = req
+            .grading_display_name
+            .as_ref()
+            .map(|value| validate_display_name("Grading display name", value))
+            .transpose()?;
 
         if version_changed && existing.status != ScheduleStatus::Scheduled {
             return Err(SchedulingError::Validation(
@@ -351,6 +368,8 @@ impl SchedulingService {
             SET
                 published_version_id = COALESCE(?, published_version_id),
                 cohort_name = COALESCE(?, cohort_name),
+                proctor_display_name = COALESCE(?, proctor_display_name),
+                grading_display_name = COALESCE(?, grading_display_name),
                 institution = COALESCE(?, institution),
                 start_time = COALESCE(?, start_time),
                 end_time = COALESCE(?, end_time),
@@ -365,6 +384,8 @@ impl SchedulingService {
         )
         .bind(published_version_id_update)
         .bind(req.cohort_name)
+        .bind(proctor_display_name)
+        .bind(grading_display_name)
         .bind(req.institution)
         .bind(req.start_time)
         .bind(req.end_time)
@@ -1555,6 +1576,21 @@ fn plan_total_minutes(plan: &[ScheduleSectionPlanEntry]) -> i32 {
         .unwrap_or(0)
 }
 
+fn validate_display_name(label: &str, value: &str) -> Result<String, SchedulingError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err(SchedulingError::Validation(format!("{label} is required.")));
+    }
+
+    if trimmed.chars().count() > 255 {
+        return Err(SchedulingError::Validation(format!(
+            "{label} must be 255 characters or fewer."
+        )));
+    }
+
+    Ok(trimmed.to_owned())
+}
+
 fn validate_schedule_window(
     start_time: DateTime<Utc>,
     end_time: DateTime<Utc>,
@@ -1620,5 +1656,21 @@ mod tests {
 
         let invalid_end = Utc.with_ymd_and_hms(2026, 1, 10, 8, 59, 0).unwrap();
         assert!(validate_schedule_window(start, invalid_end, 10).is_err());
+    }
+
+    #[test]
+    fn validate_display_name_rejects_empty_values() {
+        let error = validate_display_name("Proctor display name", "   ").expect_err("empty name");
+        assert!(
+            matches!(error, SchedulingError::Validation(message) if message.contains("required"))
+        );
+    }
+
+    #[test]
+    fn validate_display_name_rejects_values_longer_than_255() {
+        let too_long = "a".repeat(256);
+        let error =
+            validate_display_name("Grading display name", &too_long).expect_err("too long name");
+        assert!(matches!(error, SchedulingError::Validation(message) if message.contains("255")));
     }
 }

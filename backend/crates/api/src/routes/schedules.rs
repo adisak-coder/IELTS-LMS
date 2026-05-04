@@ -137,13 +137,12 @@ pub async fn apply_runtime_command(
         ielts_backend_domain::schedule::RuntimeCommandAction::EndRuntime => "complete_runtime",
     };
     let runtime = service.apply_runtime_command(&ctx, id, req).await?;
-    state
-        .publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
-            kind: "schedule_runtime".to_owned(),
-            id: id.to_string(),
-            revision: i64::from(runtime.revision),
-            event: event.to_owned(),
-        });
+    state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
+        kind: "schedule_runtime".to_owned(),
+        id: id.to_string(),
+        revision: i64::from(runtime.revision),
+        event: event.to_owned(),
+    });
     Ok(ApiResponse::success_with_request_id(runtime, request_id.0))
 }
 

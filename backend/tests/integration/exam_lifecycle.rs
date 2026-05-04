@@ -118,6 +118,10 @@ async fn phase_progression_precheck_lobby_exam_post_exam() {
                 last_seen_revision: Some(attempt_after_runtime.revision),
                 submission_id: Some("submission-lifecycle".to_owned()),
                 client_session_id: None,
+                client_final_seq: Some(0),
+                server_accepted_through_seq: Some(0),
+                final_answer_patch: None,
+                final_client_snapshot_hash: None,
             },
             None,
         )
@@ -203,6 +207,8 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Lifecycle Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 end_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()

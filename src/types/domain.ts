@@ -175,6 +175,8 @@ export interface ExamSchedule {
   id: string;
   examId: string;
   examTitle: string;
+  proctorDisplayName: string;
+  gradingDisplayName: string;
   publishedVersionId: string; // Always points to immutable version
   
   // Schedule details
