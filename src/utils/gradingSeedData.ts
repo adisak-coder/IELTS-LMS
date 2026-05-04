@@ -57,6 +57,8 @@ async function createMockSchedule(): Promise<ExamSchedule> {
     id: MOCK_SCHEDULE_ID,
     examId: 'exam-1',
     examTitle: 'Academic Practice Test 1',
+    proctorDisplayName: 'Academic Practice Test 1',
+    gradingDisplayName: 'Academic Practice Test 1',
     publishedVersionId: 'ver-mock-1',
     cohortName: 'Elite 2025-A',
     institution: 'IELTS Excellence Center',

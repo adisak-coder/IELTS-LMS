@@ -416,6 +416,8 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Bangkok Morning Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time,
                 end_time,

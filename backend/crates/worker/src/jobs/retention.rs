@@ -1,12 +1,9 @@
 use std::time::Instant;
 
 use ielts_backend_infrastructure::{
-    config::AppConfig,
-    database_monitor::StorageBudgetLevel,
-    distributed_rate_limit::DistributedRateLimiter,
-    idempotency::IdempotencyRepository,
-    live_update_bus::LiveUpdateBusRepository,
-    outbox::OutboxRepository,
+    config::AppConfig, database_monitor::StorageBudgetLevel,
+    distributed_rate_limit::DistributedRateLimiter, idempotency::IdempotencyRepository,
+    live_update_bus::LiveUpdateBusRepository, outbox::OutboxRepository,
 };
 use sqlx::MySqlPool;
 

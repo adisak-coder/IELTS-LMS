@@ -242,11 +242,11 @@ async fn seed_schedule(pool: &MySqlPool, status: &str) -> Uuid {
     sqlx::query(
         r#"
         INSERT INTO exam_schedules (
-            id, exam_id, exam_title, published_version_id, cohort_name,
+            id, exam_id, exam_title, proctor_display_name, grading_display_name, published_version_id, cohort_name,
             start_time, end_time, planned_duration_minutes, delivery_mode,
             status, created_by, created_at, updated_at, revision
         )
-        VALUES (?, ?, 'Exam title', ?, 'Cohort A', ?, ?, 180, 'proctor_start', ?, 'owner-1', ?, ?, 0)
+        VALUES (?, ?, 'Exam title', 'Exam title', 'Exam title', ?, 'Cohort A', ?, ?, 180, 'proctor_start', ?, 'owner-1', ?, ?, 0)
         "#,
     )
     .bind(schedule_id)

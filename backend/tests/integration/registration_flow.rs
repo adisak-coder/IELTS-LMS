@@ -168,6 +168,8 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Registration Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 end_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()

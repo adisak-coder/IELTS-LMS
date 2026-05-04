@@ -7,6 +7,7 @@ import { ApiClientError, type ApiRequestConfig } from '../app/api/apiClient';
 import type {
   StudentAttempt,
   StudentAnswerValue,
+  StudentFinalAnswerPatch,
   StudentAttemptMutation,
   StudentAttemptSeed,
   StudentHeartbeatEvent,
@@ -159,6 +160,16 @@ interface BackendSubmitResponse {
   refreshedAttemptCredential?: BackendAttemptCredential | null | undefined;
 }
 
+interface BackendSubmitRequest {
+  attemptId: string;
+  lastSeenRevision: number;
+  submissionId: string;
+  clientFinalSeq?: number | undefined;
+  serverAcceptedThroughSeq?: number | undefined;
+  finalAnswerPatch?: StudentFinalAnswerPatch | undefined;
+  finalClientSnapshotHash?: string | undefined;
+}
+
 interface BackendAttemptCredential {
   attemptToken: string;
   expiresAt: string;
@@ -185,6 +196,59 @@ function generateUuid(): string {
   }
 
   return `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`;
+}
+
+function buildFinalAnswerPatch(attempt: StudentAttempt): StudentFinalAnswerPatch {
+  return {
+    answers: attempt.answers,
+    writingAnswers: attempt.writingAnswers,
+    flags: attempt.flags,
+  };
+}
+
+type CanonicalJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | CanonicalJsonValue[]
+  | { [key: string]: CanonicalJsonValue };
+
+function stableStringifyCanonicalJson(value: CanonicalJsonValue): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringifyCanonicalJson(item)).join(',')}]`;
+  }
+
+  const keys = Object.keys(value).sort();
+  return `{${keys
+    .map((key) => `${JSON.stringify(key)}:${stableStringifyCanonicalJson(value[key] as CanonicalJsonValue)}`)
+    .join(',')}}`;
+}
+
+function canonicalJsonForHash(value: unknown): string {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    return 'null';
+  }
+  const normalized = JSON.parse(serialized) as CanonicalJsonValue;
+  return stableStringifyCanonicalJson(normalized);
+}
+
+async function sha256Hex(value: unknown): Promise<string | null> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    return null;
+  }
+
+  const serialized = canonicalJsonForHash(value);
+  const digest = await subtle.digest('SHA-256', new TextEncoder().encode(serialized));
+  return Array.from(new Uint8Array(digest))
+    .map((chunk) => chunk.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function getBrowserStorage(type: 'localStorage' | 'sessionStorage'): Storage | null {
@@ -2270,31 +2334,91 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     });
   }
 
+  private async buildSubmitPayload(
+    attempt: StudentAttempt,
+    submissionId: string,
+  ): Promise<BackendSubmitRequest> {
+    const clientSessionId = ensureClientSessionIdForAttempt(attempt);
+    const watermark = readOrPrimeMutationSequenceWatermark(attempt.id, clientSessionId);
+    const clientFinalSeq = Math.max(watermark, attempt.recovery.serverAcceptedThroughSeq ?? 0);
+    const finalAnswerPatch = buildFinalAnswerPatch(attempt);
+    const finalClientSnapshotHash = await sha256Hex(finalAnswerPatch);
+
+    emitStudentObservabilityMetric(
+      'student_submit_final_patch_built_total',
+      withStudentObservabilityDimensions({
+        scheduleId: attempt.scheduleId,
+        attemptId: attempt.id,
+        endpoint: `/v1/student/sessions/${attempt.scheduleId}/submit`,
+        pendingMutationCount: attempt.recovery.pendingMutationCount,
+        syncState: attempt.recovery.syncState,
+      }),
+    );
+
+    return {
+      attemptId: attempt.id,
+      lastSeenRevision: Number(attempt.revision ?? 0),
+      submissionId,
+      clientFinalSeq,
+      serverAcceptedThroughSeq: attempt.recovery.serverAcceptedThroughSeq ?? 0,
+      finalAnswerPatch,
+      finalClientSnapshotHash: finalClientSnapshotHash ?? undefined,
+    };
+  }
+
   async submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
     if (!(await this.ensureAttemptCredential(attempt))) {
       throw new Error('Missing attempt credential for student session.');
     }
 
     const submissionId = `student-submit-${attempt.id}`;
-    const response = await this.postWithAttemptAuth<BackendSubmitResponse>(
-      attempt,
-      `/v1/student/sessions/${attempt.scheduleId}/submit`,
-      {
-        attemptId: attempt.id,
-        lastSeenRevision: Number(attempt.revision ?? 0),
-        submissionId,
-      },
-      {
-        headers: {
-          'Idempotency-Key': submissionId,
+    const endpoint = `/v1/student/sessions/${attempt.scheduleId}/submit`;
+    const submitOnce = async (candidate: StudentAttempt): Promise<BackendSubmitResponse> => {
+      const payload = await this.buildSubmitPayload(candidate, submissionId);
+      return this.postWithAttemptAuth<BackendSubmitResponse>(
+        candidate,
+        endpoint,
+        payload,
+        {
+          headers: {
+            'Idempotency-Key': submissionId,
+          },
+          timeout: 60_000,
+          retries: 0,
         },
-        timeout: 60_000,
-        retries: 0,
-      },
-    );
+      );
+    };
+
+    let attemptForSubmit = attempt;
+    let response: BackendSubmitResponse;
+    try {
+      response = await submitOnce(attemptForSubmit);
+    } catch (error) {
+      const reason = backendConflictReason(error);
+      if (reason !== 'FINAL_FLUSH_REQUIRED') {
+        throw error;
+      }
+
+      emitStudentObservabilityMetric(
+        'student_submit_final_patch_retry_total',
+        withStudentObservabilityDimensions({
+          scheduleId: attempt.scheduleId,
+          attemptId: attempt.id,
+          endpoint,
+          reason,
+          syncState: attempt.recovery.syncState,
+        }),
+      );
+
+      await this.saveAttempt(attemptForSubmit);
+      attemptForSubmit =
+        (await this.cache.getAllAttempts()).find((candidate) => candidate.id === attempt.id) ??
+        attemptForSubmit;
+      response = await submitOnce(attemptForSubmit);
+    }
 
     const submittedAttempt = mapBackendStudentAttempt(response.attempt);
-    clearAttemptCredential(attempt);
+    clearAttemptCredential(attemptForSubmit);
     await this.cache.saveAttempt(submittedAttempt);
     await this.cache.clearPendingMutations(attempt.id);
     clearAttemptMutationWatermark(submittedAttempt);

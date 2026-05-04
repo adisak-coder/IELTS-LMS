@@ -118,6 +118,12 @@ export interface StudentAttempt {
   updatedAt: string;
 }
 
+export interface StudentFinalAnswerPatch {
+  answers: StudentAttempt['answers'];
+  writingAnswers: StudentAttempt['writingAnswers'];
+  flags: StudentAttempt['flags'];
+}
+
 export interface StudentAttemptSeed {
   scheduleId: string;
   studentKey: string;

@@ -957,6 +957,8 @@ async fn seed_schedule_with_slug(
                 exam_id,
                 published_version_id: published_version.id,
                 cohort_name: "Auth Contract".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time,
                 end_time,

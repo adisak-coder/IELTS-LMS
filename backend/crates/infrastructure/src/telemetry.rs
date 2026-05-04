@@ -71,6 +71,9 @@ pub struct Telemetry {
     mutation_batch_applied_count: Histogram,
     mutation_batch_persisted_count: Histogram,
     mutation_batch_zero_persistence_total: Counter,
+    submit_final_patch_applied_total: Counter,
+    submit_missing_seq_total: Counter,
+    final_snapshot_hash_mismatch_total: Counter,
     violation_to_alert_latency: Histogram,
     websocket_connections: Gauge<i64, AtomicI64>,
     outbox_backlog_events: Gauge<i64, AtomicI64>,
@@ -128,6 +131,9 @@ impl Telemetry {
         let mutation_batch_applied_count = Histogram::new(exponential_buckets(1.0, 2.0, 10));
         let mutation_batch_persisted_count = Histogram::new(exponential_buckets(1.0, 2.0, 10));
         let mutation_batch_zero_persistence_total = Counter::default();
+        let submit_final_patch_applied_total = Counter::default();
+        let submit_missing_seq_total = Counter::default();
+        let final_snapshot_hash_mismatch_total = Counter::default();
         let violation_to_alert_latency = Histogram::new(exponential_buckets(0.001, 2.0, 14));
         let websocket_connections = Gauge::<i64, AtomicI64>::default();
         let outbox_backlog_events = Gauge::<i64, AtomicI64>::default();
@@ -190,6 +196,21 @@ impl Telemetry {
             "backend_mutation_batch_zero_persistence_total",
             "Count of accepted mutation batches where applied mutations were non-zero but persisted rows were zero.",
             mutation_batch_zero_persistence_total.clone(),
+        );
+        registry.register(
+            "backend_submit_final_patch_applied_total",
+            "Count of submit requests that carried and applied a final answer patch.",
+            submit_final_patch_applied_total.clone(),
+        );
+        registry.register(
+            "backend_submit_missing_seq_total",
+            "Count of submit conflicts caused by missing final flush sequence metadata.",
+            submit_missing_seq_total.clone(),
+        );
+        registry.register(
+            "backend_final_snapshot_hash_mismatch_total",
+            "Count of submit conflicts caused by final snapshot hash mismatch.",
+            final_snapshot_hash_mismatch_total.clone(),
         );
         registry.register(
             "backend_violation_to_alert_duration_seconds",
@@ -297,6 +318,9 @@ impl Telemetry {
             mutation_batch_applied_count,
             mutation_batch_persisted_count,
             mutation_batch_zero_persistence_total,
+            submit_final_patch_applied_total,
+            submit_missing_seq_total,
+            final_snapshot_hash_mismatch_total,
             violation_to_alert_latency,
             websocket_connections,
             outbox_backlog_events,
@@ -375,6 +399,18 @@ impl Telemetry {
         if requested_count > 0 && applied_count > 0 && persisted_count == 0 {
             self.mutation_batch_zero_persistence_total.inc();
         }
+    }
+
+    pub fn observe_submit_final_patch_applied(&self) {
+        self.submit_final_patch_applied_total.inc();
+    }
+
+    pub fn observe_submit_missing_seq(&self) {
+        self.submit_missing_seq_total.inc();
+    }
+
+    pub fn observe_submit_final_snapshot_hash_mismatch(&self) {
+        self.final_snapshot_hash_mismatch_total.inc();
     }
 
     pub fn observe_violation_to_alert(&self, duration: Duration) {

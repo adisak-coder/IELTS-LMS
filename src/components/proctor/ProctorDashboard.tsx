@@ -162,7 +162,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
           id: schedule.id,
           scheduleId: schedule.id,
           examId: schedule.examId,
-          examTitle: schedule.examTitle,
+          examTitle: schedule.proctorDisplayName,
           cohortName: schedule.cohortName,
           scheduledStartTime: schedule.startTime,
           runtimeStatus:

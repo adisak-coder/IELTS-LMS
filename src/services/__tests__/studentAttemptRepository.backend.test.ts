@@ -7,6 +7,7 @@ import {
 import type { StudentAttemptMutation } from '../../types/studentAttempt';
 
 const originalFetch = global.fetch;
+const originalCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
 
 function jsonResponse(data: unknown) {
   return new Response(JSON.stringify({ success: true, data }), {
@@ -183,6 +184,9 @@ describe('studentAttemptRepository backend mode', () => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
     global.fetch = originalFetch;
+    if (originalCryptoDescriptor) {
+      Object.defineProperty(globalThis, 'crypto', originalCryptoDescriptor);
+    }
   });
 
   it('bootstraps a student attempt through the backend and caches it locally', async () => {
@@ -248,7 +252,7 @@ describe('studentAttemptRepository backend mode', () => {
     expect(mapped.flags).toEqual({ q1: true });
   });
 
-  it('submits the browser-local final answer snapshot with the terminal submit request', async () => {
+  it('builds submit payload with finalAnswerPatch and sequence metadata', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(
@@ -311,11 +315,244 @@ describe('studentAttemptRepository backend mode', () => {
       '/api/v1/student/sessions/sched-1/submit',
       expect.objectContaining({ method: 'POST' }),
     );
-    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual({
-      attemptId: attempt.id,
-      lastSeenRevision: 1,
-      submissionId: `student-submit-${attempt.id}`,
+    expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body))).toEqual(
+      expect.objectContaining({
+        attemptId: attempt.id,
+        lastSeenRevision: 1,
+        submissionId: `student-submit-${attempt.id}`,
+        clientFinalSeq: 0,
+        serverAcceptedThroughSeq: 0,
+        finalAnswerPatch: {
+          answers: { q1: 'A' },
+          writingAnswers: { task1: '<p>Draft</p>' },
+          flags: { q1: true },
+        },
+        finalClientSnapshotHash: expect.any(String),
+      }),
+    );
+  });
+
+  it('hashes canonical finalAnswerPatch JSON before submit', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    const digestMock = vi.fn().mockResolvedValue(new Uint8Array(32).buffer);
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: {
+        randomUUID: () => '00000000-0000-4000-8000-000000000001',
+        subtle: {
+          digest: digestMock,
+        },
+      },
     });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: null,
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          attempt: buildBackendAttempt({
+            phase: 'post-exam',
+            answers: { q2: 'B', q1: 'A' },
+            writingAnswers: { task2: '<p>Task2</p>', task1: '<p>Task1</p>' },
+            flags: { q2: false, q1: true },
+            finalSubmission: {
+              submissionId: 'submission-1',
+              submittedAt: '2026-01-01T10:00:00.000Z',
+              answers: { q2: 'B', q1: 'A' },
+              writingAnswers: { task2: '<p>Task2</p>', task1: '<p>Task1</p>' },
+              flags: { q2: false, q1: true },
+            },
+            submittedAt: '2026-01-01T10:00:00.000Z',
+            updatedAt: '2026-01-01T10:00:00.000Z',
+            revision: 2,
+          }),
+          submissionId: 'submission-1',
+          submittedAt: '2026-01-01T10:00:00.000Z',
+          refreshedAttemptCredential: null,
+        }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    const localFinalAttempt = {
+      ...attempt,
+      answers: { q2: 'B', q1: 'A' },
+      writingAnswers: { task2: '<p>Task2</p>', task1: '<p>Task1</p>' },
+      flags: { q2: false, q1: true },
+    };
+
+    await studentAttemptRepository.submitAttempt(localFinalAttempt);
+
+    expect(digestMock).toHaveBeenCalledTimes(1);
+    const digestInput = digestMock.mock.calls[0]?.[1] as ArrayBuffer;
+    const canonicalJson = new TextDecoder().decode(digestInput);
+    expect(canonicalJson).toBe(
+      '{"answers":{"q1":"A","q2":"B"},"flags":{"q1":true,"q2":false},"writingAnswers":{"task1":"<p>Task1</p>","task2":"<p>Task2</p>"}}',
+    );
+  });
+
+  it('omits finalClientSnapshotHash when SHA-256 is unavailable', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: {
+        randomUUID: () => '00000000-0000-4000-8000-000000000002',
+      },
+    });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: null,
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          attempt: buildBackendAttempt({
+            phase: 'post-exam',
+            answers: { q1: 'A' },
+            writingAnswers: { task1: '<p>Draft</p>' },
+            flags: { q1: true },
+            finalSubmission: {
+              submissionId: 'submission-1',
+              submittedAt: '2026-01-01T10:00:00.000Z',
+              answers: { q1: 'A' },
+              writingAnswers: { task1: '<p>Draft</p>' },
+              flags: { q1: true },
+            },
+            submittedAt: '2026-01-01T10:00:00.000Z',
+            updatedAt: '2026-01-01T10:00:00.000Z',
+            revision: 2,
+          }),
+          submissionId: 'submission-1',
+          submittedAt: '2026-01-01T10:00:00.000Z',
+          refreshedAttemptCredential: null,
+        }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    await studentAttemptRepository.submitAttempt({
+      ...attempt,
+      answers: { q1: 'A' },
+      writingAnswers: { task1: '<p>Draft</p>' },
+      flags: { q1: true },
+    });
+
+    const payload = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(payload.finalClientSnapshotHash).toBeUndefined();
+    expect(payload.finalAnswerPatch).toEqual({
+      answers: { q1: 'A' },
+      writingAnswers: { task1: '<p>Draft</p>' },
+      flags: { q1: true },
+    });
+  });
+
+  it('retries submit once when backend requires final flush metadata', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          schedule: buildSchedule(),
+          version: buildVersion(),
+          runtime: null,
+          attempt: buildBackendAttempt(),
+          attemptCredential: buildAttemptCredential(),
+          degradedLiveMode: false,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonConflict(
+          'FINAL_FLUSH_REQUIRED',
+          'Submit requires final flush metadata (clientFinalSeq or finalAnswerPatch).',
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          attempt: buildBackendAttempt({
+            phase: 'post-exam',
+            answers: { q1: 'A' },
+            writingAnswers: { task1: '<p>Draft</p>' },
+            flags: { q1: true },
+            finalSubmission: {
+              submissionId: 'submission-1',
+              submittedAt: '2026-01-01T10:00:00.000Z',
+              answers: { q1: 'A' },
+              writingAnswers: { task1: '<p>Draft</p>' },
+              flags: { q1: true },
+            },
+            submittedAt: '2026-01-01T10:00:00.000Z',
+            updatedAt: '2026-01-01T10:00:00.000Z',
+            revision: 2,
+          }),
+          submissionId: 'submission-1',
+          submittedAt: '2026-01-01T10:00:00.000Z',
+          refreshedAttemptCredential: null,
+        }),
+      );
+    global.fetch = fetchMock as typeof fetch;
+
+    const attempt = await studentAttemptRepository.createAttempt({
+      scheduleId: 'sched-1',
+      studentKey: 'student-sched-1-alice',
+      examId: 'exam-1',
+      examTitle: 'Mock Exam',
+      candidateId: 'alice',
+      candidateName: 'Alice Roe',
+      candidateEmail: 'alice@example.com',
+      currentModule: 'reading',
+    });
+
+    await studentAttemptRepository.submitAttempt({
+      ...attempt,
+      answers: { q1: 'A' },
+      writingAnswers: { task1: '<p>Draft</p>' },
+      flags: { q1: true },
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      '/api/v1/student/sessions/sched-1/submit',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      3,
+      '/api/v1/student/sessions/sched-1/submit',
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('flushes pending mutations through the backend before saving the local cache', async () => {

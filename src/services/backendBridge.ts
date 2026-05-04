@@ -93,6 +93,8 @@ type BackendExamSchedule = {
   id: string;
   examId: string;
   examTitle: string;
+  proctorDisplayName?: string | null | undefined;
+  gradingDisplayName?: string | null | undefined;
   publishedVersionId: string;
   cohortName: string;
   institution?: string | null | undefined;
@@ -354,13 +356,24 @@ export function buildUpdateExamPayload(
 export function buildCreateSchedulePayload(
   schedule: Pick<
     ExamSchedule,
-    'examId' | 'publishedVersionId' | 'cohortName' | 'institution' | 'startTime' | 'endTime' | 'autoStart' | 'autoStop'
+    | 'examId'
+    | 'publishedVersionId'
+    | 'cohortName'
+    | 'proctorDisplayName'
+    | 'gradingDisplayName'
+    | 'institution'
+    | 'startTime'
+    | 'endTime'
+    | 'autoStart'
+    | 'autoStop'
   >,
 ) {
   return {
     examId: schedule.examId,
     publishedVersionId: schedule.publishedVersionId,
     cohortName: schedule.cohortName,
+    proctorDisplayName: schedule.proctorDisplayName,
+    gradingDisplayName: schedule.gradingDisplayName,
     institution: schedule.institution,
     startTime: schedule.startTime,
     endTime: schedule.endTime,
@@ -373,6 +386,8 @@ export function buildUpdateSchedulePayload(schedule: ExamSchedule, revision: num
   return compactObject({
     publishedVersionId: schedule.publishedVersionId,
     cohortName: schedule.cohortName,
+    proctorDisplayName: schedule.proctorDisplayName,
+    gradingDisplayName: schedule.gradingDisplayName,
     institution: schedule.institution,
     startTime: schedule.startTime,
     endTime: schedule.endTime,
@@ -463,6 +478,8 @@ export function mapBackendSchedule(payload: BackendExamSchedule): ExamSchedule {
     id: payload.id,
     examId: payload.examId,
     examTitle: payload.examTitle,
+    proctorDisplayName: payload.proctorDisplayName ?? payload.examTitle,
+    gradingDisplayName: payload.gradingDisplayName ?? payload.examTitle,
     publishedVersionId: payload.publishedVersionId,
     cohortName: payload.cohortName,
     institution: payload.institution ?? undefined,

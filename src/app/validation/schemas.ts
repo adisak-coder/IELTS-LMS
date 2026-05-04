@@ -106,6 +106,8 @@ export const sessionSchemas = {
     id: commonSchemas.id,
     examId: commonSchemas.id,
     examTitle: commonSchemas.nonEmptyString,
+    proctorDisplayName: commonSchemas.nonEmptyString.max(255),
+    gradingDisplayName: commonSchemas.nonEmptyString.max(255),
     publishedVersionId: commonSchemas.id,
     cohortName: commonSchemas.nonEmptyString,
     institution: z.string().optional(),
@@ -190,6 +192,8 @@ export const formSchemas = {
   scheduleCreation: z.object({
     examId: commonSchemas.id,
     cohortName: commonSchemas.nonEmptyString,
+    proctorDisplayName: commonSchemas.nonEmptyString.max(255),
+    gradingDisplayName: commonSchemas.nonEmptyString.max(255),
     institution: z.string().optional(),
     startTime: commonSchemas.isoDate,
     endTime: commonSchemas.isoDate,

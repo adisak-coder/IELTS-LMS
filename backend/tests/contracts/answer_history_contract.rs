@@ -307,8 +307,14 @@ async fn overview_and_detail_read_nested_mutation_payload_shapes() {
     assert_eq!(detail.status(), StatusCode::OK);
     let detail_json = json_body(detail).await;
     assert_eq!(detail_json["data"]["targetId"], "q1");
-    assert_eq!(detail_json["data"]["checkpoints"][0]["stateSnapshot"], "draft-1");
-    assert_eq!(detail_json["data"]["checkpoints"][1]["stateSnapshot"], "draft-1");
+    assert_eq!(
+        detail_json["data"]["checkpoints"][0]["stateSnapshot"],
+        "draft-1"
+    );
+    assert_eq!(
+        detail_json["data"]["checkpoints"][1]["stateSnapshot"],
+        "draft-1"
+    );
 
     database.shutdown().await;
 }
@@ -833,6 +839,10 @@ async fn bootstrap_and_submit(
                 last_seen_revision: Some(0),
                 submission_id: Some(format!("submission-{candidate_id}")),
                 client_session_id: None,
+                client_final_seq: Some(0),
+                server_accepted_through_seq: Some(0),
+                final_answer_patch: None,
+                final_client_snapshot_hash: None,
             },
             None,
         )
@@ -895,6 +905,8 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
                 exam_id: exam.id,
                 published_version_id: version.id,
                 cohort_name: "AH Cohort".to_owned(),
+                proctor_display_name: exam.title.clone(),
+                grading_display_name: exam.title.clone(),
                 institution: Some("IELTS Centre".to_owned()),
                 start_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 end_time: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap()

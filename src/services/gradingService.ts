@@ -80,7 +80,7 @@ export class GradingService {
           id: schedule.id,
           scheduleId: schedule.id,
           examId: schedule.examId,
-          examTitle: schedule.examTitle,
+          examTitle: schedule.gradingDisplayName,
           publishedVersionId: schedule.publishedVersionId,
           cohortName: schedule.cohortName,
           institution: schedule.institution,

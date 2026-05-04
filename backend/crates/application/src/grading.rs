@@ -1155,7 +1155,7 @@ impl GradingService {
                 SELECT
                     id,
                     exam_id,
-                    exam_title,
+                    grading_display_name AS exam_title,
                     published_version_id,
                     cohort_name,
                     institution,
@@ -1179,7 +1179,7 @@ impl GradingService {
                 SELECT
                     id,
                     exam_id,
-                    exam_title,
+                    grading_display_name AS exam_title,
                     published_version_id,
                     cohort_name,
                     institution,
