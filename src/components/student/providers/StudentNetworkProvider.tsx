@@ -133,13 +133,6 @@ export function StudentNetworkProvider({
       try {
         while (epoch === recoveryEpochRef.current && navigator.onLine) {
           try {
-            if (onRefreshRuntime) {
-              await onRefreshRuntime();
-              if (epoch !== recoveryEpochRef.current) {
-                return;
-              }
-            }
-
             const isSameDevice = policy.requireDeviceContinuityOnReconnect
               ? await verifyDeviceContinuity()
               : true;
@@ -162,6 +155,14 @@ export function StudentNetworkProvider({
             if (epoch !== recoveryEpochRef.current) {
               return;
             }
+
+            if (onRefreshRuntime) {
+              await onRefreshRuntime();
+              if (epoch !== recoveryEpochRef.current) {
+                return;
+              }
+            }
+
             runtimeActions.setBlockingReason(null);
             runtimeActions.setAttemptSyncState('saved');
             return;
