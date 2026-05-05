@@ -80,14 +80,6 @@ function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['
         badge: 'Offline',
         contextLabel: 'Session Recovery',
       };
-    case 'syncing_reconnect':
-      return {
-        title: 'Reconnecting session',
-        message:
-          'Attempt data is being reconciled before the exam can continue.',
-        badge: 'Syncing',
-        contextLabel: 'Session Recovery',
-      };
     case 'heartbeat_lost':
       return {
         title: 'Heartbeat lost',
@@ -339,7 +331,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             return;
           }
 
-          runtimeActions.setBlockingReason(navigator.onLine ? 'syncing_reconnect' : 'offline');
+          runtimeActions.setBlockingReason(navigator.onLine ? null : 'offline');
 
           const backoffMs = Math.min(30_000, 1_000 * 2 ** attemptIndex);
           attemptIndex += 1;
@@ -1178,29 +1170,29 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
 
       {droppedMutations ? (
         <div
-          className="mx-3 md:mx-4 lg:mx-6 mt-3 rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 flex items-start gap-3"
+          className="mx-3 md:mx-4 lg:mx-6 mt-3 rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 flex items-start gap-3"
           role="status"
           aria-live="polite"
         >
-          <AlertTriangle size={18} className="text-amber-700 mt-0.5 flex-shrink-0" />
+          <AlertTriangle size={18} className="text-sky-700 mt-0.5 flex-shrink-0" />
           <div className="flex-1">
             <div className="font-semibold">
-              {droppedMutations.count} unsent response{droppedMutations.count === 1 ? '' : 's'} discarded
+              This section has ended. Moving you to the next section.
             </div>
-            <div className="text-amber-800">
+            <div className="text-sky-800">
               {droppedMutations.fromModule && droppedMutations.toModule ? (
                 <>
-                  The exam advanced from {droppedMutations.fromModule} to {droppedMutations.toModule} while you
-                  were offline.
+                  Your latest saved answers were preserved. Runtime advanced from{' '}
+                  {droppedMutations.fromModule} to {droppedMutations.toModule}.
                 </>
               ) : (
-                <>The exam section changed while you were offline.</>
+                <>Your latest saved answers were preserved while the runtime advanced sections.</>
               )}
             </div>
           </div>
           <button
             type="button"
-            className="p-1 rounded-sm hover:bg-amber-100 text-amber-800"
+            className="p-1 rounded-sm hover:bg-sky-100 text-sky-800"
             aria-label="Dismiss notification"
             onClick={() => {
               void attemptActions.dismissDroppedMutationsBanner();

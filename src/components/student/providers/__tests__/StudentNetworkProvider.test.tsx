@@ -293,7 +293,7 @@ describe('StudentNetworkProvider', () => {
     });
   });
 
-  it('keeps reconnect blocking active when queued mutations fail to flush', async () => {
+  it('keeps reconnect recovery active without blocking when queued mutations fail to flush', async () => {
     const pendingMutation: StudentAttemptMutation = {
       id: 'mutation-1',
       attemptId: 'attempt-1',
@@ -334,7 +334,7 @@ describe('StudentNetworkProvider', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBe('syncing_reconnect');
+      expect(result.current.runtime.state.blocking.reason).toBeNull();
     });
 
     await waitFor(() => {
@@ -454,7 +454,7 @@ describe('StudentNetworkProvider', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBe('syncing_reconnect');
+      expect(result.current.runtime.state.blocking.reason).toBeNull();
     });
 
     await waitFor(() => {
@@ -465,7 +465,7 @@ describe('StudentNetworkProvider', () => {
     }, { timeout: 3_000 });
   });
 
-  it('re-runs reconnect recovery on pageshow while online and blocked', async () => {
+  it('re-runs reconnect recovery on pageshow while online and offline-blocked', async () => {
     vi.mocked(getDeviceFingerprint).mockResolvedValue({
       components: {},
       hash: 'fp-1',
@@ -485,7 +485,7 @@ describe('StudentNetworkProvider', () => {
     );
 
     act(() => {
-      result.current.runtime.actions.setBlockingReason('syncing_reconnect');
+      result.current.runtime.actions.setBlockingReason('offline');
       result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
     });
 
@@ -501,7 +501,7 @@ describe('StudentNetworkProvider', () => {
     });
   });
 
-  it('re-runs reconnect recovery on visibilitychange when tab returns visible', async () => {
+  it('re-runs reconnect recovery on visibilitychange when tab returns visible from offline-blocked', async () => {
     vi.mocked(getDeviceFingerprint).mockResolvedValue({
       components: {},
       hash: 'fp-1',
@@ -525,7 +525,7 @@ describe('StudentNetworkProvider', () => {
     );
 
     act(() => {
-      result.current.runtime.actions.setBlockingReason('syncing_reconnect');
+      result.current.runtime.actions.setBlockingReason('offline');
       result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
     });
 

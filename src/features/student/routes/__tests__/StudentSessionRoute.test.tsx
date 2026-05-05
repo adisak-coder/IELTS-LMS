@@ -125,4 +125,35 @@ describe('StudentSessionRoute', () => {
     });
     expect(navigateMock).toHaveBeenCalledWith('/student/sched-1');
   });
+
+  it('does not render Loading Error during non-fatal reconnect sync conflict recovery', () => {
+    vi.spyOn(authService, 'getSession').mockResolvedValue(null);
+    StudentAppWrapperMock.mockImplementation(() => <div>Student App Active</div>);
+    useStudentSessionRouteDataMock.mockReturnValue({
+      attemptSnapshot: {
+        id: 'attempt-1',
+        scheduleId: 'sched-1',
+        recovery: {
+          syncState: 'syncing_reconnect',
+        },
+      },
+      error: null,
+      isLoading: false,
+      retry: vi.fn(),
+      runtimeSnapshot: { status: 'live', currentSectionKey: 'reading' },
+      state: {
+        phase: 'exam',
+        currentModule: 'reading',
+        currentQuestionId: 'q1',
+      },
+      refreshRuntime: vi.fn(),
+      answerInvariantRollout: null,
+    });
+
+    renderRoute('/student/sched-1/alice');
+
+    expect(screen.queryByText('Loading Error')).not.toBeInTheDocument();
+    expect(screen.getByText('Student App Active')).toBeInTheDocument();
+    expect(StudentAppWrapperMock).toHaveBeenCalledTimes(1);
+  });
 });

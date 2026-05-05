@@ -163,14 +163,15 @@ export function StudentNetworkProvider({
               }
             }
 
-            runtimeActions.setBlockingReason(null);
+            if (runtimeState.blocking.reason === 'syncing_reconnect') {
+              runtimeActions.setBlockingReason(null);
+            }
             runtimeActions.setAttemptSyncState('saved');
             return;
           } catch {
             if (epoch !== recoveryEpochRef.current || !navigator.onLine) {
               return;
             }
-            runtimeActions.setBlockingReason('syncing_reconnect');
             runtimeActions.setAttemptSyncState('syncing_reconnect');
             const retryDelayMs = Math.min(10_000, 500 * 2 ** retryAttempt);
             retryAttempt = Math.min(retryAttempt + 1, 20);
@@ -213,7 +214,6 @@ export function StudentNetworkProvider({
       setIsOnline(true);
       setIsRecovering(true);
       setLastReconnectAt(timestamp);
-      runtimeActions.setBlockingReason('syncing_reconnect');
       runtimeActions.setAttemptSyncState('syncing_reconnect');
       await attemptActions.recordNetworkStatus('online', timestamp).catch(() => {});
       if (epoch !== recoveryEpochRef.current) {
@@ -259,7 +259,6 @@ export function StudentNetworkProvider({
     }
 
     const blockedForRecovery =
-      runtimeState.blocking.reason === 'syncing_reconnect' ||
       runtimeState.blocking.reason === 'offline' ||
       runtimeState.blocking.reason === 'heartbeat_lost';
     if (!blockedForRecovery) {
@@ -267,7 +266,7 @@ export function StudentNetworkProvider({
     }
 
     if (runtimeState.blocking.reason === 'offline') {
-      runtimeActions.setBlockingReason('syncing_reconnect');
+      runtimeActions.setBlockingReason(null);
       runtimeActions.setAttemptSyncState('syncing_reconnect');
     }
 

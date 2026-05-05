@@ -1864,6 +1864,7 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
 
 class BackendStudentAttemptRepository implements IStudentAttemptRepository {
   private readonly saveAttemptLocks = new Map<string, Promise<void>>();
+  private readonly droppedMutationTombstones = new Map<string, Set<string>>();
 
   constructor(private readonly cache: LocalStorageStudentAttemptCache) {}
 
@@ -1980,6 +1981,95 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     return replayPendingMutationsOntoAttempt(acceptedAttempt, pendingMutations);
   }
 
+  private filterTombstonedMutations(attemptId: string, mutations: StudentAttemptMutation[]): StudentAttemptMutation[] {
+    const tombstones = this.droppedMutationTombstones.get(attemptId);
+    if (!tombstones || tombstones.size === 0) {
+      return mutations;
+    }
+    return mutations.filter((mutation) => !tombstones.has(mutation.id));
+  }
+
+  private addDroppedMutationTombstones(attemptId: string, dropped: StudentAttemptMutation[]): void {
+    if (dropped.length === 0) {
+      return;
+    }
+    const tombstones = this.droppedMutationTombstones.get(attemptId) ?? new Set<string>();
+    for (const mutation of dropped) {
+      tombstones.add(mutation.id);
+    }
+    this.droppedMutationTombstones.set(attemptId, tombstones);
+  }
+
+  private reconcileDroppedMutationValues(args: {
+    attempt: StudentAttempt;
+    serverAttempt: StudentAttempt | null;
+    dropped: StudentAttemptMutation[];
+  }): StudentAttempt {
+    const { attempt, serverAttempt, dropped } = args;
+    if (!serverAttempt || dropped.length === 0) {
+      return attempt;
+    }
+
+    let nextAttempt = attempt;
+    let nextAnswers = attempt.answers;
+    let nextWritingAnswers = attempt.writingAnswers;
+    let nextFlags = attempt.flags;
+    let answersChanged = false;
+    let writingChanged = false;
+    let flagsChanged = false;
+
+    for (const mutation of dropped) {
+      if (mutation.type === 'answer') {
+        const questionId = mutation.payload['questionId'];
+        if (typeof questionId !== 'string' || questionId.trim().length === 0) {
+          continue;
+        }
+        nextAnswers = {
+          ...nextAnswers,
+          [questionId]: serverAttempt.answers[questionId],
+        };
+        answersChanged = true;
+        continue;
+      }
+
+      if (mutation.type === 'writing_answer') {
+        const taskId = mutation.payload['taskId'];
+        if (typeof taskId !== 'string' || taskId.trim().length === 0) {
+          continue;
+        }
+        nextWritingAnswers = {
+          ...nextWritingAnswers,
+          [taskId]: serverAttempt.writingAnswers[taskId] ?? '',
+        };
+        writingChanged = true;
+        continue;
+      }
+
+      if (mutation.type === 'flag') {
+        const questionId = mutation.payload['questionId'];
+        if (typeof questionId !== 'string' || questionId.trim().length === 0) {
+          continue;
+        }
+        nextFlags = {
+          ...nextFlags,
+          [questionId]: Boolean(serverAttempt.flags[questionId]),
+        };
+        flagsChanged = true;
+      }
+    }
+
+    if (answersChanged || writingChanged || flagsChanged) {
+      nextAttempt = {
+        ...nextAttempt,
+        ...(answersChanged ? { answers: nextAnswers } : {}),
+        ...(writingChanged ? { writingAnswers: nextWritingAnswers } : {}),
+        ...(flagsChanged ? { flags: nextFlags } : {}),
+      };
+    }
+
+    return nextAttempt;
+  }
+
   private async flushMutationQueue(args: {
     attempt: StudentAttempt;
     clientSessionId: string;
@@ -2094,7 +2184,10 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
 
   async saveAttempt(attempt: StudentAttempt): Promise<void> {
     await this.withSaveAttemptLock(attempt.id, async () => {
-      const pendingMutations = await this.cache.getPendingMutations(attempt.id);
+      const pendingMutations = this.filterTombstonedMutations(
+        attempt.id,
+        await this.cache.getPendingMutations(attempt.id),
+      );
       let currentAttempt = await this.reconcileAttemptWithCachedState(attempt, pendingMutations);
       await this.cache.saveAttempt(currentAttempt);
       primeMutationSequenceWatermark(currentAttempt);
@@ -2183,6 +2276,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         `/v1/student/sessions/${currentAttempt.scheduleId}`,
         { retries: 0 },
       );
+      const serverAttempt = session.attempt ? mapBackendStudentAttempt(session.attempt) : null;
       const runtimeStatus = session.runtime?.status ?? null;
       const runtimeSectionKey = session.runtime?.currentSectionKey ?? null;
       const runtimeTerminal = runtimeStatus === 'completed' || runtimeStatus === 'cancelled';
@@ -2271,16 +2365,17 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
             : {}),
         } satisfies StudentAttempt['recovery']['lastDroppedMutations'];
 
-        const droppedAnswerMutations = dropped.some(
-          (mutation) => mutation.type === 'answer' || mutation.type === 'writing_answer',
-        );
+        this.addDroppedMutationTombstones(currentAttempt.id, dropped);
+        currentAttempt = this.reconcileDroppedMutationValues({
+          attempt: currentAttempt,
+          serverAttempt,
+          dropped,
+        });
 
         currentAttempt = mergeStudentAttemptRecovery(currentAttempt, {
           lastDroppedMutations: summary,
-          pendingMutationCount: droppedAnswerMutations
-            ? first.remainingMutations.length
-            : prunedMutations.length,
-          syncState: droppedAnswerMutations ? 'error' : currentAttempt.recovery.syncState,
+          pendingMutationCount: prunedMutations.length,
+          syncState: prunedMutations.length > 0 ? 'saving' : 'saved',
         });
         await this.cache.saveAttempt(currentAttempt);
         emitStudentObservabilityMetric(
@@ -2304,12 +2399,8 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
           runtimeStatus,
         });
 
-        if (droppedAnswerMutations) {
-          await this.cache.savePendingMutations(currentAttempt.id, first.remainingMutations);
-          throw new Error(
-            'One or more locally typed answers could not be saved because the exam section changed.',
-          );
-        }
+        // When section has moved, drop out-of-section mutations and continue syncing
+        // the remaining queue to avoid terminal UI failure loops.
       } else {
         currentAttempt = mergeStudentAttemptRecovery(currentAttempt, {
           pendingMutationCount: prunedMutations.length,

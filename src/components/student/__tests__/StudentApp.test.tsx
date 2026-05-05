@@ -3216,6 +3216,10 @@ describe('StudentApp runtime-backed mode', () => {
 
     expect(saveAttempt).toHaveBeenCalled();
     expect(screen.queryByText(/Waiting for cohort advance/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reconnecting session/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Attempt data is being reconciled before the exam can continue/i),
+    ).not.toBeInTheDocument();
 
     vi.useRealTimers();
   });
