@@ -82,10 +82,7 @@ export function formatAnswerValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (Array.isArray(value)) {
-    return value
-      .map((entry) => formatAnswerValue(entry))
-      .filter((entry) => entry.trim() !== '')
-      .join(', ');
+    return JSON.stringify(renderRawMultiSlotAnswer(value));
   }
 
   return stringifyFallback(value);
@@ -295,6 +292,7 @@ export function getStudentAnswerDisplay(
 
   if (descriptor.block.type === 'MULTI_MCQ') {
     const options = Array.isArray(descriptor.block.options) ? descriptor.block.options : [];
+    const validOptionIds = new Set(options.map((option) => option.id));
     const rawValue = answerMap[descriptor.answerKey];
     const ids = Array.isArray(rawValue)
       ? rawValue.filter((entry): entry is string => typeof entry === 'string')
@@ -304,6 +302,11 @@ export function getStudentAnswerDisplay(
 
     if (ids.length === 0) {
       return formatAnswerValue(rawValue);
+    }
+
+    const canMapAllIds = ids.every((id) => id.trim() !== '' && validOptionIds.has(id));
+    if (!canMapAllIds) {
+      return projectRawObjectiveAnswer(rawValue).canonical;
     }
 
     return ids.map((id) => lookupOptionText(options, id)).join(', ');

@@ -297,7 +297,8 @@ function buildTracebackItem(
   const rawStudentAnswer = getStudentAnswerRawProjection(descriptor, answerMap);
   const displayStudentAnswer = getStudentAnswerDisplay(descriptor, answerMap);
   const shouldUseMappedMcqDisplay =
-    descriptor.block.type === 'MULTI_MCQ' || descriptor.block.type === 'SINGLE_MCQ';
+    descriptor.block.type === 'SINGLE_MCQ'
+    || (descriptor.block.type === 'MULTI_MCQ' && displayStudentAnswer !== rawStudentAnswer.canonical);
 
   return {
     numberLabel: getQuestionNumberLabel(descriptors, descriptor.id),

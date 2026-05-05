@@ -8,6 +8,7 @@ import {
   projectRawObjectiveAnswer,
   rawSlotValue,
   renderRawMultiSlotAnswer,
+  formatAnswerValue,
   getStudentAnswerDisplay,
   isStudentAnswerCorrect,
 } from '../gradingAnswerUtils';
@@ -152,6 +153,11 @@ describe('gradingAnswerUtils', () => {
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Alpha, Charlie');
     expect(getStudentAnswerDisplay(descriptor, { 'block-1': ['C', 'A'] })).toBe('Charlie, Alpha');
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': ['C', 'A'] })).toBe(true);
+  });
+
+  test('formatAnswerValue preserves empty slot order and line breaks for array answers', () => {
+    expect(formatAnswerValue(['a', '', 'c'])).toBe('["a","","c"]');
+    expect(formatAnswerValue([' keep ', '\nline\n', 'x'])).toBe('[" keep ","\\nline\\n","x"]');
   });
 
   test('MULTI_MCQ: slot descriptors apply partial-credit correctness by answerIndex', () => {
