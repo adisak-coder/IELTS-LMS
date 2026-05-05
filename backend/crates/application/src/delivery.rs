@@ -1465,9 +1465,20 @@ impl DeliveryService {
                 ));
             }
         }
+        let schedule_end_at: Option<DateTime<Utc>> =
+            sqlx::query_scalar("SELECT end_time FROM exam_schedules WHERE id = ?")
+                .bind(schedule_id.to_string())
+                .fetch_optional(tx.as_mut())
+                .await?;
+        let now = Utc::now();
+        let final_submit_grace = chrono::Duration::seconds(self.config.final_submit_grace_seconds);
+        let should_consider_final_patch = req.final_answer_patch.is_some()
+            && schedule_end_at
+                .map(|end_at| now <= end_at + final_submit_grace)
+                .unwrap_or(true);
 
         if let (Some(final_answer_patch), Some(expected_hash)) = (
-            req.final_answer_patch.as_ref(),
+            should_consider_final_patch.then_some(req.final_answer_patch.as_ref()).flatten(),
             req.final_client_snapshot_hash.as_ref(),
         ) {
             let expected = expected_hash.trim().to_ascii_lowercase();
@@ -1487,7 +1498,9 @@ impl DeliveryService {
                 ));
             }
         }
-        if req.final_client_snapshot_hash.is_some() && req.final_answer_patch.is_none() {
+        if req.final_client_snapshot_hash.is_some() && !should_consider_final_patch {
+            // Allow late submit finalization from canonical state after grace expiry.
+        } else if req.final_client_snapshot_hash.is_some() && req.final_answer_patch.is_none() {
             return Err(DeliveryError::Validation(
                 "finalClientSnapshotHash requires finalAnswerPatch.".to_owned(),
             ));
@@ -1548,6 +1561,23 @@ impl DeliveryService {
         )?;
         let completion = compute_answer_completion(&answer_schema, &final_answers);
         let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
+        
+        let mut grace_outcome = "not_applicable".to_owned();
+        let mut allow_final_patch = should_consider_final_patch;
+        if let Some(end_at) = schedule_end_at {
+            if now > end_at {
+                if req.final_answer_patch.is_none() {
+                    grace_outcome = "after_deadline_no_patch".to_owned();
+                } else if now <= end_at + final_submit_grace {
+                    grace_outcome = "within_grace_patch_applied".to_owned();
+                } else {
+                    grace_outcome = "grace_expired_forced_canonical".to_owned();
+                    allow_final_patch = false;
+                }
+            } else if req.final_answer_patch.is_some() {
+                grace_outcome = "before_deadline_patch_applied".to_owned();
+            }
+        }
 
         if unanswered_submission_policy == "block"
             && matches!(runtime_status, Some("live" | "paused"))
@@ -1560,7 +1590,6 @@ impl DeliveryService {
             )));
         }
 
-        let now = Utc::now();
         let submission_id = submission_id.clone();
         let server_accepted_through_seq = req.server_accepted_through_seq.or_else(|| {
             attempt
@@ -1568,6 +1597,15 @@ impl DeliveryService {
                 .get("serverAcceptedThroughSeq")
                 .and_then(Value::as_i64)
         });
+        let (final_answers, final_writing_answers, final_flags) = if allow_final_patch {
+            (final_answers, final_writing_answers, final_flags)
+        } else {
+            (
+                attempt.answers.clone(),
+                attempt.writing_answers.clone(),
+                attempt.flags.clone(),
+            )
+        };
         let final_submission = json!({
             "submissionId": submission_id,
             "submittedAt": now,
@@ -1576,7 +1614,9 @@ impl DeliveryService {
             "flags": final_flags,
             "clientFinalSeq": req.client_final_seq,
             "serverAcceptedThroughSeq": server_accepted_through_seq,
-            "finalClientSnapshotHash": req.final_client_snapshot_hash
+            "finalClientSnapshotHash": req.final_client_snapshot_hash,
+            "graceOutcome": grace_outcome,
+            "finalPatchAccepted": allow_final_patch
         });
         let recovery = merge_recovery(
             attempt.recovery.clone(),

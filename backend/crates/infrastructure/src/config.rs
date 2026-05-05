@@ -83,6 +83,7 @@ pub struct AppConfig {
     pub grading_projection_batch_size: i64,
     pub auto_submit_batch_size: i64,
     pub live_update_poll_interval_ms: u64,
+    pub final_submit_grace_seconds: i64,
     // Master key credentials
     pub master_key_enabled: bool,
     pub master_key_username: String,
@@ -450,6 +451,10 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.live_update_poll_interval_ms),
+            final_submit_grace_seconds: env::var("FINAL_SUBMIT_GRACE_SECONDS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(default.final_submit_grace_seconds),
             master_key_enabled: env::var("MASTER_KEY_ENABLED")
                 .ok()
                 .and_then(|value| parse_bool(&value))
@@ -596,6 +601,7 @@ impl Default for AppConfig {
             grading_projection_batch_size: 500,
             auto_submit_batch_size: 50,
             live_update_poll_interval_ms: 250,
+            final_submit_grace_seconds: 15,
             master_key_enabled: false,
             master_key_username: "master".to_owned(),
             master_key_password: "".to_owned(),
