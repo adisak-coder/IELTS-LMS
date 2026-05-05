@@ -115,13 +115,20 @@ async function refresh(){
 }
 
 document.getElementById('startBtn').onclick = async () => {
-  await fetch('/api/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+  const payload = {
     registerUrl:v('registerUrl'), usersFile:v('usersFile'), userCount:Number(v('userCount')), userOffset:Number(v('userOffset')),
     testMode:v('testMode'),
     headedUsers:Number(v('headedUsers')), maxConcurrentUsers:Number(v('maxConcurrent')), dashboardPort:Number(v('dashboardPort')),
     liveMode:v('liveMode'), runWithK6:c('runWithK6'), k6Students:Number(v('k6Students')), deleteAfterFinish:c('deleteAfterFinish'),
     k6BaseUrl:v('k6BaseUrl'), screenshotMs:Number(v('screenshotMs')), jpegQuality:Number(v('jpegQuality'))
-  })});
+  };
+  const resp = await fetch('/api/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});
+  const data = await resp.json().catch(()=>({}));
+  if(!resp.ok){
+    alert(data.error || ('Start failed: HTTP ' + resp.status));
+    return;
+  }
+  alert('Started');
   await refresh();
 };
 
@@ -149,6 +156,7 @@ app.get('/api/logs', (req, res) => {
 });
 
 app.post('/api/start', (req, res) => {
+  pushLog(`[api/start] payload=${JSON.stringify(req.body || {})}`);
   if (proc) return res.status(409).json({ error: 'already running' });
   const body = req.body || {};
   const dashboardPort = Number(body.dashboardPort || 3360);
@@ -178,6 +186,12 @@ app.post('/api/start', (req, res) => {
     K6_STUDENTS: String(body.k6Students || body.userCount || 100),
     K6_BASE_URL: String(body.k6BaseUrl || ''),
   };
+  if (!env.REGISTER_URL && String(body.testMode || 'headed') !== 'k6') {
+    return res.status(400).json({ error: 'REGISTER_URL is required.' });
+  }
+  if (!env.USERS_FILE && String(body.testMode || 'headed') !== 'k6') {
+    return res.status(400).json({ error: 'USERS_FILE is required.' });
+  }
   if (testMode === 'headless') {
     env.HEADED_USERS = '0';
     env.HEADLESS = 'true';
@@ -195,7 +209,13 @@ app.post('/api/start', (req, res) => {
   if (testMode === 'k6') {
     cmd = ['k6', 'run', String(env.K6_SCRIPT || 'k6/prod-start-exam-200.js')];
   }
-  proc = spawn(cmd[0], cmd.slice(1), { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  try {
+    proc = spawn(cmd[0], cmd.slice(1), { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    pushLog(`[spawn-error] ${message}`);
+    return res.status(500).json({ error: message });
+  }
   state = { ...state, running: true, startedAt: new Date().toISOString(), endedAt: null, exitCode: null, dashboardPort, deleteAfterFinish };
   pushLog(`[start] ${cmd.join(' ')}`);
 
