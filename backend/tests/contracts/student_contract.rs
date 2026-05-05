@@ -217,7 +217,7 @@ async fn mutation_batch_persists_answers_and_returns_the_server_watermark() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&StudentMutationBatchRequest {
-                        attempt_id,
+                        attempt_id: attempt_id.clone(),
                         student_key: student_key.clone(),
                         client_session_id,
                         mutations: vec![
@@ -991,7 +991,7 @@ async fn submit_finalizes_the_attempt_idempotently() {
                 .header("idempotency-key", "submission-idempotent-1")
                 .body(Body::from(
                     serde_json::to_vec(&StudentSubmitRequest {
-                        attempt_id,
+                        attempt_id: attempt_id.clone(),
                         student_key: student_key.clone(),
                         answers: None,
                         writing_answers: None,
@@ -1014,6 +1014,17 @@ async fn submit_finalizes_the_attempt_idempotently() {
     assert_eq!(retry.status(), StatusCode::OK);
     let retry_json = json_body(retry).await;
     assert_eq!(retry_json["data"]["submissionId"], submission_id);
+
+    let ledger_row: (i64, String, Option<String>) = sqlx::query_as(
+        "SELECT COUNT(*), MAX(submission_source), MAX(idempotency_key) FROM attempt_submission_ledger WHERE attempt_id = ?",
+    )
+    .bind(&attempt_id)
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(ledger_row.0, 1);
+    assert_eq!(ledger_row.1, "student");
+    assert_eq!(ledger_row.2.as_deref(), Some("submission-idempotent-1"));
 
     database.shutdown().await;
 }

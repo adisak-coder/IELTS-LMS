@@ -145,6 +145,7 @@ pub struct DeliveryService {
     submit_idempotency_usable_hours: i64,
     violation_idempotency_usable_hours: i64,
     heartbeat_presence_min_write_interval_secs: u64,
+    final_submit_grace_seconds: i64,
 }
 
 impl DeliveryService {
@@ -176,6 +177,7 @@ impl DeliveryService {
             violation_idempotency_usable_hours: violation_idempotency_usable_hours.max(1),
             heartbeat_presence_min_write_interval_secs: heartbeat_presence_min_write_interval_secs
                 .max(1),
+            final_submit_grace_seconds: AppConfig::from_env().final_submit_grace_seconds,
         }
     }
 
@@ -1471,7 +1473,7 @@ impl DeliveryService {
                 .fetch_optional(tx.as_mut())
                 .await?;
         let now = Utc::now();
-        let final_submit_grace = chrono::Duration::seconds(self.config.final_submit_grace_seconds);
+        let final_submit_grace = chrono::Duration::seconds(self.final_submit_grace_seconds);
         let should_consider_final_patch = req.final_answer_patch.is_some()
             && schedule_end_at
                 .map(|end_at| now <= end_at + final_submit_grace)
@@ -1618,6 +1620,7 @@ impl DeliveryService {
             "graceOutcome": grace_outcome,
             "finalPatchAccepted": allow_final_patch
         });
+        let canonical_hash = sha256_hex(&canonical_json_string(&final_submission)?);
         let recovery = merge_recovery(
             attempt.recovery.clone(),
             json!({
@@ -1652,6 +1655,17 @@ impl DeliveryService {
         .bind(now)
         .bind(&req.attempt_id)
         .execute(tx.as_mut())
+        .await?;
+
+        let canonical_revision = attempt.revision + 1;
+        upsert_attempt_submission_ledger(
+            tx.as_mut(),
+            &req.attempt_id,
+            "student",
+            canonical_revision,
+            &canonical_hash,
+            idempotency_key.as_deref(),
+        )
         .await?;
 
         let attempt =
@@ -2283,6 +2297,7 @@ pub async fn finalize_pending_schedule_attempts(
                 "completionReason": completion_reason,
                 "autoSubmission": true
             });
+            let canonical_hash = sha256_hex(&canonical_json_string(&final_submission)?);
             let recovery = merge_recovery(
                 attempt.recovery.clone(),
                 json!({
@@ -2292,7 +2307,7 @@ pub async fn finalize_pending_schedule_attempts(
                 }),
             );
 
-            sqlx::query(
+            let update_result = sqlx::query(
                 r#"
                 UPDATE student_attempts
                 SET
@@ -2312,7 +2327,19 @@ pub async fn finalize_pending_schedule_attempts(
             .bind(&attempt.id)
             .execute(tx.as_mut())
             .await?;
-            total_finalized += 1;
+            if update_result.rows_affected() == 1 {
+                let canonical_revision = attempt.revision + 1;
+                upsert_attempt_submission_ledger(
+                    tx.as_mut(),
+                    &attempt.id,
+                    "auto",
+                    canonical_revision,
+                    &canonical_hash,
+                    None,
+                )
+                .await?;
+                total_finalized += 1;
+            }
         }
 
         tx.commit().await?;
@@ -2354,6 +2381,7 @@ pub async fn force_finalize_attempt_if_pending(
         "autoSubmission": true,
         "forcedByProctor": true
     });
+    let canonical_hash = sha256_hex(&canonical_json_string(&final_submission)?);
     let recovery = merge_recovery(
         attempt.recovery.clone(),
         json!({
@@ -2384,6 +2412,18 @@ pub async fn force_finalize_attempt_if_pending(
     .bind(schedule_id.to_string())
     .execute(tx.as_mut())
     .await?;
+    if result.rows_affected() == 1 {
+        let canonical_revision = attempt.revision + 1;
+        upsert_attempt_submission_ledger(
+            tx.as_mut(),
+            &attempt.id,
+            "auto",
+            canonical_revision,
+            &canonical_hash,
+            None,
+        )
+        .await?;
+    }
 
     tx.commit().await?;
     Ok(result.rows_affected() == 1)
@@ -2420,6 +2460,38 @@ fn build_submit_response(
         submitted_at,
         refreshed_attempt_credential: None,
     }
+}
+
+async fn upsert_attempt_submission_ledger(
+    connection: &mut MySqlConnection,
+    attempt_id: &str,
+    submission_source: &str,
+    canonical_revision: i32,
+    canonical_hash: &str,
+    idempotency_key: Option<&str>,
+) -> Result<(), DeliveryError> {
+    sqlx::query(
+        r#"
+        INSERT INTO attempt_submission_ledger (
+            attempt_id,
+            submission_source,
+            canonical_revision,
+            canonical_hash,
+            idempotency_key
+        )
+        VALUES (?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            attempt_id = attempt_id
+        "#,
+    )
+    .bind(attempt_id)
+    .bind(submission_source)
+    .bind(canonical_revision)
+    .bind(canonical_hash)
+    .bind(idempotency_key)
+    .execute(connection)
+    .await?;
+    Ok(())
 }
 
 fn determine_phase(
