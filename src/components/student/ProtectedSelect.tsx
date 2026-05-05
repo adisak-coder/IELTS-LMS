@@ -1,11 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 
-type ProtectedSelectProps = React.SelectHTMLAttributes<HTMLSelectElement>;
+type ProtectedSelectProps = React.SelectHTMLAttributes<HTMLSelectElement> & {
+  onLiveValueChange?: ((value: string) => void) | undefined;
+};
 
 export function ProtectedSelect({ ...selectProps }: ProtectedSelectProps) {
   const attemptContext = useOptionalStudentAttempt();
-  const { onChange: userOnChange, onBlur: userOnBlur, ...restSelectProps } = selectProps;
+  const { onChange: userOnChange, onBlur: userOnBlur, onLiveValueChange, ...restSelectProps } = selectProps;
   const selectRef = useRef<HTMLSelectElement>(null);
   const lastRescuedDomValueRef = useRef<string | null>(null);
   const latestDomValueRef = useRef<string>('');
@@ -62,6 +64,7 @@ export function ProtectedSelect({ ...selectProps }: ProtectedSelectProps) {
 
     const handleNativeChange = () => {
       latestDomValueRef.current = select.value;
+      onLiveValueChange?.(latestDomValueRef.current);
     };
 
     const handleVisibilityChange = () => {
@@ -118,7 +121,7 @@ export function ProtectedSelect({ ...selectProps }: ProtectedSelectProps) {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('freeze', handleFreeze as EventListener);
     };
-  }, []);
+  }, [onLiveValueChange]);
 
   return (
     <select
@@ -126,6 +129,7 @@ export function ProtectedSelect({ ...selectProps }: ProtectedSelectProps) {
       {...restSelectProps}
       onChange={(event) => {
         latestDomValueRef.current = event.currentTarget.value;
+        onLiveValueChange?.(latestDomValueRef.current);
         userOnChange?.(event);
       }}
       onBlur={(event) => {

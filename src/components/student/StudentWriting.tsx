@@ -33,6 +33,7 @@ interface StudentWritingProps {
   passageReadabilityLabel?: string | undefined;
   canIncreasePassageReadability?: boolean | undefined;
   canDecreasePassageReadability?: boolean | undefined;
+  registerLiveWritingAnswer?: ((taskId: string, text: string) => void) | undefined;
 }
 
 export function StudentWriting({
@@ -50,6 +51,7 @@ export function StudentWriting({
   studentId,
   showSubmitButton = true,
   tabletMode = false,
+  registerLiveWritingAnswer,
 }: StudentWritingProps) {
   const isTabletMode = Boolean(tabletMode);
   const attemptContext = useOptionalStudentAttempt();
@@ -83,13 +85,14 @@ export function StudentWriting({
         onWritingChange(taskId, rawText);
         lastCommittedDraftByTaskRef.current[taskId] = rawText;
       }
+      registerLiveWritingAnswer?.(taskId, rawText);
       latestEditorTextRef.current = rawText;
       if (options?.flushDurability !== false) {
         attemptContext?.actions.flushAnswerDurabilityNow?.();
       }
       return rawText;
     },
-    [attemptContext, onWritingChange],
+    [attemptContext, onWritingChange, registerLiveWritingAnswer],
   );
 
   const commitEditorDraft = useCallback(() => {

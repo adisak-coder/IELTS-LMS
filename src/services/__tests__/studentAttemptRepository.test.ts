@@ -764,4 +764,44 @@ describe('studentAttemptRepository', () => {
     expect(result.purgedAttempts).toBe(1);
     expect(storedAttempts.map((attempt) => attempt.id)).toEqual(['attempt-unsynced']);
   });
+
+  it('extracts conflict reason from ApiClientError with backendDetails', async () => {
+    const { ApiClientError } = await import('../../app/api/apiClient');
+    const { backendConflictReason } = await import('../studentAttemptRepository');
+
+    const error = new ApiClientError({
+      message: 'Conflict',
+      statusCode: 409,
+      backendCode: 'CONFLICT',
+      backendDetails: { reason: 'ATTEMPT_SUBMITTED' },
+      backendRequestId: 'req-1',
+    });
+
+    expect(backendConflictReason(error)).toBe('ATTEMPT_SUBMITTED');
+  });
+
+  it('returns null for errors without conflict reason', async () => {
+    const { ApiClientError } = await import('../../app/api/apiClient');
+    const { backendConflictReason } = await import('../studentAttemptRepository');
+
+    const error = new ApiClientError({
+      message: 'Bad Request',
+      statusCode: 400,
+      backendCode: 'VALIDATION_ERROR',
+      backendDetails: {},
+      backendRequestId: 'req-1',
+    });
+
+    expect(backendConflictReason(error)).toBeNull();
+  });
+
+  it('extracts conflict reason from plain object with backendDetails', async () => {
+    const { backendConflictReason } = await import('../studentAttemptRepository');
+
+    const error = {
+      backendDetails: { reason: 'FINAL_FLUSH_REQUIRED' },
+    };
+
+    expect(backendConflictReason(error)).toBe('FINAL_FLUSH_REQUIRED');
+  });
 });

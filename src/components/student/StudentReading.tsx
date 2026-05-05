@@ -42,6 +42,7 @@ interface StudentReadingProps {
   passageReadabilityLabel?: string | undefined;
   canIncreasePassageReadability?: boolean | undefined;
   canDecreasePassageReadability?: boolean | undefined;
+  registerLiveAnswer?: ((questionId: string, value: QuestionAnswer) => void) | undefined;
 }
 
 export function StudentReading({
@@ -57,6 +58,7 @@ export function StudentReading({
   highlightClassName,
   tabletMode = false,
   contentZoom = 1,
+  registerLiveAnswer,
 }: StudentReadingProps) {
   const isTabletMode = Boolean(tabletMode);
   const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
@@ -445,6 +447,7 @@ export function StudentReading({
                               number={globalIdx}
                               answer={answers[answerKey]}
                               onChange={(val, meta) => onAnswerChange(answerKey, val, meta)}
+                              registerLiveAnswer={({ value }) => registerLiveAnswer?.(answerKey, value)}
                               isFlagged={flagId ? Boolean(flags[flagId]) : false}
                               isActive={isActive}
                               slotIds={questionEntries.map((entry) => entry.id)}
@@ -511,6 +514,8 @@ export function StudentReading({
                           onChange={(val, meta) =>
                             onAnswerChange(singleBlockQuestion?.answerKey ?? block.id, val, meta)
                           }
+                          registerLiveAnswer={({ value }) =>
+                            registerLiveAnswer?.(singleBlockQuestion?.answerKey ?? block.id, value)}
                           isFlagged={singleBlockQuestion ? Boolean(flags[singleBlockQuestion.id]) : false}
                           isActive={blockQuestions.some((entry) => entry.id === currentQuestionId)}
                           slotIds={blockQuestions.map((entry) => entry.id)}

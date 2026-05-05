@@ -45,6 +45,21 @@ describe('ProtectedInput', () => {
     expect(saveStudentAuditEventMock).not.toHaveBeenCalled();
   });
 
+  it('emits live value callback on native input', () => {
+    const onLiveValueChange = vi.fn();
+    render(
+      <ProtectedInput
+        security={{ preventAutofill: true, preventAutocorrect: true } as any}
+        name="answer"
+        onLiveValueChange={onLiveValueChange}
+      />,
+    );
+
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    fireEvent.input(input, { target: { value: 'abc' } });
+    expect(onLiveValueChange).toHaveBeenCalledWith('abc');
+  });
+
   it('defaults audit IDs from attempt context when props are omitted', () => {
     render(
       <ProtectedInput

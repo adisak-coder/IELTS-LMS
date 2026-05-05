@@ -6,9 +6,10 @@ type ChoiceType = 'radio' | 'checkbox';
 interface ProtectedChoiceInputProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'> {
   type: ChoiceType;
+  onLiveCheckedChange?: ((checked: boolean) => void) | undefined;
 }
 
-export function ProtectedChoiceInput({ type, ...inputProps }: ProtectedChoiceInputProps) {
+export function ProtectedChoiceInput({ type, onLiveCheckedChange, ...inputProps }: ProtectedChoiceInputProps) {
   const attemptContext = useOptionalStudentAttempt();
   const { onChange: userOnChange, onBlur: userOnBlur, ...restInputProps } = inputProps;
   const inputRef = useRef<HTMLInputElement>(null);
@@ -65,10 +66,12 @@ export function ProtectedChoiceInput({ type, ...inputProps }: ProtectedChoiceInp
 
     const handleNativeInput = () => {
       latestDomCheckedRef.current = input.checked;
+      onLiveCheckedChange?.(latestDomCheckedRef.current);
     };
 
     const handleNativeChange = () => {
       latestDomCheckedRef.current = input.checked;
+      onLiveCheckedChange?.(latestDomCheckedRef.current);
     };
 
     const handleVisibilityChange = () => {
@@ -127,7 +130,7 @@ export function ProtectedChoiceInput({ type, ...inputProps }: ProtectedChoiceInp
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('freeze', handleFreeze as EventListener);
     };
-  }, [type]);
+  }, [onLiveCheckedChange, type]);
 
   return (
     <input
@@ -136,6 +139,7 @@ export function ProtectedChoiceInput({ type, ...inputProps }: ProtectedChoiceInp
       {...restInputProps}
       onChange={(event) => {
         latestDomCheckedRef.current = event.currentTarget.checked;
+        onLiveCheckedChange?.(latestDomCheckedRef.current);
         userOnChange?.(event);
       }}
       onBlur={(event) => {

@@ -45,6 +45,23 @@ describe('ProtectedChoiceInput', () => {
     expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
   });
 
+  it('emits live checked callback on checkbox change', () => {
+    const onLiveCheckedChange = vi.fn();
+    render(
+      <ProtectedChoiceInput
+        type="checkbox"
+        checked={false}
+        onChange={vi.fn()}
+        onLiveCheckedChange={onLiveCheckedChange}
+        aria-label="choice answer"
+      />,
+    );
+
+    const input = screen.getByRole('checkbox', { name: 'choice answer' }) as HTMLInputElement;
+    fireEvent.change(input, { target: { checked: true } });
+    expect(onLiveCheckedChange).toHaveBeenCalledWith(true);
+  });
+
   it('commits latest checked state on focusout when controlled state is stale', () => {
     const handleChange = vi.fn();
 

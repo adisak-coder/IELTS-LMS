@@ -16,6 +16,8 @@ import {
   mapBackendStudentAttempt,
   refreshAttemptCredentialForAttempt,
   studentAttemptRepository,
+  backendConflictReason,
+  clearAttemptMutationWatermark,
 } from '@services/studentAttemptRepository';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
 import { queryClient } from '../../../app/data/queryClient';
@@ -962,7 +964,37 @@ export function StudentAttemptProvider({
             cachedAttempts.find((candidate) => candidate.id === persistedAttempt.id) ?? persistedAttempt;
           syncAttemptState(refreshed);
           return true;
-        } catch {
+        } catch (error) {
+          // If the attempt was already submitted, purge the queue and move on.
+          // The server deterministically rejects mutations after submit with ATTEMPT_SUBMITTED.
+          const conflictReason = backendConflictReason(error);
+          if (conflictReason === 'ATTEMPT_SUBMITTED') {
+            emitStudentObservabilityMetric(
+              'student_mutation_replay_after_submit_total',
+              withStudentObservabilityDimensions({
+                scheduleId: currentAttempt.scheduleId,
+                attemptId: currentAttempt.id,
+                endpoint: 'mutations:batch',
+                reason: conflictReason,
+                syncState: currentAttempt.recovery.syncState,
+              }),
+            );
+            // Purge pending mutations - the attempt is already submitted.
+            pendingMutationsRef.current = [];
+            setPendingMutationCount(0);
+            clearDurablePendingWriteTimeout();
+            await studentAttemptRepository.clearPendingMutations(currentAttempt.id);
+            clearAttemptMutationWatermark(currentAttempt);
+            setStorageDurabilityBlocking(false);
+            // Refresh attempt state from cache to get the submitted state.
+            const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId(
+              currentAttempt.scheduleId,
+            );
+            const refreshed =
+              cachedAttempts.find((candidate) => candidate.id === currentAttempt.id) ?? currentAttempt;
+            syncAttemptState(refreshed);
+            return true;
+          }
           const erroredAttempt = mergeAttempt(attemptRef.current ?? savingAttempt, {
             recovery: {
               syncState: navigator.onLine ? 'error' : 'offline',

@@ -177,6 +177,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
   const latestAnswersRef = useRef(runtimeState.answers);
+  const liveObjectiveAnswersRef = useRef<Record<string, Parameters<typeof runtimeActions.setAnswer>[1]>>({});
+  const liveWritingAnswersRef = useRef<Record<string, string>>({});
   const viewportLockForExamSessionRef = useRef<boolean | null>(null);
   const lockedViewportHeightRef = useRef<number | null>(null);
   const moduleSubmitInFlightRef = useRef<Promise<void> | null>(null);
@@ -207,6 +209,27 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   >('high');
   const fullscreenGraceTimerRef = useRef<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(() => Boolean(getFullscreenElement()));
+  const flushDomAnswerControlsNow = useCallback(() => {
+    if (typeof document === 'undefined') {
+      return;
+    }
+
+    const controls = document.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(
+      'input, select, textarea',
+    );
+
+    controls.forEach((control) => {
+      control.dispatchEvent(new Event('input', { bubbles: true }));
+      control.dispatchEvent(new Event('change', { bubbles: true }));
+      control.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+    });
+
+    const contentEditables = document.querySelectorAll<HTMLElement>('[contenteditable="true"]');
+    contentEditables.forEach((node) => {
+      node.dispatchEvent(new Event('input', { bubbles: true }));
+      node.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+    });
+  }, []);
   const latestPendingWarning = useMemo(() => {
     const warnings =
       attemptState.attempt?.violations.filter((violation) => violation.type === 'PROCTOR_WARNING') ??
@@ -242,7 +265,31 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   useEffect(() => {
     runtimeStateRef.current = runtimeState;
     latestAnswersRef.current = runtimeState.answers;
+    liveObjectiveAnswersRef.current = runtimeState.answers;
+    liveWritingAnswersRef.current = runtimeState.writingAnswers;
   }, [runtimeState]);
+
+  const reconcileLiveAnswerCacheNow = useCallback(() => {
+    const state = runtimeStateRef.current;
+    const objectiveLive = liveObjectiveAnswersRef.current;
+    const writingLive = liveWritingAnswersRef.current;
+
+    Object.entries(objectiveLive).forEach(([questionId, liveValue]) => {
+      const current = state.answers[questionId];
+      if (JSON.stringify(current) !== JSON.stringify(liveValue)) {
+        runtimeActions.setAnswer(questionId, liveValue);
+        attemptActions.persistAnswer(questionId, liveValue);
+      }
+    });
+
+    Object.entries(writingLive).forEach(([taskId, liveText]) => {
+      const current = state.writingAnswers[taskId] ?? '';
+      if (current !== liveText) {
+        runtimeActions.setWritingAnswer(taskId, liveText);
+        attemptActions.persistWritingAnswer(taskId, liveText);
+      }
+    });
+  }, [attemptActions, runtimeActions]);
 
   useEffect(() => {
     if (effectivePhase !== 'exam') {
@@ -282,6 +329,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             return;
           }
 
+          flushDomAnswerControlsNow();
+          reconcileLiveAnswerCacheNow();
           writingDraftCommitRef.current?.();
           const flushed = await attemptActions.flushPending();
           if (flushed) {
@@ -310,7 +359,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         }
       }
     };
-  }, [attemptActions, runtimeActions]);
+  }, [attemptActions, flushDomAnswerControlsNow, reconcileLiveAnswerCacheNow, runtimeActions]);
 
   useEffect(() => {
     if (!latestPendingWarning) {
@@ -734,6 +783,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       return;
     }
 
+    flushDomAnswerControlsNow();
+    reconcileLiveAnswerCacheNow();
+    writingDraftCommitRef.current?.();
     runtimeActions.submitModule();
   };
 
@@ -789,6 +841,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         setFinalSubmitStatus(attemptIndex === 0 ? 'submitting' : 'retrying');
 
         try {
+          flushDomAnswerControlsNow();
+          reconcileLiveAnswerCacheNow();
           writingDraftCommitRef.current?.();
           const submitted = await attemptActions.submitAttempt();
           if (submitted) {
@@ -819,6 +873,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     runtimeState.runtimeStatus,
     runtimeCompletionVerified,
     shouldRenderPostExam,
+    flushDomAnswerControlsNow,
+    reconcileLiveAnswerCacheNow,
   ]);
 
   const handleAnswerChange = (
@@ -869,6 +925,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       ...latestAnswersRef.current,
       [questionId]: resolvedAnswer,
     };
+    liveObjectiveAnswersRef.current = {
+      ...liveObjectiveAnswersRef.current,
+      [questionId]: resolvedAnswer,
+    };
     runtimeActions.setAnswer(questionId, resolvedAnswer);
     attemptActions.persistAnswer(questionId, resolvedAnswer, meta);
   };
@@ -882,10 +942,31 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     attemptActions.persistFlag(questionId, nextFlagged);
   };
 
+  const registerLiveObjectiveAnswer = useCallback(
+    (questionId: string, value: Parameters<typeof runtimeActions.setAnswer>[1]) => {
+      liveObjectiveAnswersRef.current = {
+        ...liveObjectiveAnswersRef.current,
+        [questionId]: value,
+      };
+    },
+    [],
+  );
+
+  const registerLiveWritingAnswer = useCallback((taskId: string, text: string) => {
+    liveWritingAnswersRef.current = {
+      ...liveWritingAnswersRef.current,
+      [taskId]: text,
+    };
+  }, []);
+
   const handleWritingChange = (taskId: string, text: string) => {
     if (runtimeState.blocking.reason === 'storage_unavailable') {
       return;
     }
+    liveWritingAnswersRef.current = {
+      ...liveWritingAnswersRef.current,
+      [taskId]: text,
+    };
     runtimeActions.setWritingAnswer(taskId, text);
     attemptActions.persistWritingAnswer(taskId, text);
   };
@@ -1151,6 +1232,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             passageReadabilityLabel={passageReadabilityLabel}
             canIncreasePassageReadability={canIncreasePassageReadability}
             canDecreasePassageReadability={canDecreasePassageReadability}
+            registerLiveAnswer={registerLiveObjectiveAnswer}
           />
         ) : null}
         {runtimeState.currentModule === 'listening' ? (
@@ -1173,6 +1255,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             passageReadabilityLabel={passageReadabilityLabel}
             canIncreasePassageReadability={canIncreasePassageReadability}
             canDecreasePassageReadability={canDecreasePassageReadability}
+            registerLiveAnswer={registerLiveObjectiveAnswer}
           />
         ) : null}
         {runtimeState.currentModule === 'writing' ? (
@@ -1194,6 +1277,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             passageReadabilityLabel={passageReadabilityLabel}
             canIncreasePassageReadability={canIncreasePassageReadability}
             canDecreasePassageReadability={canDecreasePassageReadability}
+            registerLiveWritingAnswer={registerLiveWritingAnswer}
           />
         ) : null}
         {runtimeState.currentModule === 'speaking' ? (

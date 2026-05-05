@@ -45,6 +45,7 @@ interface StudentListeningProps {
   passageReadabilityLabel?: string | undefined;
   canIncreasePassageReadability?: boolean | undefined;
   canDecreasePassageReadability?: boolean | undefined;
+  registerLiveAnswer?: ((questionId: string, value: QuestionAnswer) => void) | undefined;
 }
 
 function getDiagramSlotIds(block: DiagramLabelingBlock): string[] {
@@ -100,6 +101,7 @@ export function StudentListening({
   highlightClassName,
   tabletMode = false,
   contentZoom = 1,
+  registerLiveAnswer,
 }: StudentListeningProps) {
   const isTabletMode = Boolean(tabletMode);
   const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
@@ -649,6 +651,8 @@ export function StudentListening({
                               onChange={(val, meta) =>
                                 onAnswerChange(firstEntry?.answerKey ?? q.id, val, meta)
                               }
+                              registerLiveAnswer={({ value }) =>
+                                registerLiveAnswer?.(firstEntry?.answerKey ?? q.id, value)}
                               isFlagged={flagId ? Boolean(flags[flagId]) : false}
                               isActive={questionEntries.some((entry) => entry.id === currentQuestionId)}
                               slotIds={questionEntries.map((entry) => entry.id)}
@@ -718,6 +722,8 @@ export function StudentListening({
                           onChange={(val, meta) =>
                             onAnswerChange(singleBlockQuestion?.answerKey ?? block.id, val, meta)
                           }
+                          registerLiveAnswer={({ value }) =>
+                            registerLiveAnswer?.(singleBlockQuestion?.answerKey ?? block.id, value)}
                           isFlagged={singleBlockQuestion ? Boolean(flags[singleBlockQuestion.id]) : false}
                           isActive={blockQuestions.some((entry) => entry.id === currentQuestionId)}
                           slotIds={blockQuestions.map((entry) => entry.id)}

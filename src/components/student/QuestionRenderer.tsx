@@ -66,6 +66,7 @@ interface QuestionRendererProps {
   studentId?: string | undefined;
   hideDiagramReference?: boolean | undefined;
   hideMapReference?: boolean | undefined;
+  registerLiveAnswer?: ((payload: { key: string; value: QuestionAnswer }) => void) | undefined;
 }
 
 export function QuestionRenderer({
@@ -88,6 +89,7 @@ export function QuestionRenderer({
   studentId,
   hideDiagramReference = false,
   hideMapReference = false,
+  registerLiveAnswer,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
   const latestStringArrayAnswerRef = React.useRef<string[]>(stringArrayAnswer);
@@ -159,6 +161,7 @@ export function QuestionRenderer({
       candidateIndex === index ? value : (sourceSlots[candidateIndex] ?? ''),
     );
     latestStringArrayAnswerRef.current = next;
+    registerLiveAnswer?.({ key: block.id, value: next });
     onChange(next, {
       interactionType,
       slotIndex: index,
@@ -170,7 +173,8 @@ export function QuestionRenderer({
 
   React.useEffect(() => {
     latestStringArrayAnswerRef.current = stringArrayAnswer;
-  }, [stringArrayAnswer]);
+    registerLiveAnswer?.({ key: block.id, value: stringArrayAnswer });
+  }, [block.id, registerLiveAnswer, stringArrayAnswer]);
 
   const renderTextField = (
     slotId: string,

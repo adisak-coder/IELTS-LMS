@@ -1090,7 +1090,7 @@ function preserveNewerAcceptedLocalState(
   };
 }
 
-function backendConflictReason(error: unknown): string | null {
+export function backendConflictReason(error: unknown): string | null {
   if (error instanceof ApiClientError) {
     const reason = error.backendDetails?.['reason'];
     return typeof reason === 'string' && reason.trim() ? reason : null;
@@ -1552,7 +1552,7 @@ function primeMutationSequenceWatermark(attempt: StudentAttempt): void {
   }
 }
 
-function clearAttemptMutationWatermark(attempt: StudentAttempt): void {
+export function clearAttemptMutationWatermark(attempt: StudentAttempt): void {
   const clientSessionId = attempt.recovery.clientSessionId ?? attempt.integrity.clientSessionId;
   if (!clientSessionId) {
     return;

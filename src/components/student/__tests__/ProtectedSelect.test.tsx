@@ -43,6 +43,21 @@ describe('ProtectedSelect', () => {
     expect(flushAnswerDurabilityNowMock).toHaveBeenCalledTimes(1);
   });
 
+  it('emits live value callback on select change', () => {
+    const onLiveValueChange = vi.fn();
+
+    render(
+      <ProtectedSelect value="A" onChange={vi.fn()} onLiveValueChange={onLiveValueChange} aria-label="select answer">
+        <option value="A">A</option>
+        <option value="B">B</option>
+      </ProtectedSelect>,
+    );
+
+    const select = screen.getByRole('combobox', { name: 'select answer' }) as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'B' } });
+    expect(onLiveValueChange).toHaveBeenCalledWith('B');
+  });
+
   it('commits the latest DOM value on focusout when controlled state is stale', () => {
     const handleChange = vi.fn();
 

@@ -14,12 +14,14 @@ interface ProtectedInputProps
   security: ProtectedInputSecurity;
   sessionId?: string | undefined;
   studentId?: string | undefined;
+  onLiveValueChange?: ((value: string) => void) | undefined;
 }
 
 export function ProtectedInput({
   security,
   sessionId,
   studentId,
+  onLiveValueChange,
   className = '',
   ...inputProps
 }: ProtectedInputProps) {
@@ -89,10 +91,12 @@ export function ProtectedInput({
 
     const handleNativeInput = () => {
       latestDomValueRef.current = input.value;
+      onLiveValueChange?.(latestDomValueRef.current);
     };
 
     const handleNativeChange = () => {
       latestDomValueRef.current = input.value;
+      onLiveValueChange?.(latestDomValueRef.current);
     };
 
     const handleVisibilityChange = () => {
@@ -213,7 +217,7 @@ export function ProtectedInput({
       document.removeEventListener('freeze', handleFreeze as EventListener);
       releaseUndoRedoGuard();
     };
-  }, [resolvedSessionId, resolvedStudentId]);
+  }, [onLiveValueChange, resolvedSessionId, resolvedStudentId]);
 
   useEffect(() => {
     const input = inputRef.current;
@@ -287,6 +291,7 @@ export function ProtectedInput({
       }}
       onChange={(event) => {
         latestDomValueRef.current = event.currentTarget.value;
+        onLiveValueChange?.(latestDomValueRef.current);
         userOnChange?.(event);
       }}
       onBlur={(event) => {
