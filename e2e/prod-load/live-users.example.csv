@@ -1,0 +1,4 @@
+userId,email,password,candidateId
+student-001,student-001@test.local,password123,W250001
+student-002,student-002@test.local,password123,W250002
+student-003,student-003@test.local,password123,W250003

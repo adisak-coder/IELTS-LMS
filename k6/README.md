@@ -106,6 +106,24 @@ K6_CHECKED_IN_THRESHOLD=200 \
 k6 run k6/prod-auto-submit-200.js
 ```
 
+Run with Playwright live runner together:
+
+```bash
+K6_CONFIRM_PROD=true \
+K6_SCRIPT=k6/prod-start-exam-200.js \
+REGISTER_URL="https://your-host/student/<scheduleId>/register" \
+USERS_FILE="e2e/prod-load/live-users.500.csv" \
+USER_COUNT=100 \
+npm run e2e:live-with-k6
+```
+
+Notes:
+- `e2e:live-with-k6` starts k6 in background, then runs Playwright live runner.
+- Override k6 scenario with `K6_SCRIPT=...` (default `k6/prod-start-exam-200.js`).
+- Logs are written automatically:
+  - k6: `e2e/.generated/live-runner/k6-<timestamp>.log`
+  - live runner events: `e2e/.generated/live-runner/live-runner-<timestamp>.log`
+
 ## Notes
 
 - The scripts assume the schedule is assigned to at least one proctor/editor account in `prod-creds.json`.

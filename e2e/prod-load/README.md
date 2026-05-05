@@ -67,3 +67,57 @@ cargo run -p ielts-backend-api --bin e2e_provision_staff -- \
 ```
 
 Then run the Playwright shards (they will use `e2e/prod-data/prod-creds.json` for logins).
+
+## Live 100-User Runner (Dashboard)
+
+Reusable real-time runner driven by a register URL:
+
+```bash
+REGISTER_URL="https://your-host/student/<scheduleId>/register" \\
+USERS_FILE="e2e/prod-load/live-users.example.csv" \\
+USER_COUNT=3 \\
+DASHBOARD_PORT=3333 \\
+SCREENSHOT_INTERVAL_MS=1000 \\
+JPEG_QUALITY=45 \\
+LIVE_MODE=balanced \\
+HEADLESS=true \\
+HEADED_USERS=0 \\
+npm run e2e:live-runner
+```
+
+Open dashboard:
+
+```txt
+http://localhost:3333
+```
+
+Required envs:
+- `REGISTER_URL`
+- `USERS_FILE`
+
+Optional envs:
+- `USER_COUNT` (default `100`)
+- `DASHBOARD_PORT` (default `3333`)
+- `SCREENSHOT_INTERVAL_MS` (default `1000`)
+- `JPEG_QUALITY` (default `45`)
+- `LIVE_MODE` (`balanced` default, `fast` = near real-time: `SCREENSHOT_INTERVAL_MS=250`, `JPEG_QUALITY=30`)
+- `HEADLESS` (default `true`)
+- `HEADED_USERS` (default `0`): mix mode. First N users run headed, rest run headless.
+- `MAX_CONCURRENT_USERS` (default `20`): process users in a worker pool to avoid CPU/network spikes.
+- `OUTPUT_DIR` (default `e2e/.generated/live-runner`)
+- `NAV_TIMEOUT_MS` (default `30000`)
+- `START_POLL_INTERVAL_MS` (default `1500`)
+- `START_TIMEOUT_MS` (default `1200000`)
+
+Mixed example (3 visible browsers + rest headless):
+
+```bash
+REGISTER_URL="https://your-host/student/<scheduleId>/register" \\
+USERS_FILE="e2e/prod-load/live-users.500.csv" \\
+USER_COUNT=50 \\
+HEADLESS=true \\
+HEADED_USERS=3 \\
+MAX_CONCURRENT_USERS=20 \\
+LIVE_MODE=balanced \\
+npm run e2e:live-runner
+```
