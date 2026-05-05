@@ -2281,6 +2281,74 @@ pub async fn finalize_pending_schedule_attempts(
     Ok(total_finalized)
 }
 
+pub async fn force_finalize_attempt_if_pending(
+    pool: &MySqlPool,
+    schedule_id: Uuid,
+    attempt_id: Uuid,
+    completion_reason: &str,
+) -> Result<bool, DeliveryError> {
+    let mut tx = pool.begin().await?;
+    let attempt = sqlx::query_as::<_, StudentAttempt>(
+        "SELECT * FROM student_attempts WHERE id = ? AND schedule_id = ? FOR UPDATE",
+    )
+    .bind(attempt_id.to_string())
+    .bind(schedule_id.to_string())
+    .fetch_optional(tx.as_mut())
+    .await?
+    .ok_or(DeliveryError::NotFound)?;
+
+    if attempt.submitted_at.is_some() {
+        tx.commit().await?;
+        return Ok(false);
+    }
+
+    let now = Utc::now();
+    let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+    let final_submission = json!({
+        "submissionId": submission_id,
+        "submittedAt": now,
+        "answers": attempt.answers,
+        "writingAnswers": attempt.writing_answers,
+        "flags": attempt.flags,
+        "completionReason": completion_reason,
+        "autoSubmission": true,
+        "forcedByProctor": true
+    });
+    let recovery = merge_recovery(
+        attempt.recovery.clone(),
+        json!({
+            "lastPersistedAt": now,
+            "pendingMutationCount": 0,
+            "syncState": "saved"
+        }),
+    );
+
+    let result = sqlx::query(
+        r#"
+        UPDATE student_attempts
+        SET
+            phase = ?,
+            recovery = ?,
+            final_submission = ?,
+            submitted_at = ?,
+            updated_at = NOW(),
+            revision = revision + 1
+        WHERE id = ? AND schedule_id = ? AND submitted_at IS NULL
+        "#,
+    )
+    .bind("post-exam")
+    .bind(recovery)
+    .bind(&final_submission)
+    .bind(now)
+    .bind(attempt_id.to_string())
+    .bind(schedule_id.to_string())
+    .execute(tx.as_mut())
+    .await?;
+
+    tx.commit().await?;
+    Ok(result.rows_affected() == 1)
+}
+
 #[derive(sqlx::FromRow)]
 struct AttemptRegistrationRow {
     registration_id: Hyphenated,

@@ -18,7 +18,9 @@ use std::collections::HashMap;
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
-use crate::delivery::{auto_submit_schedule_attempts_in_tx, DeliveryError};
+use crate::delivery::{
+    auto_submit_schedule_attempts_in_tx, force_finalize_attempt_if_pending, DeliveryError,
+};
 use crate::scheduling::{SchedulingError, SchedulingService};
 
 #[derive(Error, Debug)]
@@ -1108,7 +1110,8 @@ impl ProctoringService {
             }
         }
 
-        self.update_attempt_status(
+        let summary = self
+            .update_attempt_status(
             schedule_id,
             attempt_id,
             &ctx.actor_id,
@@ -1117,7 +1120,18 @@ impl ProctoringService {
             "STUDENT_TERMINATE",
             req,
         )
+        .await?;
+
+        force_finalize_attempt_if_pending(
+            &self.pool,
+            schedule_id,
+            attempt_id,
+            "proctor_force_submit",
+        )
         .await
+        .map_err(|error| ProctoringError::Conflict(error.to_string()))?;
+
+        Ok(summary)
     }
 
     pub async fn auto_advance_expired_sections(
