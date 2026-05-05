@@ -69,6 +69,8 @@ pub struct AppConfig {
     pub retention_cleanup_batch_limit: i64,
     pub retention_shared_cache_grace_hours: i64,
     pub retention_idempotency_usable_hours: i64,
+    pub retention_idempotency_submit_usable_hours: i64,
+    pub retention_idempotency_violation_usable_hours: i64,
     pub retention_idempotency_grace_hours: i64,
     pub retention_heartbeat_days: i64,
     pub retention_mutation_days: i64,
@@ -392,6 +394,18 @@ impl AppConfig {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default.retention_idempotency_usable_hours),
+            retention_idempotency_submit_usable_hours: env::var(
+                "RETENTION_IDEMPOTENCY_SUBMIT_USABLE_HOURS",
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.retention_idempotency_submit_usable_hours),
+            retention_idempotency_violation_usable_hours: env::var(
+                "RETENTION_IDEMPOTENCY_VIOLATION_USABLE_HOURS",
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.retention_idempotency_violation_usable_hours),
             retention_idempotency_grace_hours: env::var("RETENTION_IDEMPOTENCY_GRACE_HOURS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -472,6 +486,10 @@ impl AppConfig {
         self.retention_cleanup_batch_limit = self.retention_cleanup_batch_limit.min(200);
         self.retention_shared_cache_grace_hours = self.retention_shared_cache_grace_hours.min(1);
         self.retention_idempotency_usable_hours = self.retention_idempotency_usable_hours.min(24);
+        self.retention_idempotency_submit_usable_hours =
+            self.retention_idempotency_submit_usable_hours.min(24 * 30);
+        self.retention_idempotency_violation_usable_hours =
+            self.retention_idempotency_violation_usable_hours.min(24 * 180);
         self.retention_idempotency_grace_hours = self.retention_idempotency_grace_hours.min(6);
         self.retention_heartbeat_days = self.retention_heartbeat_days.min(1);
         self.retention_mutation_days = self.retention_mutation_days.min(7);
@@ -565,6 +583,8 @@ impl Default for AppConfig {
             retention_cleanup_batch_limit: 1000,
             retention_shared_cache_grace_hours: 24,
             retention_idempotency_usable_hours: 72,
+            retention_idempotency_submit_usable_hours: 24 * 30,
+            retention_idempotency_violation_usable_hours: 24 * 180,
             retention_idempotency_grace_hours: 24,
             retention_heartbeat_days: 7,
             retention_mutation_days: 30,

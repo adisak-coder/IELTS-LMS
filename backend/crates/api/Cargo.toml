@@ -61,3 +61,7 @@ path = "../../tests/contracts/auth_contract.rs"
 [[test]]
 name = "frontend_static"
 path = "../../tests/frontend_static.rs"
+
+[[test]]
+name = "attempt_write_invariant_guard"
+path = "../../tests/integration/attempt_write_invariant_guard.rs"

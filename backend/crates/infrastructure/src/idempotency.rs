@@ -25,6 +25,8 @@ pub enum IdempotencyLookupStatus {
 pub struct IdempotencyRepository {
     pool: MySqlPool,
     usable_hours: i64,
+    submit_usable_hours: i64,
+    violation_usable_hours: i64,
 }
 
 impl IdempotencyRepository {
@@ -36,6 +38,22 @@ impl IdempotencyRepository {
         Self {
             pool,
             usable_hours: usable_hours.max(1),
+            submit_usable_hours: usable_hours.max(1),
+            violation_usable_hours: usable_hours.max(1),
+        }
+    }
+
+    pub fn with_ttl_policy(
+        pool: MySqlPool,
+        mutation_usable_hours: i64,
+        submit_usable_hours: i64,
+        violation_usable_hours: i64,
+    ) -> Self {
+        Self {
+            pool,
+            usable_hours: mutation_usable_hours.max(1),
+            submit_usable_hours: submit_usable_hours.max(1),
+            violation_usable_hours: violation_usable_hours.max(1),
         }
     }
 
@@ -90,7 +108,7 @@ impl IdempotencyRepository {
     where
         E: Executor<'e, Database = MySql>,
     {
-        let expires_at = self.default_expiry();
+        let expires_at = self.default_expiry(route_key);
         sqlx::query(
             r#"
             INSERT INTO idempotency_keys (
@@ -182,8 +200,15 @@ impl IdempotencyRepository {
         Ok(result.rows_affected())
     }
 
-    pub fn default_expiry(&self) -> DateTime<Utc> {
-        Utc::now() + Duration::hours(self.usable_hours)
+    pub fn default_expiry(&self, route_key: &str) -> DateTime<Utc> {
+        let usable_hours = if route_key.contains("/submit") {
+            self.submit_usable_hours
+        } else if route_key.contains("violation") {
+            self.violation_usable_hours
+        } else {
+            self.usable_hours
+        };
+        Utc::now() + Duration::hours(usable_hours)
     }
 }
 

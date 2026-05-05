@@ -142,26 +142,38 @@ impl DeliveryError {
 pub struct DeliveryService {
     pool: MySqlPool,
     idempotency_usable_hours: i64,
+    submit_idempotency_usable_hours: i64,
+    violation_idempotency_usable_hours: i64,
     heartbeat_presence_min_write_interval_secs: u64,
 }
 
 impl DeliveryService {
     pub fn new(pool: MySqlPool) -> Self {
-        Self::with_runtime_tuning(pool, 72, 5)
+        Self::with_runtime_tuning(pool, 72, 72, 72, 5)
     }
 
     pub fn with_idempotency_usable_hours(pool: MySqlPool, idempotency_usable_hours: i64) -> Self {
-        Self::with_runtime_tuning(pool, idempotency_usable_hours, 5)
+        Self::with_runtime_tuning(
+            pool,
+            idempotency_usable_hours,
+            idempotency_usable_hours,
+            idempotency_usable_hours,
+            5,
+        )
     }
 
     pub fn with_runtime_tuning(
         pool: MySqlPool,
         idempotency_usable_hours: i64,
+        submit_idempotency_usable_hours: i64,
+        violation_idempotency_usable_hours: i64,
         heartbeat_presence_min_write_interval_secs: u64,
     ) -> Self {
         Self {
             pool,
             idempotency_usable_hours: idempotency_usable_hours.max(1),
+            submit_idempotency_usable_hours: submit_idempotency_usable_hours.max(1),
+            violation_idempotency_usable_hours: violation_idempotency_usable_hours.max(1),
             heartbeat_presence_min_write_interval_secs: heartbeat_presence_min_write_interval_secs
                 .max(1),
         }
@@ -1773,64 +1785,6 @@ impl DeliveryService {
             .map_err(DeliveryError::from)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn update_attempt(
-        &self,
-        attempt_id: String,
-        phase: String,
-        current_module: String,
-        current_question_id: Option<String>,
-        answers: Value,
-        writing_answers: Value,
-        flags: Value,
-        violations_snapshot: Value,
-        integrity: Value,
-        recovery: Value,
-        final_submission: Option<Value>,
-        submitted_at: Option<DateTime<Utc>>,
-    ) -> Result<StudentAttempt, DeliveryError> {
-        sqlx::query(
-            r#"
-            UPDATE student_attempts
-            SET
-                phase = ?,
-                current_module = ?,
-                current_question_id = ?,
-                answers = ?,
-                writing_answers = ?,
-                flags = ?,
-                violations_snapshot = ?,
-                integrity = ?,
-                recovery = ?,
-                final_submission = ?,
-                submitted_at = ?,
-                updated_at = NOW(),
-                revision = revision + 1
-            WHERE id = ?
-            "#,
-        )
-        .bind(phase)
-        .bind(current_module)
-        .bind(current_question_id)
-        .bind(answers)
-        .bind(writing_answers)
-        .bind(flags)
-        .bind(violations_snapshot)
-        .bind(integrity)
-        .bind(recovery)
-        .bind(final_submission)
-        .bind(submitted_at)
-        .bind(attempt_id.to_string())
-        .execute(&self.pool)
-        .await?;
-
-        sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
-            .bind(attempt_id.to_string())
-            .fetch_one(&self.pool)
-            .await
-            .map_err(DeliveryError::from)
-    }
-
     async fn update_attempt_integrity_recovery_phase_with_retry<F>(
         &self,
         attempt_id: &str,
@@ -2049,7 +2003,12 @@ impl DeliveryService {
     }
 
     fn idempotency_repository(&self) -> IdempotencyRepository {
-        IdempotencyRepository::with_usable_hours(self.pool.clone(), self.idempotency_usable_hours)
+        IdempotencyRepository::with_ttl_policy(
+            self.pool.clone(),
+            self.idempotency_usable_hours,
+            self.submit_idempotency_usable_hours,
+            self.violation_idempotency_usable_hours,
+        )
     }
 
     fn idempotency_request_hash<T: Serialize>(

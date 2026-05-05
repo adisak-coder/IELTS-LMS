@@ -35,6 +35,8 @@ fn delivery_service(state: &AppState) -> DeliveryService {
     DeliveryService::with_runtime_tuning(
         state.db_pool(),
         state.config.retention_idempotency_usable_hours,
+        state.config.retention_idempotency_submit_usable_hours,
+        state.config.retention_idempotency_violation_usable_hours,
         state.config.heartbeat_presence_min_write_interval_secs,
     )
 }
