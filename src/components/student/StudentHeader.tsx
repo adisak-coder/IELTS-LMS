@@ -420,7 +420,10 @@ export function StudentHeader({
         ) : null}
       </div>
 
-        <div className="flex items-center gap-1.5 md:gap-2 lg:gap-4 text-gray-700 flex-shrink-0 overflow-x-auto no-scrollbar max-w-full">
+      <div
+        className="flex min-w-0 max-w-full items-center justify-end gap-1.5 md:gap-2 lg:gap-4 text-gray-700 flex-shrink-0 overflow-x-auto no-scrollbar justify-self-end"
+        data-testid="student-header-controls-slot"
+      >
           {autoSaveStatus && (
             <div className="flex items-center gap-1 md:gap-1.5 text-[length:var(--student-meta-font-size)] font-bold uppercase tracking-wider hidden sm:flex">
             {autoSaveStatus === 'saving' || autoSaveStatus === 'syncing' ? (
