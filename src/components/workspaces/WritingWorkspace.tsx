@@ -11,6 +11,7 @@ import {
   updateWritingTaskContent,
 } from '../../utils/writingTaskUtils';
 import { WritingTaskPanel } from '../WritingTaskPanel';
+import { normalizeImageUrl } from '../../utils/imageUrl';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import { WritingChartPreview } from '../writing/WritingChartPreview';
 
@@ -502,7 +503,7 @@ export function WritingWorkspace({
 
                       {taskContent.chart?.imageSrc ? (
                         <div className="rounded-[28px] border border-gray-200 bg-white p-4 shadow-sm">
-                          <img src={taskContent.chart.imageSrc} alt={taskContent.chart.title} className="w-full rounded-2xl object-contain max-h-72" />
+                          <img src={normalizeImageUrl(taskContent.chart.imageSrc)} alt={taskContent.chart.title} className="w-full rounded-2xl object-contain max-h-72" />
                         </div>
                       ) : (
                         <WritingChartPreview chart={taskContent.chart} variant="builder" />

@@ -2,6 +2,10 @@ import type { ExamState, QuestionBlock, TableCell, TableCompletionBlock } from '
 import { countBlankPlaceholders } from './blankPlaceholders';
 import { createId } from './idUtils';
 import { syncAcceptedAnswers } from './acceptedAnswers';
+import {
+  isSuspiciousCompletionPromptText,
+  trimSuspiciousCompletionPromptText,
+} from './completionPromptText';
 
 export interface TablePlaceholderSlot {
   row: number;
@@ -16,64 +20,12 @@ export interface TablePlaceholderAnalysis {
 }
 
 const PLACEHOLDER_TOKEN = '____';
-const SUSPICIOUS_CELL_MIN_LENGTH = 260;
-const SUSPICIOUS_CELL_NEWLINE_THRESHOLD = 3;
-const SUSPICIOUS_CELL_SENTENCE_THRESHOLD = 3;
-const SUSPICIOUS_CELL_WORD_THRESHOLD = 45;
-
 export function isSuspiciousTableCellContent(value: string): boolean {
-  const text = (value ?? '').trim();
-  if (text.length < SUSPICIOUS_CELL_MIN_LENGTH) return false;
-
-  const newlineCount = text.match(/\n/g)?.length ?? 0;
-  const sentencePunctuationCount = text.match(/[.!?]/g)?.length ?? 0;
-  const wordCount = text.split(/\s+/).filter(Boolean).length;
-
-  return (
-    newlineCount >= SUSPICIOUS_CELL_NEWLINE_THRESHOLD
-    || sentencePunctuationCount >= SUSPICIOUS_CELL_SENTENCE_THRESHOLD
-    || wordCount >= SUSPICIOUS_CELL_WORD_THRESHOLD
-  );
+  return isSuspiciousCompletionPromptText(value);
 }
 
 export function trimSuspiciousTableCellContent(value: string, segmentLength = 140): string {
-  if (!isSuspiciousTableCellContent(value)) {
-    return value;
-  }
-
-  const tokens = value.split(/(_{2,})/g);
-  if (tokens.length === 1) {
-    return `${value.slice(0, Math.max(segmentLength, 120)).trimEnd()}…`;
-  }
-
-  return tokens
-    .map((token, index) => {
-      if (/_{2,}/.test(token)) {
-        return token;
-      }
-
-      const normalized = token.replace(/\s+/g, ' ').trim();
-      if (normalized.length <= segmentLength) {
-        return token;
-      }
-
-      const previous = tokens[index - 1] ?? '';
-      const next = tokens[index + 1] ?? '';
-      const followsPlaceholder = /_{2,}/.test(previous);
-      const precedesPlaceholder = /_{2,}/.test(next);
-
-      if (!followsPlaceholder && precedesPlaceholder) {
-        return `…${normalized.slice(-segmentLength)}`;
-      }
-
-      if (followsPlaceholder && !precedesPlaceholder) {
-        return `${normalized.slice(0, segmentLength)}…`;
-      }
-
-      const half = Math.floor(segmentLength / 2);
-      return `${normalized.slice(0, half)}…${normalized.slice(-half)}`;
-    })
-    .join('');
+  return trimSuspiciousCompletionPromptText(value, segmentLength);
 }
 
 function rowsEqual(left: string[][], right: string[][]): boolean {
@@ -187,7 +139,7 @@ export function analyzeTablePlaceholders(rows: string[][], headerCount: number):
   for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
     const row = rows[rowIndex] ?? [];
     for (let colIndex = 0; colIndex < headerCount; colIndex += 1) {
-      const value = row[colIndex] ?? '';
+      const value = trimSuspiciousTableCellContent(row[colIndex] ?? '');
       const placeholderCount = countBlankPlaceholders(value);
       if (placeholderCount > 0) {
         for (let placeholderIndex = 0; placeholderIndex < placeholderCount; placeholderIndex += 1) {

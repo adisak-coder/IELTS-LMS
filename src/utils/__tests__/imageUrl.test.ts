@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { getImageUrlCandidates, normalizeImageUrl } from '../imageUrl';
 
 describe('imageUrl', () => {
-  it('normalizes google drive share links to direct download urls', () => {
+  it('normalizes google drive share links to browser-loadable image urls', () => {
     expect(
       normalizeImageUrl('https://drive.google.com/file/d/1AbCDefG123456/view?usp=sharing'),
-    ).toBe('https://drive.google.com/uc?export=view&id=1AbCDefG123456');
+    ).toBe('https://drive.google.com/thumbnail?id=1AbCDefG123456&sz=w2000');
   });
 
-  it('provides a thumbnail fallback for drive images', () => {
+  it('tries the google drive thumbnail endpoint before legacy uc endpoints', () => {
     expect(
-      getImageUrlCandidates('https://drive.google.com/open?id=1AbCDefG123456')[1],
+      getImageUrlCandidates('https://drive.google.com/open?id=1AbCDefG123456')[0],
     ).toBe('https://drive.google.com/thumbnail?id=1AbCDefG123456&sz=w2000');
   });
 

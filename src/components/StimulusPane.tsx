@@ -14,6 +14,7 @@ import {
 import { Passage, ExamState, StimulusImageAsset } from '../types';
 import { StimulusImageEditor } from './StimulusImageEditor';
 import { getPassageMetrics } from '../utils/builderEnhancements';
+import { normalizeImageUrl } from '../utils/imageUrl';
 import { sanitizeHtml } from '../utils/sanitizeHtml';
 
 const metricTone = {
@@ -207,7 +208,7 @@ export function StimulusPane({
               {(passage.images ?? []).map((image) => (
                 <div key={image.id} className="rounded-[28px] border border-gray-200 bg-white p-4 shadow-sm">
                   <div className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-gray-100 bg-gray-50">
-                    <img src={image.src} alt={image.alt} className="h-full w-full object-contain" />
+                    <img src={normalizeImageUrl(image.src)} alt={image.alt} className="h-full w-full object-contain" />
                     {image.annotations.map((annotation) => (
                       <span
                         key={annotation.id}

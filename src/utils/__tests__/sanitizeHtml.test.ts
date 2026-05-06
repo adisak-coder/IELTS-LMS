@@ -17,5 +17,14 @@ describe('sanitizeHtml', () => {
     const result = sanitizeHtml('<a href="javascript:alert(1)">x</a>');
     expect(result).not.toMatch(/javascript:/i);
   });
-});
 
+  it('normalizes google drive image sources in rich html', () => {
+    const result = sanitizeHtml(
+      '<p>Diagram</p><img src="https://drive.google.com/file/d/1AbCDefG123456/view?usp=sharing" alt="Diagram" />',
+    );
+
+    expect(result).toContain(
+      'src="https://drive.google.com/thumbnail?id=1AbCDefG123456&amp;sz=w2000"',
+    );
+  });
+});

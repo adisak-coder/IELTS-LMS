@@ -670,6 +670,38 @@ describe('student question experience', () => {
     expect(firstInput.style.width).toContain('ch');
   });
 
+  it('does not render pasted reading passage text inside sentence-completion prompts', () => {
+    const question = {
+      id: 'sentence-1',
+      sentence:
+        'The ____ is important.\n\nREADING PASSAGE 2\nYou should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 below.\n\nA '.repeat(8),
+      blanks: [{ id: 'blank-1', correctAnswer: 'answer', position: 0 }],
+      answerRule: 'TWO_WORDS' as const,
+    };
+
+    const block: SentenceCompletionBlock = {
+      id: 'sentence-block-1',
+      type: 'SENTENCE_COMPLETION',
+      instruction: 'Complete the sentence.',
+      questions: [question],
+    };
+
+    render(
+      <QuestionRenderer
+        question={question}
+        block={block}
+        number={7}
+        answer={['']}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('The')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 7' })).toBeInTheDocument();
+    expect(screen.queryByText(/READING PASSAGE 2/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Questions 14-26/i)).not.toBeInTheDocument();
+  });
+
   it('renders table blanks inline and keeps row-major numbering stable', () => {
     const onChange = vi.fn();
     const block: TableCompletionBlock = {
@@ -714,6 +746,41 @@ describe('student question experience', () => {
     );
   });
 
+  it('does not render pasted reading passage text inside table-completion cells', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-inline-1',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      answerRule: 'ONE_WORD',
+      headers: ['Field', 'Value'],
+      rows: [
+        [
+          'Name: ____\n\nREADING PASSAGE 2\nYou should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 below.\n\nA '.repeat(8),
+          'Country: ____',
+        ],
+      ],
+      cells: [
+        { id: 'cell-name', row: 0, col: 0, correctAnswer: 'Anu' },
+        { id: 'cell-country', row: 0, col: 1, correctAnswer: 'India' },
+      ],
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={10}
+        answer={['anu', 'india']}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Name:')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 10' })).toBeInTheDocument();
+    expect(screen.queryByText(/READING PASSAGE 2/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Questions 14-26/i)).not.toBeInTheDocument();
+  });
+
   it('uses wrapping and responsive sizing classes for table inline blanks', () => {
     const block: TableCompletionBlock = {
       id: 'table-inline-1',
@@ -742,7 +809,7 @@ describe('student question experience', () => {
     expect(firstInput).toHaveClass('min-w-[8rem]');
     expect(firstInput).toHaveClass('w-fit');
     expect(firstInput).toHaveClass('max-w-full');
-    expect(container.querySelector('.flex.flex-wrap.items-center.justify-between.gap-3')).not.toBeNull();
+    expect(container.querySelector('.flex.flex-wrap.items-center.gap-2')).not.toBeNull();
   });
 
   it('uses responsive sizing classes for note-completion inline blanks', () => {
@@ -1020,7 +1087,7 @@ describe('student question experience', () => {
     const image = screen.getByAltText('Blueprint caption');
     expect(image).toHaveAttribute(
       'src',
-      'https://drive.google.com/uc?export=view&id=abc123DEF456',
+      'https://drive.google.com/thumbnail?id=abc123DEF456&sz=w2000',
     );
   });
 

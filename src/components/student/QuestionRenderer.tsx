@@ -31,6 +31,7 @@ import { FormattedText } from './FormattedText';
 import { stripBoldMarkdown } from '../../utils/boldMarkdown';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { getCanonicalTableCells, trimSuspiciousTableCellContent } from '../../utils/tableCompletion';
+import { trimSuspiciousCompletionPromptText } from '../../utils/completionPromptText';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 
@@ -561,7 +562,8 @@ export function QuestionRenderer({
 
   const renderSentenceCompletion = (sentenceBlock: SentenceCompletionBlock, q: SentenceCompletionQuestion) => {
     void sentenceBlock;
-    const parts = q.sentence.split(/_{2,}/);
+    const displaySentence = trimSuspiciousCompletionPromptText(q.sentence, 80);
+    const parts = displaySentence.split(/_{2,}/);
     const blanks = q.blanks.length;
     const scoringLabels = describeGroupedScoring(q.blanks);
 
