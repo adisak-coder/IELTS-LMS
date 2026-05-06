@@ -333,6 +333,41 @@
     }
   }
 
+  .student-accessible-table-typography :is(
+    table,
+    thead,
+    tbody,
+    tfoot,
+    tr,
+    th,
+    td,
+    caption
+  ) {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+  .student-accessible-table-typography table :is(
+    p,
+    span,
+    strong,
+    em,
+    b,
+    i,
+    u,
+    a,
+    small,
+    sub,
+    sup,
+    mark,
+    div,
+    li
+  ) {
+    font-size: inherit !important;
+    line-height: inherit !important;
+  }
+
+
   /* Accessibility: Live region announcements */
   .sr-only {
     position: absolute;

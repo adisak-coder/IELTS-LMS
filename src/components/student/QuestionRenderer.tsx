@@ -597,7 +597,7 @@ export function QuestionRenderer({
 
     return (
       <div className="overflow-x-auto rounded-2xl border border-gray-200">
-        <table className={`w-full border-collapse text-sm ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
+        <table className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
           <thead className="bg-gray-50">
             <tr>
               {tableBlock.headers.map((header, index) => (

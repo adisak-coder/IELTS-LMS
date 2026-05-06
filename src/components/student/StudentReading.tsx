@@ -86,7 +86,9 @@ export function StudentReading({
     const content = activePassage?.content ?? '';
     return passageHasHtml ? content : normalizeReadingPlainTextForDisplay(content);
   }, [activePassage?.content, passageHasHtml]);
-  const passageContentClassName = 'whitespace-normal break-words [overflow-wrap:anywhere]';
+  const passageContentClassName = passageHasHtml
+    ? 'student-accessible-table-typography whitespace-normal break-words [overflow-wrap:anywhere]'
+    : 'student-accessible-table-typography whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
   const currentIndex = allQuestions.findIndex((question) => question.id === currentQuestionId);
   const hasPrev = currentIndex > 0;
   const hasNext = currentIndex >= 0 && currentIndex < allQuestions.length - 1;

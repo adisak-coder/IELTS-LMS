@@ -2,7 +2,15 @@ import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ClassificationBlock, DiagramLabelingBlock, ExamState, MatchingFeaturesBlock, MultiMCQBlock, SentenceCompletionBlock } from '../../../types';
+import type {
+  ClassificationBlock,
+  DiagramLabelingBlock,
+  ExamState,
+  MatchingFeaturesBlock,
+  MultiMCQBlock,
+  SentenceCompletionBlock,
+  TableCompletionBlock,
+} from '../../../types';
 import { QuestionRenderer } from '../QuestionRenderer';
 import { StudentFooter } from '../StudentFooter';
 import { StudentHeader } from '../StudentHeader';
@@ -107,6 +115,44 @@ describe('student question experience', () => {
     expect(select).toHaveClass('w-full');
     expect(select).toHaveClass('min-w-0');
     expect(select).not.toHaveClass('min-w-[11rem]');
+  });
+
+  it('uses accessibility typography classes for table completion content', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-1',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Metric', 'Value'],
+      rows: [
+        ['Temperature', ''],
+        ['Humidity', 'High'],
+      ],
+      cells: [
+        { id: 'cell-1', row: 0, col: 1, correctAnswer: 'Warm' },
+      ],
+      answerRule: 'ONE_WORD',
+    };
+
+    const { container } = render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={21}
+        answer={['']}
+        onChange={() => {}}
+      />,
+    );
+
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(table).toHaveClass('text-[length:var(--student-control-font-size)]');
+    expect(table).not.toHaveClass('text-sm');
+    expect(screen.getByRole('columnheader', { name: 'Metric' })).toBeInTheDocument();
+    expect(screen.getByText('Humidity')).toBeInTheDocument();
+
+    const answerInput = screen.getByRole('textbox', { name: 'Answer for question 21' });
+    expect(answerInput).toHaveClass('text-[length:var(--student-control-font-size)]');
+    expect(answerInput).not.toHaveClass('text-sm');
   });
 
   it('does not show decorative option tags for matching feature questions', () => {
@@ -512,7 +558,7 @@ describe('student question experience', () => {
       speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
     } as ExamState;
 
-    render(
+    const { container } = render(
       <StudentReading
         state={state}
         answers={{}}
@@ -533,6 +579,10 @@ describe('student question experience', () => {
     expect(passagePanel?.className).not.toContain('md:text-base');
     expect(passageTitle).toHaveStyle({ fontSize: 'var(--student-passage-title-font-size)' });
     expect(passageTitle.nextElementSibling?.className).toContain('--student-passage-h1-font-size');
+
+    const readingHighlighter = container.querySelector('[data-student-highlightable="true"]');
+    expect(readingHighlighter).not.toBeNull();
+    expect(readingHighlighter).toHaveClass('student-accessible-table-typography');
   });
 
   it('keeps reading split-screen side by side in tablet mode with simple highlight guidance', () => {
@@ -1432,6 +1482,11 @@ describe('student question experience', () => {
         highlightEnabled
       />,
     );
+
+    const transcriptReference = screen.getByText('Reference transcript text.');
+    const transcriptHighlighter = transcriptReference.closest('[data-student-highlightable="true"]');
+    expect(transcriptHighlighter).not.toBeNull();
+    expect(transcriptHighlighter).toHaveClass('student-accessible-table-typography');
 
     const workspace = screen.getByTestId('listening-split-workspace');
     expect(workspace).toHaveClass('flex-row');
