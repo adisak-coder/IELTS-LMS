@@ -304,6 +304,7 @@ export interface TableCell {
   acceptedAnswers?: string[];
   row: number;
   col: number;
+  placeholderIndex?: number;
   scoreGroupId?: string;
   scoreWeight?: number;
   groupRule?: SlotGroupRule;

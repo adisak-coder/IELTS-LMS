@@ -3,8 +3,10 @@ import { createInitialExamState } from '../../services/examAdapterService';
 import type { TableCompletionBlock } from '../../types';
 import {
   getCanonicalTableCells,
+  isSuspiciousTableCellContent,
   normalizeExamStateTableCompletionBlocks,
   normalizeTableCompletionBlock,
+  trimSuspiciousTableCellContent,
 } from '../tableCompletion';
 
 function buildTableBlock(overrides: Partial<TableCompletionBlock> = {}): TableCompletionBlock {
@@ -114,6 +116,22 @@ describe('tableCompletion utils', () => {
     expect(withMissingId.cells[0]?.id).toBeTruthy();
   });
 
+  it('creates separate canonical answer slots for multiple placeholders in one cell', () => {
+    const block = buildTableBlock({
+      headers: ['A', 'B'],
+      rows: [['Label', '____, ____']],
+      cells: [{ id: 'cell-1', row: 0, col: 1, correctAnswer: 'first' }],
+    });
+
+    const normalized = normalizeTableCompletionBlock(block);
+    const canonical = getCanonicalTableCells(normalized);
+
+    expect(canonical).toHaveLength(2);
+    expect(canonical[0]).toMatchObject({ row: 0, col: 1, placeholderIndex: 0, correctAnswer: 'first' });
+    expect(canonical[1]).toMatchObject({ row: 0, col: 1, placeholderIndex: 1 });
+    expect(canonical[1]?.id).not.toBe(canonical[0]?.id);
+  });
+
   it('normalizes table blocks across reading and listening state trees', () => {
     const state = createInitialExamState('Table Normalization', 'Academic');
     state.reading.passages[0].blocks = [
@@ -140,5 +158,15 @@ describe('tableCompletion utils', () => {
     expect(listeningBlock.rows[0][0]).toContain('____');
     expect(readingBlock.cells[0]?.acceptedAnswers).toEqual(['reading']);
     expect(listeningBlock.cells[0]?.acceptedAnswers).toEqual(['listening']);
+  });
+
+  it('detects and trims suspicious long table cell content while keeping placeholders', () => {
+    const polluted = `Paragraph A.\nParagraph B.\nParagraph C.\nParagraph D.\n${'x'.repeat(280)} ____ , ____`;
+    expect(isSuspiciousTableCellContent(polluted)).toBe(true);
+
+    const trimmed = trimSuspiciousTableCellContent(polluted, 80);
+    expect(trimmed.length).toBeLessThan(polluted.length);
+    expect(trimmed).toContain('____');
+    expect(trimmed.match(/_{2,}/g)?.length).toBe(2);
   });
 });

@@ -30,7 +30,7 @@ import { ProtectedSelect } from './ProtectedSelect';
 import { FormattedText } from './FormattedText';
 import { stripBoldMarkdown } from '../../utils/boldMarkdown';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
-import { analyzeTablePlaceholders, getCanonicalTableCells } from '../../utils/tableCompletion';
+import { getCanonicalTableCells, trimSuspiciousTableCellContent } from '../../utils/tableCompletion';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 
@@ -737,16 +737,18 @@ export function QuestionRenderer({
     };
 
     const canonicalCells = getCanonicalTableCells(tableBlock);
-    const placeholderAnalysis = analyzeTablePlaceholders(tableBlock.rows, tableBlock.headers.length);
-    const useInlineBlanks = placeholderAnalysis.slots.length > 0;
     const scoringLabels = describeGroupedScoring(canonicalCells);
-
-    const cellMap = new Map<string, TableSlot>(
-      canonicalCells.map((cell, index): [string, TableSlot] => [
-        `${cell.row}:${cell.col}`,
-        { cell, index, slotId: getSlotId(index, `${tableBlock.id}:${cell.id}`) },
-      ]),
-    );
+    const cellMap = new Map<string, TableSlot[]>();
+    canonicalCells.forEach((cell, index) => {
+      const key = `${cell.row}:${cell.col}`;
+      const slot: TableSlot = { cell, index, slotId: getSlotId(index, `${tableBlock.id}:${cell.id}`) };
+      const bucket = cellMap.get(key);
+      if (bucket) {
+        bucket.push(slot);
+      } else {
+        cellMap.set(key, [slot]);
+      }
+    });
 
     return (
       <div className="space-y-2">
@@ -770,38 +772,80 @@ export function QuestionRenderer({
             {tableBlock.rows.map((row, rowIndex) => (
               <tr key={`row-${rowIndex}`}>
                 {row.map((cellValue, cellIndex) => {
-                  const slot = cellMap.get(`${rowIndex}:${cellIndex}`);
+                  const slots = cellMap.get(`${rowIndex}:${cellIndex}`) ?? [];
+                  const displayCellValue = trimSuspiciousTableCellContent(cellValue);
+                  const parts = displayCellValue.split(/_{2,}/);
+                  const hasInlinePlaceholders = parts.length > 1;
 
-                  if (!slot) {
+                  if (slots.length === 0) {
                     return (
                       <td key={`cell-${rowIndex}-${cellIndex}`} className="border border-gray-200 px-3 py-2 align-middle text-gray-800">
-                        <FormattedText as="span" className="text-gray-800" text={cellValue} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
+                        <FormattedText as="span" className="text-gray-800" text={displayCellValue} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
                       </td>
                     );
                   }
 
                   return (
                     <td
-                      key={slot.cell.id}
-                      id={`question-${slot.slotId}`}
+                      key={`${rowIndex}-${cellIndex}`}
+                      id={`question-${slots[0]?.slotId ?? `${tableBlock.id}:${rowIndex}:${cellIndex}`}`}
                       className="border border-gray-200 px-3 py-2 align-middle"
                     >
-                      {useInlineBlanks ? (
-                        <div className={`text-gray-800 ${isCompactPane ? 'space-y-2' : 'flex flex-wrap items-center justify-between gap-3'}`}>
-                          <div className={`${isCompactPane ? 'flex flex-wrap items-center gap-2' : 'flex flex-wrap items-center gap-2'}`}>
-                            <FormattedText
-                              as="span"
-                              className="text-gray-800"
-                              text={cellValue.split(/_{2,}/)[0] ?? ''}
-                              highlightEnabled={highlightEnabled}
-                              highlightColor={highlightColor}
-                            />
-                            <span
-                              className={`inline-flex max-w-full items-center gap-2 ${getSlotClassName(slot.slotId)}`}
-                            >
-                              <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
+                      {hasInlinePlaceholders ? (
+                        <div className={`text-gray-800 ${isCompactPane ? 'space-y-2' : 'flex flex-wrap items-center gap-2'}`}>
+                          {parts.map((part, partIndex) => {
+                            const slot = slots[partIndex];
+                            return (
+                              <React.Fragment key={`${rowIndex}-${cellIndex}-part-${partIndex}`}>
+                                <FormattedText
+                                  as="span"
+                                  className="text-gray-800"
+                                  text={part}
+                                  highlightEnabled={highlightEnabled}
+                                  highlightColor={highlightColor}
+                                />
+                                {partIndex < parts.length - 1 ? (
+                                  slot ? (
+                                    <span className={`inline-flex max-w-full items-center gap-2 ${getSlotClassName(slot.slotId)}`}>
+                                      <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
+                                        {getSlotNumber(slot.index)}
+                                      </span>
+                                      <ProtectedInput
+                                        type="text"
+                                        name={slot.slotId}
+                                        value={stringArrayAnswer[slot.index] ?? ''}
+                                        onChange={(event) =>
+                                          updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
+                                        }
+                                        className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
+                                        style={
+                                          isCompactPane
+                                            ? undefined
+                                            : getAutoWidthStyle(stringArrayAnswer[slot.index] ?? '', 'Answer...', 14, 48)
+                                        }
+                                        placeholder="Answer..."
+                                        security={security}
+                                        sessionId={sessionId}
+                                        studentId={studentId}
+                                        aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
+                                      />
+                                      {renderFlagButton(slot.slotId)}
+                                    </span>
+                                  ) : (
+                                    <span className="font-mono">____</span>
+                                  )
+                                ) : null}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {slots.map((slot) => (
+                            <div key={slot.slotId} className={isCompactPane ? 'space-y-2' : 'flex items-center gap-3'}>
+                              <div className="text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
                                 {getSlotNumber(slot.index)}
-                              </span>
+                              </div>
                               <ProtectedInput
                                 type="text"
                                 name={slot.slotId}
@@ -809,49 +853,16 @@ export function QuestionRenderer({
                                 onChange={(event) =>
                                   updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
                                 }
-                                className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
-                                style={
-                                  isCompactPane
-                                    ? undefined
-                                    : getAutoWidthStyle(stringArrayAnswer[slot.index] ?? '', 'Answer...', 14, 48)
-                                }
-                                placeholder="Answer..."
+                                className={`${isCompactPane ? 'w-full' : 'min-w-[10rem]'} rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100`}
+                                placeholder="Enter answer..."
                                 security={security}
                                 sessionId={sessionId}
                                 studentId={studentId}
                                 aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
                               />
-                            </span>
-                            <FormattedText
-                              as="span"
-                              className="text-gray-800"
-                              text={cellValue.split(/_{2,}/).slice(1).join('____')}
-                              highlightEnabled={highlightEnabled}
-                              highlightColor={highlightColor}
-                            />
-                          </div>
-                          <div className={isCompactPane ? 'flex justify-end' : 'flex-shrink-0'}>{renderFlagButton(slot.slotId)}</div>
-                        </div>
-                      ) : (
-                        <div className={isCompactPane ? 'space-y-2' : 'flex items-center gap-3'}>
-                          <div className="text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                            {getSlotNumber(slot.index)}
-                          </div>
-                          <ProtectedInput
-                            type="text"
-                            name={slot.slotId}
-                            value={stringArrayAnswer[slot.index] ?? ''}
-                            onChange={(event) =>
-                              updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
-                            }
-                            className={`${isCompactPane ? 'w-full' : 'min-w-[10rem]'} rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100`}
-                            placeholder="Enter answer..."
-                            security={security}
-                            sessionId={sessionId}
-                            studentId={studentId}
-                            aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
-                          />
-                          <div className={isCompactPane ? 'flex justify-end' : 'flex-shrink-0'}>{renderFlagButton(slot.slotId)}</div>
+                              <div className={isCompactPane ? 'flex justify-end' : 'flex-shrink-0'}>{renderFlagButton(slot.slotId)}</div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </td>

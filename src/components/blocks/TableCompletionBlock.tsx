@@ -11,7 +11,9 @@ import {
 import {
   analyzeTablePlaceholders,
   getCanonicalTableCells,
+  isSuspiciousTableCellContent,
   normalizeTableCompletionBlock,
+  trimSuspiciousTableCellContent,
 } from '../../utils/tableCompletion';
 import { InsertedImagesEditor } from './InsertedImagesEditor';
 
@@ -30,7 +32,7 @@ const rowEditorGridStyle = {
   gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
 } as const;
 
-type TableCellTarget = Pick<TableCompletionBlockType['cells'][number], 'id' | 'row' | 'col'>;
+type TableCellTarget = Pick<TableCompletionBlockType['cells'][number], 'id' | 'row' | 'col' | 'placeholderIndex'>;
 
 function resolveCellUpdateIndex(cells: TableCompletionBlockType['cells'], target: TableCellTarget): number {
   const idMatches: number[] = [];
@@ -40,7 +42,11 @@ function resolveCellUpdateIndex(cells: TableCompletionBlockType['cells'], target
     if (cell.id === target.id) {
       idMatches.push(index);
     }
-    if (cell.row === target.row && cell.col === target.col) {
+    if (
+      cell.row === target.row
+      && cell.col === target.col
+      && (cell.placeholderIndex ?? 0) === (target.placeholderIndex ?? 0)
+    ) {
       coordinateMatches.push(index);
     }
   });
@@ -50,7 +56,11 @@ function resolveCellUpdateIndex(cells: TableCompletionBlockType['cells'], target
 
   const coordinateWithinId = idMatches.filter((index) => {
     const cell = cells[index];
-    return cell?.row === target.row && cell?.col === target.col;
+    return (
+      cell?.row === target.row
+      && cell?.col === target.col
+      && (cell?.placeholderIndex ?? 0) === (target.placeholderIndex ?? 0)
+    );
   });
   if (coordinateWithinId.length > 0) return coordinateWithinId[0]!;
 
@@ -110,6 +120,17 @@ export function TableCompletionBlock({
     () => analyzeTablePlaceholders(block.rows, block.headers.length),
     [block.rows, block.headers.length],
   );
+  const suspiciousCells = React.useMemo(
+    () =>
+      block.rows.flatMap((row, rowIndex) =>
+        row.flatMap((cellValue, cellIndex) =>
+          isSuspiciousTableCellContent(cellValue)
+            ? [{ row: rowIndex, col: cellIndex, value: cellValue }]
+            : [],
+        ),
+      ),
+    [block.rows],
+  );
 
   const updateInstruction = (instruction: string) => {
     commitBlock({ ...block, instruction });
@@ -145,6 +166,20 @@ export function TableCompletionBlock({
         candidateCellIndex === cellIndex ? value : cellValue,
       );
     });
+    commitBlock({ ...block, rows: nextRows });
+  };
+
+  const trimRowCell = (rowIndex: number, cellIndex: number) => {
+    const currentValue = block.rows[rowIndex]?.[cellIndex] ?? '';
+    const trimmedValue = trimSuspiciousTableCellContent(currentValue);
+    if (trimmedValue === currentValue) return;
+    updateRowCell(rowIndex, cellIndex, trimmedValue);
+  };
+
+  const trimAllSuspiciousCells = () => {
+    const nextRows = block.rows.map((row) =>
+      row.map((cellValue) => trimSuspiciousTableCellContent(cellValue)),
+    );
     commitBlock({ ...block, rows: nextRows });
   };
 
@@ -410,8 +445,25 @@ export function TableCompletionBlock({
         </div>
 
         <p className="mb-2 text-xs text-gray-500">
-          Use <span className="font-mono">____</span> once per answer cell. Numbering is auto-generated in row order.
+          Use <span className="font-mono">____</span> for each blank (you can add multiple in one cell, e.g. <span className="font-mono">____, ____</span>). Numbering is auto-generated in row order.
         </p>
+        {suspiciousCells.length > 0 ? (
+          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <div className="flex items-center justify-between gap-3">
+              <span>
+                Found {suspiciousCells.length} suspicious table cell
+                {suspiciousCells.length === 1 ? '' : 's'} with unusually long pasted text.
+              </span>
+              <button
+                type="button"
+                onClick={trimAllSuspiciousCells}
+                className="rounded border border-amber-300 bg-white px-2 py-1 font-medium text-amber-800 hover:bg-amber-100"
+              >
+                Auto-trim text
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {block.rows.map((row, rowIndex) => (
           <div key={rowIndex} className="mb-2 rounded-md border border-gray-200 p-2">
@@ -433,6 +485,7 @@ export function TableCompletionBlock({
                 const placeholderCount = placeholderAnalysis.slots.find(
                   (slot) => slot.row === rowIndex && slot.col === cellIndex,
                 )?.placeholderCount ?? 0;
+                const suspiciousCell = isSuspiciousTableCellContent(cell);
                 return (
                   <div key={cellIndex} className="space-y-1">
                     <label className="block text-[11px] font-medium text-gray-500">
@@ -451,9 +504,21 @@ export function TableCompletionBlock({
                       placeholder={`Cell ${rowIndex + 1}-${cellIndex + 1}`}
                     />
                     {placeholderCount > 1 ? (
-                      <p className="text-[11px] text-amber-700">
-                        More than one placeholder found. Keep one <span className="font-mono">____</span> per cell.
+                      <p className="text-[11px] text-blue-700">
+                        {placeholderCount} blanks in this cell
                       </p>
+                    ) : null}
+                    {suspiciousCell ? (
+                      <div className="flex items-center justify-between rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
+                        <span>Suspicious long text in this cell</span>
+                        <button
+                          type="button"
+                          onClick={() => trimRowCell(rowIndex, cellIndex)}
+                          className="font-medium text-amber-900 hover:underline"
+                        >
+                          Trim
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 );
@@ -537,6 +602,9 @@ export function TableCompletionBlock({
                 <span>Q{canonicalCellDisplayNumbers[index] ?? (startNum + index)}</span>
                 <span>
                   Row {cell.row + 1}, Column {cell.col + 1}
+                  {typeof cell.placeholderIndex === 'number' && cell.placeholderIndex > 0
+                    ? `, Blank ${cell.placeholderIndex + 1}`
+                    : ''}
                 </span>
               </div>
               <AcceptedAnswersEditor

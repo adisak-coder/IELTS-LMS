@@ -256,13 +256,6 @@ function validateTableCompletion(block: TableCompletionBlock): ValidationError[]
     errors.push({ field: 'rows-placeholders', message: 'At least one blank placeholder (____) is required' });
   }
 
-  placeholderAnalysis.multiPlaceholderSlots.forEach((slot) => {
-    errors.push({
-      field: `row-${slot.row}-col-${slot.col}-placeholder`,
-      message: `Row ${slot.row + 1}, column ${slot.col + 1} must contain only one blank placeholder`,
-    });
-  });
-
   const canonicalCells = getCanonicalTableCells(block);
   if (canonicalCells.length !== placeholderAnalysis.slots.length) {
     errors.push({

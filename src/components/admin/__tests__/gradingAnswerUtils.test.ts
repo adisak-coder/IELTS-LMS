@@ -382,6 +382,48 @@ describe('gradingAnswerUtils', () => {
     expect(isStudentAnswerCorrect(descriptor, { 'tbl-1': ['anupama', 'india'] })).toBe(true);
   });
 
+  test('TABLE_COMPLETION: supports multiple placeholders inside the same table cell', () => {
+    const firstSlot = {
+      id: 'tbl-2:cell-a',
+      blockId: 'tbl-2',
+      groupId: 'p1',
+      groupLabel: 'Passage 1',
+      rootId: 'tbl-2:cell-a',
+      rootNumber: 51,
+      numberLabel: '51',
+      isMulti: false,
+      correctCount: 1,
+      answerKey: 'tbl-2',
+      answerIndex: 0,
+      block: {
+        id: 'tbl-2',
+        type: 'TABLE_COMPLETION',
+        instruction: 'Complete the table.',
+        answerRule: 'ONE_WORD',
+        headers: ['Key', 'Value'],
+        rows: [['Names', '____, ____']],
+        cells: [
+          { id: 'cell-a', row: 0, col: 1, placeholderIndex: 0, correctAnswer: 'Alice' },
+          { id: 'cell-b', row: 0, col: 1, placeholderIndex: 1, correctAnswer: 'Bob' },
+        ],
+      },
+      question: null,
+    } as unknown as StudentQuestionDescriptor;
+
+    const secondSlot = {
+      ...firstSlot,
+      id: 'tbl-2:cell-b',
+      rootId: 'tbl-2:cell-b',
+      rootNumber: 52,
+      numberLabel: '52',
+      answerIndex: 1,
+    } as unknown as StudentQuestionDescriptor;
+
+    expect(isStudentAnswerCorrect(firstSlot, { 'tbl-2': ['alice', 'bob'] })).toBe(true);
+    expect(isStudentAnswerCorrect(secondSlot, { 'tbl-2': ['alice', 'bob'] })).toBe(true);
+    expect(isStudentAnswerCorrect(secondSlot, { 'tbl-2': ['alice', 'wrong'] })).toBe(false);
+  });
+
   test('raw slot fidelity: preserves scalar string exactly and maps nullish to empty', () => {
     expect(rawSlotValue(' answer ')).toBe(' answer ');
     expect(rawSlotValue('\nline\n')).toBe('\nline\n');

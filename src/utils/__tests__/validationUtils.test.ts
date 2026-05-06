@@ -107,7 +107,7 @@ describe('validateQuestionBlock - placeholder/blanks alignment', () => {
     expect(errors.some((e) => e.field.includes('rows-placeholders'))).toBe(true);
   });
 
-  it('flags table completion when a single cell has multiple placeholders', () => {
+  it('accepts table completion when a single cell has multiple placeholders', () => {
     const errors = validateQuestionBlock({
       id: 'blk-7',
       type: 'TABLE_COMPLETION',
@@ -115,10 +115,13 @@ describe('validateQuestionBlock - placeholder/blanks alignment', () => {
       answerRule: 'ONE_WORD',
       headers: ['Key', 'Value'],
       rows: [['Name', '____ ____']],
-      cells: [{ id: 'cell-1', row: 0, col: 1, correctAnswer: 'Anu' }],
+      cells: [
+        { id: 'cell-1', row: 0, col: 1, placeholderIndex: 0, correctAnswer: 'Anu' },
+        { id: 'cell-2', row: 0, col: 1, placeholderIndex: 1, correctAnswer: 'Lee' },
+      ],
     });
 
-    expect(errors.some((e) => e.field.includes('placeholder'))).toBe(true);
+    expect(errors.some((e) => e.field.includes('placeholder'))).toBe(false);
   });
 
   it('accepts table completion answers when alternatives are provided', () => {

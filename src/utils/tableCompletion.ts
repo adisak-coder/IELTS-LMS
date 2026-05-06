@@ -6,6 +6,7 @@ import { syncAcceptedAnswers } from './acceptedAnswers';
 export interface TablePlaceholderSlot {
   row: number;
   col: number;
+  placeholderIndex: number;
   placeholderCount: number;
 }
 
@@ -15,6 +16,63 @@ export interface TablePlaceholderAnalysis {
 }
 
 const PLACEHOLDER_TOKEN = '____';
+const SUSPICIOUS_CELL_MIN_LENGTH = 260;
+const SUSPICIOUS_CELL_NEWLINE_THRESHOLD = 3;
+const SUSPICIOUS_CELL_SENTENCE_THRESHOLD = 3;
+
+export function isSuspiciousTableCellContent(value: string): boolean {
+  const text = (value ?? '').trim();
+  if (text.length < SUSPICIOUS_CELL_MIN_LENGTH) return false;
+  if (countBlankPlaceholders(text) === 0) return false;
+
+  const newlineCount = text.match(/\n/g)?.length ?? 0;
+  const sentencePunctuationCount = text.match(/[.!?]/g)?.length ?? 0;
+
+  return (
+    newlineCount >= SUSPICIOUS_CELL_NEWLINE_THRESHOLD
+    || sentencePunctuationCount >= SUSPICIOUS_CELL_SENTENCE_THRESHOLD
+  );
+}
+
+export function trimSuspiciousTableCellContent(value: string, segmentLength = 140): string {
+  if (!isSuspiciousTableCellContent(value)) {
+    return value;
+  }
+
+  const tokens = value.split(/(_{2,})/g);
+  if (tokens.length === 1) {
+    return `${value.slice(0, Math.max(segmentLength * 2, 200)).trimEnd()}…`;
+  }
+
+  return tokens
+    .map((token, index) => {
+      if (/_{2,}/.test(token)) {
+        return token;
+      }
+
+      const normalized = token.replace(/\s+/g, ' ').trim();
+      if (normalized.length <= segmentLength) {
+        return token;
+      }
+
+      const previous = tokens[index - 1] ?? '';
+      const next = tokens[index + 1] ?? '';
+      const followsPlaceholder = /_{2,}/.test(previous);
+      const precedesPlaceholder = /_{2,}/.test(next);
+
+      if (!followsPlaceholder && precedesPlaceholder) {
+        return `…${normalized.slice(-segmentLength)}`;
+      }
+
+      if (followsPlaceholder && !precedesPlaceholder) {
+        return `${normalized.slice(0, segmentLength)}…`;
+      }
+
+      const half = Math.floor(segmentLength / 2);
+      return `${normalized.slice(0, half)}…${normalized.slice(-half)}`;
+    })
+    .join('');
+}
 
 function rowsEqual(left: string[][], right: string[][]): boolean {
   if (left.length !== right.length) return false;
@@ -38,6 +96,7 @@ function cellsEqual(left: TableCell[], right: TableCell[]): boolean {
     if (!leftCell || !rightCell) return false;
     if (leftCell.id !== rightCell.id) return false;
     if (leftCell.row !== rightCell.row || leftCell.col !== rightCell.col) return false;
+    if ((leftCell.placeholderIndex ?? 0) !== (rightCell.placeholderIndex ?? 0)) return false;
     if (leftCell.correctAnswer !== rightCell.correctAnswer) return false;
     const leftAccepted = leftCell.acceptedAnswers ?? [];
     const rightAccepted = rightCell.acceptedAnswers ?? [];
@@ -72,7 +131,7 @@ function dedupeByCoordinate(cells: TableCell[]): TableCell[] {
   const seen = new Set<string>();
   const deduped: TableCell[] = [];
   for (const cell of cells) {
-    const key = `${cell.row}:${cell.col}`;
+    const key = `${cell.row}:${cell.col}:${cell.placeholderIndex ?? 0}`;
     if (seen.has(key)) continue;
     seen.add(key);
     deduped.push(cell);
@@ -129,10 +188,11 @@ export function analyzeTablePlaceholders(rows: string[][], headerCount: number):
       const value = row[colIndex] ?? '';
       const placeholderCount = countBlankPlaceholders(value);
       if (placeholderCount > 0) {
-        const slot: TablePlaceholderSlot = { row: rowIndex, col: colIndex, placeholderCount };
-        slots.push(slot);
+        for (let placeholderIndex = 0; placeholderIndex < placeholderCount; placeholderIndex += 1) {
+          slots.push({ row: rowIndex, col: colIndex, placeholderIndex, placeholderCount });
+        }
         if (placeholderCount > 1) {
-          multiPlaceholderSlots.push(slot);
+          multiPlaceholderSlots.push({ row: rowIndex, col: colIndex, placeholderIndex: 0, placeholderCount });
         }
       }
     }
@@ -161,14 +221,14 @@ export function getCanonicalTableCells(block: TableCompletionBlock): TableCell[]
 
   const byCoordinate = new Map<string, TableCell>();
   for (const cell of dedupedCells) {
-    byCoordinate.set(`${cell.row}:${cell.col}`, cell);
+    byCoordinate.set(`${cell.row}:${cell.col}:${cell.placeholderIndex ?? 0}`, cell);
   }
 
   const used = new Set<string>();
   const fallback = dedupedCells.slice();
 
   return analysis.slots.map((slot, index) => {
-    const coordinateKey = `${slot.row}:${slot.col}`;
+    const coordinateKey = `${slot.row}:${slot.col}:${slot.placeholderIndex}`;
     const coordinateMatch = byCoordinate.get(coordinateKey);
     if (coordinateMatch) {
       used.add(coordinateMatch.id);
@@ -176,16 +236,25 @@ export function getCanonicalTableCells(block: TableCompletionBlock): TableCell[]
         ...coordinateMatch,
         row: slot.row,
         col: slot.col,
+        placeholderIndex: slot.placeholderIndex,
       });
     }
 
-    const nextFallback = fallback.find((candidate) => !used.has(candidate.id));
+    const sameCoordinateFallback = fallback.find(
+      (candidate) =>
+        !used.has(candidate.id)
+        && candidate.row === slot.row
+        && candidate.col === slot.col,
+    );
+    const nextFallback = sameCoordinateFallback
+      ?? fallback.find((candidate) => !used.has(candidate.id));
     if (nextFallback) {
       used.add(nextFallback.id);
       return syncAcceptedAnswers({
         ...nextFallback,
         row: slot.row,
         col: slot.col,
+        placeholderIndex: slot.placeholderIndex,
       });
     }
 
@@ -193,6 +262,7 @@ export function getCanonicalTableCells(block: TableCompletionBlock): TableCell[]
       id: `slot-${slot.row}-${slot.col}-${index}`,
       row: slot.row,
       col: slot.col,
+      placeholderIndex: slot.placeholderIndex,
       correctAnswer: '',
       acceptedAnswers: [],
     };
