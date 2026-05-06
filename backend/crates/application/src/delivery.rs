@@ -1480,7 +1480,9 @@ impl DeliveryService {
                 .unwrap_or(true);
 
         if let (Some(final_answer_patch), Some(expected_hash)) = (
-            should_consider_final_patch.then_some(req.final_answer_patch.as_ref()).flatten(),
+            should_consider_final_patch
+                .then_some(req.final_answer_patch.as_ref())
+                .flatten(),
             req.final_client_snapshot_hash.as_ref(),
         ) {
             let expected = expected_hash.trim().to_ascii_lowercase();
@@ -1563,7 +1565,7 @@ impl DeliveryService {
         )?;
         let completion = compute_answer_completion(&answer_schema, &final_answers);
         let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
-        
+
         let mut grace_outcome = "not_applicable".to_owned();
         let mut allow_final_patch = should_consider_final_patch;
         if let Some(end_at) = schedule_end_at {

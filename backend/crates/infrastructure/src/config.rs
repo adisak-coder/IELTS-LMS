@@ -493,8 +493,9 @@ impl AppConfig {
         self.retention_idempotency_usable_hours = self.retention_idempotency_usable_hours.min(24);
         self.retention_idempotency_submit_usable_hours =
             self.retention_idempotency_submit_usable_hours.min(24 * 30);
-        self.retention_idempotency_violation_usable_hours =
-            self.retention_idempotency_violation_usable_hours.min(24 * 180);
+        self.retention_idempotency_violation_usable_hours = self
+            .retention_idempotency_violation_usable_hours
+            .min(24 * 180);
         self.retention_idempotency_grace_hours = self.retention_idempotency_grace_hours.min(6);
         self.retention_heartbeat_days = self.retention_heartbeat_days.min(1);
         self.retention_mutation_days = self.retention_mutation_days.min(7);

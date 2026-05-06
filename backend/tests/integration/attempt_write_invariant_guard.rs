@@ -2,7 +2,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
@@ -53,7 +55,9 @@ fn protected_attempt_columns_are_only_written_by_delivery_writer() {
         if file == allowed {
             continue;
         }
-        let Ok(content) = fs::read_to_string(&file) else { continue };
+        let Ok(content) = fs::read_to_string(&file) else {
+            continue;
+        };
         if has_protected_attempt_write(&content) {
             violations.push(file);
         }

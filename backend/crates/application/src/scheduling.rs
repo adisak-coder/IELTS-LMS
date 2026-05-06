@@ -166,9 +166,9 @@ impl SchedulingService {
                 "Published version does not belong to the requested exam.".to_owned(),
             ));
         }
-        if !version.is_published {
+        if !self.is_schedulable_version(&exam, &version, &req.published_version_id) {
             return Err(SchedulingError::Validation(
-                "Only published versions can be scheduled.".to_owned(),
+                "Only published versions or the current draft version can be scheduled.".to_owned(),
             ));
         }
 
@@ -338,6 +338,7 @@ impl SchedulingService {
         let next_end_time = req.end_time.unwrap_or(existing.end_time);
 
         let time_window_changed = req.start_time.is_some() || req.end_time.is_some();
+        let exam = self.load_exam_context(existing.exam_id.clone()).await?;
 
         let (published_version_id_update, planned_duration_minutes_update) = if version_changed {
             let next_version_id = requested_version_id.clone().ok_or_else(|| {
@@ -350,9 +351,10 @@ impl SchedulingService {
                     "Published version does not belong to the schedule exam.".to_owned(),
                 ));
             }
-            if !version.is_published {
+            if !self.is_schedulable_version(&exam, &version, &next_version_id) {
                 return Err(SchedulingError::Validation(
-                    "Only published versions can be scheduled.".to_owned(),
+                    "Only published versions or the current draft version can be scheduled."
+                        .to_owned(),
                 ));
             }
 
@@ -943,7 +945,7 @@ impl SchedulingService {
 
     async fn load_exam_context(&self, exam_id: String) -> Result<ExamContext, SchedulingError> {
         sqlx::query_as::<_, ExamContext>(
-            "SELECT title, organization_id FROM exam_entities WHERE id = ?",
+            "SELECT title, organization_id, CAST(current_draft_version_id AS CHAR) AS current_draft_version_id FROM exam_entities WHERE id = ?",
         )
         .bind(&exam_id)
         .fetch_optional(&self.pool)
@@ -962,6 +964,16 @@ impl SchedulingService {
         .fetch_optional(&self.pool)
         .await?
         .ok_or(SchedulingError::NotFound)
+    }
+
+    fn is_schedulable_version(
+        &self,
+        exam: &ExamContext,
+        version: &VersionContext,
+        requested_version_id: &str,
+    ) -> bool {
+        version.is_published
+            || exam.current_draft_version_id.as_deref() == Some(requested_version_id)
     }
 
     pub async fn create_student_registration(
@@ -1126,6 +1138,7 @@ fn is_mysql_duplicate_key(err: &sqlx::Error) -> bool {
 struct ExamContext {
     title: String,
     organization_id: Option<String>,
+    current_draft_version_id: Option<String>,
 }
 
 #[derive(Debug, Clone, FromRow)]

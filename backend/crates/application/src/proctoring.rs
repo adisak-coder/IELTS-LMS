@@ -1112,15 +1112,15 @@ impl ProctoringService {
 
         let summary = self
             .update_attempt_status(
-            schedule_id,
-            attempt_id,
-            &ctx.actor_id,
-            "terminated",
-            Some("post-exam"),
-            "STUDENT_TERMINATE",
-            req,
-        )
-        .await?;
+                schedule_id,
+                attempt_id,
+                &ctx.actor_id,
+                "terminated",
+                Some("post-exam"),
+                "STUDENT_TERMINATE",
+                req,
+            )
+            .await?;
 
         force_finalize_attempt_if_pending(
             &self.pool,

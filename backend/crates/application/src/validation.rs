@@ -420,8 +420,7 @@ fn validate_question_block(
         .unwrap_or("unknown");
 
     if block_type != "TABLE_COMPLETION" {
-        if let Some(root_count) = validate_sub_answer_tree_block(block_obj, &field_prefix, result)
-        {
+        if let Some(root_count) = validate_sub_answer_tree_block(block_obj, &field_prefix, result) {
             return root_count;
         }
     }
@@ -749,7 +748,10 @@ fn validate_sentence_completion(
                         for (blank_idx, blank) in bs.iter().enumerate() {
                             let Some(blank_obj) = blank.as_object() else {
                                 result.add_error(
-                                    format!("{}.questions[{}].blanks[{}]", field_prefix, q_idx, blank_idx),
+                                    format!(
+                                        "{}.questions[{}].blanks[{}]",
+                                        field_prefix, q_idx, blank_idx
+                                    ),
                                     "Blank must be an object",
                                 );
                                 continue;
@@ -1722,7 +1724,8 @@ mod tests {
             !result
                 .errors
                 .iter()
-                .any(|error| error.field.contains("answerTree") || error.message.contains("accepted answer")),
+                .any(|error| error.field.contains("answerTree")
+                    || error.message.contains("accepted answer")),
             "expected TABLE_COMPLETION to skip answerTree validation, got errors: {:?}",
             result.errors
         );
