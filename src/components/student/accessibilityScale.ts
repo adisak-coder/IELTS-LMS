@@ -1,4 +1,9 @@
 export type StudentFontSize = 'small' | 'normal' | 'large';
+export type StudentPassageReadabilityLevel = 0 | 1 | 2;
+
+export const STUDENT_PASSAGE_READABILITY_MIN: StudentPassageReadabilityLevel = 0;
+export const STUDENT_PASSAGE_READABILITY_MAX: StudentPassageReadabilityLevel = 2;
+export const DEFAULT_STUDENT_PASSAGE_READABILITY_LEVEL: StudentPassageReadabilityLevel = 1;
 
 export interface StudentTypographyScale {
   rootFontSize: string;
@@ -52,4 +57,14 @@ export function getStudentTypographyScale(fontSize: StudentFontSize): StudentTyp
 
 export function getStudentFontSizeLabel(fontSize: StudentFontSize): string {
   return STUDENT_FONT_SIZE_LABELS[fontSize];
+}
+
+export function clampStudentPassageReadabilityLevel(value: number): StudentPassageReadabilityLevel {
+  if (value <= STUDENT_PASSAGE_READABILITY_MIN) {
+    return STUDENT_PASSAGE_READABILITY_MIN;
+  }
+  if (value >= STUDENT_PASSAGE_READABILITY_MAX) {
+    return STUDENT_PASSAGE_READABILITY_MAX;
+  }
+  return Math.round(value) as StudentPassageReadabilityLevel;
 }
