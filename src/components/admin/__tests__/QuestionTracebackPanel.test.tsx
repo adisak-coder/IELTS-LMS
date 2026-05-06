@@ -299,4 +299,69 @@ describe('QuestionTracebackPanel', () => {
     expect(screen.getByText(/stored answer key\(s\) do not map/i)).toBeInTheDocument();
     expect(screen.getByText(/orphan-key/)).toBeInTheDocument();
   });
+
+  test('shows grouped scoring rule label when provided by traceback items', () => {
+    mockedBuildQuestionTracebackGroups.mockReturnValueOnce([
+      {
+        groupId: 'g1',
+        groupLabel: 'Passage 1',
+        items: [
+          {
+            numberLabel: '22',
+            rootNumberLabel: '22',
+            questionId: 'q-22:a',
+            rootId: 'q-22:group:pair',
+            prompt: 'Blank A',
+            studentAnswer: 'sun',
+            correctAnswer: 'sun',
+            correctness: true,
+            rootCorrectness: true,
+            awardedScore: 1,
+            maxScore: 1,
+            answerKey: 'q-22',
+            rootRuleLabel: 'Scoring: 2 answers required for 1 point',
+          },
+          {
+            numberLabel: '22',
+            rootNumberLabel: '22',
+            questionId: 'q-22:b',
+            rootId: 'q-22:group:pair',
+            prompt: 'Blank B',
+            studentAnswer: 'moon',
+            correctAnswer: 'moon',
+            correctness: true,
+            rootCorrectness: true,
+            awardedScore: 1,
+            maxScore: 1,
+            answerKey: 'q-22',
+            rootRuleLabel: 'Scoring: 2 answers required for 1 point',
+          },
+        ],
+      },
+    ]);
+
+    render(
+      <QuestionTracebackPanel
+        section="reading"
+        examState={null}
+        sectionSubmission={{
+          id: 'sec-1',
+          submissionId: 'sub-1',
+          section: 'reading',
+          answers: { type: 'reading', answers: { 'q-22': ['sun', 'moon'] } },
+          autoGradingResults: undefined,
+          gradingStatus: 'auto_graded',
+          reviewedBy: undefined,
+          reviewedAt: undefined,
+          finalizedBy: undefined,
+          finalizedAt: undefined,
+          submittedAt: '2026-01-01T00:00:00.000Z',
+        } as any}
+        examLoading={false}
+        examError={null}
+      />,
+    );
+
+    expect(screen.getByText(/2 answers required for 1 point/i)).toBeInTheDocument();
+  });
 });

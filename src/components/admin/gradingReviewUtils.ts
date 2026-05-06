@@ -20,6 +20,7 @@ import {
 } from './gradingAnswerUtils';
 import { htmlToPlainText } from '../../utils/htmlText';
 import { evaluateSubAnswerRootUnordered } from '../../utils/subAnswerTree';
+import type { SlotGroupRule } from '../../types';
 
 export type GradingExportSection = 'reading' | 'listening' | 'writing';
 
@@ -47,6 +48,11 @@ export interface ObjectiveTracebackItem {
   awardedScore: number | null;
   maxScore: number | null;
   answerKey: string;
+  rootScoreRule?: SlotGroupRule;
+  rootRequiredCorrect?: number;
+  rootSlotCount?: number;
+  rootScoreWeight?: number;
+  rootRuleLabel?: string;
 }
 
 export interface ObjectiveTracebackGroup {
@@ -300,6 +306,20 @@ function buildTracebackItem(
     descriptor.block.type === 'SINGLE_MCQ'
     || (descriptor.block.type === 'MULTI_MCQ' && displayStudentAnswer !== rawStudentAnswer.canonical);
 
+  const rootScoringProps: Partial<ObjectiveTracebackItem> = {};
+  if (descriptor.rootScoreRule) {
+    rootScoringProps.rootScoreRule = descriptor.rootScoreRule;
+  }
+  if (descriptor.rootRequiredCorrect !== undefined) {
+    rootScoringProps.rootRequiredCorrect = descriptor.rootRequiredCorrect;
+  }
+  if (descriptor.rootSlotCount !== undefined) {
+    rootScoringProps.rootSlotCount = descriptor.rootSlotCount;
+  }
+  if (descriptor.rootScoreWeight !== undefined) {
+    rootScoringProps.rootScoreWeight = descriptor.rootScoreWeight;
+  }
+
   return {
     numberLabel: getQuestionNumberLabel(descriptors, descriptor.id),
     rootNumberLabel: String(descriptor.rootNumber),
@@ -314,7 +334,84 @@ function buildTracebackItem(
     awardedScore,
     maxScore,
     answerKey: descriptor.answerKey,
+    ...rootScoringProps,
   };
+}
+
+function resolveRootRuleLabel(item: ObjectiveTracebackItem): string | undefined {
+  if (!item.rootScoreRule || (item.rootSlotCount ?? 0) <= 1) {
+    return undefined;
+  }
+
+  if (item.rootScoreRule === 'at_least_n') {
+    const required = Math.max(1, item.rootRequiredCorrect ?? 1);
+    return `Scoring: ${required} answer${required === 1 ? '' : 's'} required for ${item.rootScoreWeight ?? 1} point`;
+  }
+
+  const slotCount = Math.max(1, item.rootSlotCount ?? 1);
+  return `Scoring: all ${slotCount} answers must be correct for ${item.rootScoreWeight ?? 1} point`;
+}
+
+function applyRootScoringRules(groups: ObjectiveTracebackGroup[]): void {
+  const byRoot = new Map<string, ObjectiveTracebackItem[]>();
+  groups.forEach((group) => {
+    group.items.forEach((item) => {
+      const bucket = byRoot.get(item.rootId);
+      if (bucket) {
+        bucket.push(item);
+      } else {
+        byRoot.set(item.rootId, [item]);
+      }
+    });
+  });
+
+  byRoot.forEach((items) => {
+    const reference = items[0];
+    if (!reference) return;
+
+    const isGrouped = Boolean(reference.rootScoreRule) && (reference.rootSlotCount ?? items.length) > 1;
+    if (!isGrouped) {
+      const rootRuleLabel = resolveRootRuleLabel(reference);
+      items.forEach((item) => {
+        if (rootRuleLabel) {
+          item.rootRuleLabel = rootRuleLabel;
+        } else {
+          delete item.rootRuleLabel;
+        }
+      });
+      return;
+    }
+
+    const required = Math.max(1, reference.rootRequiredCorrect ?? 1);
+    const weight = Math.max(0, reference.rootScoreWeight ?? 1);
+    const rule = reference.rootScoreRule ?? 'all_required';
+    const allUnanswered = items.every((item) => item.correctness === null);
+    const correctCount = items.filter((item) => item.correctness === true).length;
+
+    let rootCorrectness: boolean | null;
+    if (allUnanswered) {
+      rootCorrectness = null;
+    } else if (rule === 'at_least_n') {
+      rootCorrectness = correctCount >= required;
+    } else {
+      rootCorrectness = correctCount >= items.length;
+    }
+
+    const rootAwardedScore = rootCorrectness === null ? null : rootCorrectness ? weight : 0;
+    const rootMaxScore = rootCorrectness === null ? null : weight;
+    const rootRuleLabel = resolveRootRuleLabel(reference);
+
+    items.forEach((item) => {
+      item.rootCorrectness = rootCorrectness;
+      item.awardedScore = rootAwardedScore;
+      item.maxScore = rootMaxScore;
+      if (rootRuleLabel) {
+        item.rootRuleLabel = rootRuleLabel;
+      } else {
+        delete item.rootRuleLabel;
+      }
+    });
+  });
 }
 
 export function buildQuestionTracebackGroups(
@@ -358,7 +455,9 @@ export function buildQuestionTracebackGroups(
     );
   }
 
-  return Array.from(groups.values());
+  const groupedTraceback = Array.from(groups.values());
+  applyRootScoringRules(groupedTraceback);
+  return groupedTraceback;
 }
 
 export interface ObjectiveExportRowInput {
@@ -467,7 +566,7 @@ function sumAwardedScores(groups: ObjectiveTracebackGroup[]): number | '' {
   groups.forEach((group) => {
     group.items.forEach((item) => {
       if (!byRoot.has(item.rootId)) {
-        byRoot.set(item.rootId, item.rootCorrectness === null ? null : item.rootCorrectness ? 1 : 0);
+        byRoot.set(item.rootId, item.awardedScore ?? null);
       }
     });
   });
@@ -481,7 +580,7 @@ function sumMaxScores(groups: ObjectiveTracebackGroup[]): number | '' {
   groups.forEach((group) => {
     group.items.forEach((item) => {
       if (!byRoot.has(item.rootId)) {
-        byRoot.set(item.rootId, item.rootCorrectness === null ? null : 1);
+        byRoot.set(item.rootId, item.maxScore ?? null);
       }
     });
   });

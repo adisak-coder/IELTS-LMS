@@ -82,6 +82,56 @@ export function SentenceCompletionBlock({
     updateBlock({ ...block, questions: newQuestions });
   };
 
+  const isGroupedScoringQuestion = (question: SentenceCompletionBlockType['questions'][number]): boolean =>
+    question.blanks.some((blank) => Boolean(blank.scoreGroupId?.trim()));
+
+  const getQuestionScoreCount = (question: SentenceCompletionBlockType['questions'][number]): number => {
+    if (isGroupedScoringQuestion(question)) {
+      return 1;
+    }
+    return Math.max(1, question.blanks.length);
+  };
+
+  const updateQuestionScoringMode = (questionId: string, mode: 'independent' | 'grouped_2_for_1') => {
+    const newQuestions = block.questions.map((question) => {
+      if (question.id !== questionId) return question;
+
+      if (mode === 'independent') {
+        return {
+          ...question,
+          blanks: question.blanks.map((blank) => ({
+            ...(() => {
+              const {
+                scoreGroupId: _scoreGroupId,
+                scoreWeight: _scoreWeight,
+                groupRule: _groupRule,
+                requiredCorrect: _requiredCorrect,
+                ...rest
+              } = blank;
+              void _scoreGroupId;
+              void _scoreWeight;
+              void _groupRule;
+              void _requiredCorrect;
+              return rest;
+            })(),
+          })),
+        };
+      }
+
+      return {
+        ...question,
+        blanks: question.blanks.map((blank, blankIndex) => ({
+          ...blank,
+          scoreGroupId: question.id,
+          scoreWeight: blankIndex === 0 ? 1 : 0,
+          groupRule: 'at_least_n',
+          requiredCorrect: 2,
+        })),
+      };
+    });
+    updateBlock({ ...block, questions: newQuestions });
+  };
+
   const addQuestion = () => {
     const newQuestion = {
       id: createId('q'),
@@ -100,11 +150,12 @@ export function SentenceCompletionBlock({
   const getQuestionNumberLabel = (questionIndex: number) => {
     const offset = block.questions
       .slice(0, questionIndex)
-      .reduce((count, q) => count + q.blanks.length, 0);
+      .reduce((count, q) => count + getQuestionScoreCount(q), 0);
     const start = startNum + offset;
-    const blanks = block.questions[questionIndex]?.blanks.length ?? 0;
-    const end = start + Math.max(0, blanks - 1);
-    if (blanks <= 1) return `${start}`;
+    const currentQuestion = block.questions[questionIndex];
+    const questionCount = currentQuestion ? getQuestionScoreCount(currentQuestion) : 1;
+    const end = start + Math.max(0, questionCount - 1);
+    if (questionCount <= 1) return `${start}`;
     return `${start}–${end}`;
   };
 
@@ -190,6 +241,19 @@ export function SentenceCompletionBlock({
                 </span>
                 <div className="flex items-center gap-2">
                   <select
+                    value={isGroupedScoringQuestion(question) ? 'grouped_2_for_1' : 'independent'}
+                    onChange={(event) =>
+                      updateQuestionScoringMode(
+                        question.id,
+                        event.target.value as 'independent' | 'grouped_2_for_1',
+                      )
+                    }
+                    className="text-xs border border-gray-300 rounded px-2 py-1"
+                  >
+                    <option value="independent">Independent (1 slot = 1 point)</option>
+                    <option value="grouped_2_for_1">Grouped (2 correct required = 1 point)</option>
+                  </select>
+                  <select
                     value={question.answerRule}
                     onChange={(e) => updateQuestion(question.id, { answerRule: e.target.value as AnswerRule })}
                     className="text-xs border border-gray-300 rounded px-2 py-1"
@@ -208,6 +272,11 @@ export function SentenceCompletionBlock({
                 </div>
               </div>
               <div className="space-y-3">
+                {isGroupedScoringQuestion(question) ? (
+                  <p className="rounded-md border border-blue-100 bg-blue-50 px-2 py-1 text-xs text-blue-700">
+                    Scoring: 2 answers required for 1 point
+                  </p>
+                ) : null}
                 <div>
                   <label className="block text-xs font-medium text-gray-600 mb-1">
                     Sentence (use ____ for blanks)

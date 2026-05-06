@@ -24,6 +24,31 @@ import {
   isTreeCapableBlockType,
 } from './subAnswerTreeSlots';
 
+type GroupedSlot = {
+  id: string;
+  scoreGroupId?: string;
+};
+
+function normalizeScoreGroupId(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function countScoringRoots(slots: GroupedSlot[], prefixBySlotId: (slot: GroupedSlot) => string): number {
+  if (slots.length === 0) return 0;
+  const roots = new Set<string>();
+  slots.forEach((slot) => {
+    const groupId = normalizeScoreGroupId(slot.scoreGroupId);
+    if (groupId) {
+      roots.add(`${prefixBySlotId(slot)}:group:${groupId}`);
+      return;
+    }
+    roots.add(`${prefixBySlotId(slot)}:slot:${slot.id}`);
+  });
+  return roots.size;
+}
+
 export const getBlockQuestionCount = (block: QuestionBlock): number => {
   const treeModeEnabled = Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled);
   if (treeModeEnabled && isTreeCapableBlockType(block.type)) {
@@ -50,13 +75,18 @@ export const getBlockQuestionCount = (block: QuestionBlock): number => {
     case 'SHORT_ANSWER':
       return block.questions.length;
     case 'SENTENCE_COMPLETION':
-      return block.questions.reduce((acc, q) => acc + q.blanks.length, 0);
+      return block.questions.reduce(
+        (total, question) =>
+          total
+          + countScoringRoots(question.blanks, () => question.id),
+        0,
+      );
     case 'DIAGRAM_LABELING':
       return block.labels.length;
     case 'FLOW_CHART':
       return block.steps.length;
     case 'TABLE_COMPLETION':
-      return getCanonicalTableCells(block).length;
+      return countScoringRoots(getCanonicalTableCells(block), () => block.id);
     case 'NOTE_COMPLETION':
       return block.questions.reduce((acc, q) => acc + q.blanks.length, 0);
     case 'CLASSIFICATION':

@@ -39,6 +39,8 @@ function QuestionStatusBadge({ correctness }: { correctness: boolean | null }) {
 }
 
 function renderGroup(group: ObjectiveTracebackGroup, index: number) {
+  const renderedRootLabels = new Set<string>();
+
   return (
     <section key={group.groupId} className="rounded-2xl border border-gray-200 bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
@@ -59,7 +61,13 @@ function renderGroup(group: ObjectiveTracebackGroup, index: number) {
       </div>
 
       <div className="grid gap-4 px-5 py-5">
-        {group.items.map((item) => (
+        {group.items.map((item) => {
+          const showRootRule = Boolean(item.rootRuleLabel) && !renderedRootLabels.has(item.rootId);
+          if (showRootRule) {
+            renderedRootLabels.add(item.rootId);
+          }
+
+          return (
           <article
             key={item.questionId}
             className={`rounded-2xl border px-4 py-4 shadow-sm ${
@@ -76,6 +84,9 @@ function renderGroup(group: ObjectiveTracebackGroup, index: number) {
                   <Hash size={12} />
                   {item.numberLabel || item.questionId}
                 </div>
+                {showRootRule ? (
+                  <p className="text-xs font-medium text-blue-700">{item.rootRuleLabel}</p>
+                ) : null}
                 <h4 className="text-sm font-semibold text-gray-900">
                   {item.prompt || 'Question prompt unavailable'}
                 </h4>
@@ -123,7 +134,8 @@ function renderGroup(group: ObjectiveTracebackGroup, index: number) {
               </div>
             </div>
           </article>
-        ))}
+          );
+        })}
       </div>
     </section>
   );
@@ -171,6 +183,7 @@ export function QuestionTracebackPanel({
     for (let index = 1; index < sorted.length; index += 1) {
       const previous = sorted[index - 1];
       const current = sorted[index];
+      if (previous === undefined || current === undefined) continue;
       if (current - previous <= 1) continue;
       const start = previous + 1;
       const end = current - 1;

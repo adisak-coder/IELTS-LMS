@@ -135,6 +135,44 @@ describe('validateQuestionBlock - placeholder/blanks alignment', () => {
     expect(errors.some((e) => e.field.includes('cell-0'))).toBe(false);
   });
 
+  it('rejects grouped scoring fields without scoreGroupId', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-score-1',
+      type: 'SENTENCE_COMPLETION',
+      instruction: 'Complete the sentence.',
+      questions: [
+        {
+          id: 'q-1',
+          sentence: 'The ____ is ____.',
+          blanks: [
+            { id: 'b-1', correctAnswer: 'sun', position: 0, groupRule: 'at_least_n', requiredCorrect: 2 },
+            { id: 'b-2', correctAnswer: 'moon', position: 1 },
+          ],
+          answerRule: 'ONE_WORD',
+        },
+      ],
+    });
+
+    expect(errors.some((e) => e.message.includes('scoreGroupId'))).toBe(true);
+  });
+
+  it('accepts valid grouped scoring config when requiredCorrect fits slot count', () => {
+    const errors = validateQuestionBlock({
+      id: 'blk-score-2',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      answerRule: 'ONE_WORD',
+      headers: ['Key', 'Value'],
+      rows: [['Name', '____'], ['Country', '____']],
+      cells: [
+        { id: 'cell-1', row: 0, col: 1, correctAnswer: 'Anu', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 1 },
+        { id: 'cell-2', row: 1, col: 1, correctAnswer: 'India', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 0 },
+      ],
+    });
+
+    expect(errors.some((e) => e.field.includes('group-pair-1'))).toBe(false);
+  });
+
   it('requires inserted image URL when an image row exists on supported block types', () => {
     const errors = validateQuestionBlock({
       id: 'blk-9',

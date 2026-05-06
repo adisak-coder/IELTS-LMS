@@ -656,6 +656,7 @@ export function StudentListening({
                               isFlagged={flagId ? Boolean(flags[flagId]) : false}
                               isActive={questionEntries.some((entry) => entry.id === currentQuestionId)}
                               slotIds={questionEntries.map((entry) => entry.id)}
+                              slotNumbers={questionEntries.map((entry) => entry.rootNumber)}
                               currentQuestionId={currentQuestionId}
                               flags={flags}
                               onToggleFlag={onToggleFlag}
@@ -727,6 +728,7 @@ export function StudentListening({
                           isFlagged={singleBlockQuestion ? Boolean(flags[singleBlockQuestion.id]) : false}
                           isActive={blockQuestions.some((entry) => entry.id === currentQuestionId)}
                           slotIds={blockQuestions.map((entry) => entry.id)}
+                          slotNumbers={blockQuestions.map((entry) => entry.rootNumber)}
                           currentQuestionId={currentQuestionId}
                           flags={flags}
                           onToggleFlag={onToggleFlag}

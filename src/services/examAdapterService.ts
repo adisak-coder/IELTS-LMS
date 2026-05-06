@@ -16,10 +16,13 @@ import type {
   NoteCompletionQuestion,
   QuestionAnswer,
   QuestionBlock,
+  SentenceBlank,
   SentenceCompletionQuestion,
   ShortAnswerQuestion,
   SingleMCQBlock,
+  SlotGroupRule,
   SubAnswerTreeNode,
+  TableCell,
   TFNGQuestion,
 } from '../types';
 import type { ExamEntity, ExamStatus } from '../types/domain';
@@ -94,6 +97,64 @@ function normalizeQuestionBlocks(blocks: QuestionBlock[] | undefined): QuestionB
   return blocks.map((block) => normalizeQuestionBlockDiagram(block));
 }
 
+type GroupedSlot = {
+  id: string;
+  scoreGroupId?: string;
+  scoreWeight?: number;
+  groupRule?: SlotGroupRule;
+  requiredCorrect?: number;
+};
+
+function normalizeScoreGroupId(scoreGroupId: string | undefined): string | null {
+  const normalized = readNonEmptyString(scoreGroupId);
+  return normalized ?? null;
+}
+
+function toNonNegativeNumber(value: number | undefined): number | null {
+  if (!Number.isFinite(value)) return null;
+  if ((value ?? 0) < 0) return null;
+  return value as number;
+}
+
+function toPositiveInteger(value: number | undefined): number | null {
+  if (!Number.isInteger(value)) return null;
+  if ((value ?? 0) < 1) return null;
+  return value as number;
+}
+
+function resolveRootScoreRule(slots: GroupedSlot[]): SlotGroupRule {
+  const explicitRule = slots.find(
+    (slot): slot is GroupedSlot & { groupRule: SlotGroupRule } =>
+      slot.groupRule === 'all_required' || slot.groupRule === 'at_least_n',
+  )?.groupRule;
+  return explicitRule ?? 'all_required';
+}
+
+function resolveRootRequiredCorrect(slots: GroupedSlot[], slotCount: number): number {
+  const explicitRequired = slots
+    .map((slot) => toPositiveInteger(slot.requiredCorrect))
+    .find((value): value is number => value !== null);
+  const fallback = 1;
+  if (explicitRequired === undefined) return fallback;
+  return Math.min(explicitRequired, Math.max(slotCount, 1));
+}
+
+function resolveRootScoreWeight(slots: GroupedSlot[]): number {
+  const weights = slots
+    .map((slot) => toNonNegativeNumber(slot.scoreWeight))
+    .filter((weight): weight is number => weight !== null);
+  if (weights.length === 0) return 1;
+  return weights.reduce((total, weight) => total + weight, 0);
+}
+
+function resolveSlotRootKey(prefix: string, slot: GroupedSlot): string {
+  const scoreGroupId = normalizeScoreGroupId(slot.scoreGroupId);
+  if (!scoreGroupId) {
+    return `${prefix}:slot:${slot.id}`;
+  }
+  return `${prefix}:group:${scoreGroupId}`;
+}
+
 export interface StudentQuestionDescriptor {
   id: string;
   blockId: string;
@@ -112,6 +173,10 @@ export interface StudentQuestionDescriptor {
   rootLabel?: string;
   treePrompt?: string;
   treeAcceptedAnswers?: string[];
+  rootScoreRule?: SlotGroupRule;
+  rootRequiredCorrect?: number;
+  rootScoreWeight?: number;
+  rootSlotCount?: number;
   block: QuestionBlock;
   question:
     | TFNGQuestion
@@ -682,20 +747,68 @@ function buildStudentQuestionDescriptors(
 
     case 'SENTENCE_COMPLETION':
       block.questions.forEach((question) => {
-        question.blanks.forEach((blank, blankIndex) => {
+        const slots = question.blanks as GroupedSlot[];
+        const slotsByRoot = new Map<string, GroupedSlot[]>();
+        slots.forEach((slot) => {
+          const rootKey = resolveSlotRootKey(question.id, slot);
+          const bucket = slotsByRoot.get(rootKey);
+          if (bucket) {
+            bucket.push(slot);
+          } else {
+            slotsByRoot.set(rootKey, [slot]);
+          }
+        });
+
+        const rootConfigByKey = new Map<
+          string,
+          {
+            rootScoreRule: SlotGroupRule;
+            rootRequiredCorrect: number;
+            rootScoreWeight: number;
+            rootSlotCount: number;
+          }
+        >();
+        slotsByRoot.forEach((rootSlots, rootKey) => {
+          const rootSlotCount = rootSlots.length;
+          const rootScoreRule = resolveRootScoreRule(rootSlots);
+          const rootRequiredCorrect =
+            rootScoreRule === 'at_least_n'
+              ? resolveRootRequiredCorrect(rootSlots, rootSlotCount)
+              : rootSlotCount;
+          rootConfigByKey.set(rootKey, {
+            rootScoreRule,
+            rootRequiredCorrect,
+            rootScoreWeight: resolveRootScoreWeight(rootSlots),
+            rootSlotCount,
+          });
+        });
+
+        question.blanks.forEach((blank: SentenceBlank, blankIndex) => {
           const id = `${question.id}:${blank.id}`;
+          const rootId = resolveSlotRootKey(question.id, blank);
+          const rootConfig = rootConfigByKey.get(rootId);
+          const rootScoringProps =
+            rootConfig
+              ? {
+                  rootScoreRule: rootConfig.rootScoreRule,
+                  rootRequiredCorrect: rootConfig.rootRequiredCorrect,
+                  rootScoreWeight: rootConfig.rootScoreWeight,
+                  rootSlotCount: rootConfig.rootSlotCount,
+                }
+              : {};
           descriptors.push({
             id,
             blockId: block.id,
             groupId,
             groupLabel,
-            rootId: id,
+            rootId,
             rootNumber: 0,
             numberLabel: '',
             isMulti: false,
             correctCount: 1,
             answerKey: question.id,
             answerIndex: blankIndex,
+            ...rootScoringProps,
             block,
             question,
           });
@@ -777,20 +890,67 @@ function buildStudentQuestionDescriptors(
       break;
 
     case 'TABLE_COMPLETION':
-      getCanonicalTableCells(block).forEach((cell, cellIndex) => {
+      const canonicalCells = getCanonicalTableCells(block);
+      const slotsByRoot = new Map<string, GroupedSlot[]>();
+      canonicalCells.forEach((cell) => {
+        const rootKey = resolveSlotRootKey(block.id, cell);
+        const bucket = slotsByRoot.get(rootKey);
+        if (bucket) {
+          bucket.push(cell);
+        } else {
+          slotsByRoot.set(rootKey, [cell]);
+        }
+      });
+      const rootConfigByKey = new Map<
+        string,
+        {
+          rootScoreRule: SlotGroupRule;
+          rootRequiredCorrect: number;
+          rootScoreWeight: number;
+          rootSlotCount: number;
+        }
+      >();
+      slotsByRoot.forEach((rootSlots, rootKey) => {
+        const rootSlotCount = rootSlots.length;
+        const rootScoreRule = resolveRootScoreRule(rootSlots);
+        const rootRequiredCorrect =
+          rootScoreRule === 'at_least_n'
+            ? resolveRootRequiredCorrect(rootSlots, rootSlotCount)
+            : rootSlotCount;
+        rootConfigByKey.set(rootKey, {
+          rootScoreRule,
+          rootRequiredCorrect,
+          rootScoreWeight: resolveRootScoreWeight(rootSlots),
+          rootSlotCount,
+        });
+      });
+
+      canonicalCells.forEach((cell: TableCell, cellIndex) => {
         const id = `${block.id}:${cell.id}`;
+        const rootId = resolveSlotRootKey(block.id, cell);
+        const rootConfig = rootConfigByKey.get(rootId);
+        const rootScoringProps =
+          rootConfig
+            ? {
+                rootScoreRule: rootConfig.rootScoreRule,
+                rootRequiredCorrect: rootConfig.rootRequiredCorrect,
+                rootScoreWeight: rootConfig.rootScoreWeight,
+                rootSlotCount: rootConfig.rootSlotCount,
+              }
+            : {};
         descriptors.push({
           id,
           blockId: block.id,
           groupId,
           groupLabel,
-          rootId: id,
+          rootId,
           rootNumber: 0,
           numberLabel: '',
           isMulti: false,
           correctCount: 1,
           answerKey: block.id,
           answerIndex: cellIndex,
+          ...rootScoringProps,
           block,
           question: null,
         });
@@ -841,7 +1001,15 @@ function buildStudentQuestionDescriptors(
   }
 
   let nextRootNumber = startRootNumber;
+  const rootNumbers = new Map<string, number>();
   descriptors.forEach((descriptor) => {
+    const existing = rootNumbers.get(descriptor.rootId);
+    if (existing !== undefined) {
+      descriptor.rootNumber = existing;
+      descriptor.numberLabel = String(existing);
+      return;
+    }
+    rootNumbers.set(descriptor.rootId, nextRootNumber);
     descriptor.rootNumber = nextRootNumber;
     descriptor.numberLabel = String(nextRootNumber);
     nextRootNumber += 1;

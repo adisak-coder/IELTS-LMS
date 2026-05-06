@@ -51,6 +51,7 @@ interface QuestionRendererProps {
   isFlagged?: boolean | undefined;
   isActive?: boolean | undefined;
   slotIds?: string[] | undefined;
+  slotNumbers?: number[] | undefined;
   currentQuestionId?: string | null | undefined;
   flags?: Record<string, boolean> | undefined;
   onToggleFlag?: ((id: string) => void) | undefined;
@@ -69,6 +70,53 @@ interface QuestionRendererProps {
   registerLiveAnswer?: ((payload: { key: string; value: QuestionAnswer }) => void) | undefined;
 }
 
+type GroupedSlot = {
+  scoreGroupId?: string;
+  groupRule?: 'all_required' | 'at_least_n';
+  requiredCorrect?: number;
+  scoreWeight?: number;
+};
+
+function normalizeScoreGroupId(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function describeGroupedScoring(slots: GroupedSlot[]): string[] {
+  const groups = new Map<string, GroupedSlot[]>();
+  slots.forEach((slot) => {
+    const groupId = normalizeScoreGroupId(slot.scoreGroupId);
+    if (!groupId) return;
+    const bucket = groups.get(groupId);
+    if (bucket) {
+      bucket.push(slot);
+    } else {
+      groups.set(groupId, [slot]);
+    }
+  });
+
+  const labels: string[] = [];
+  groups.forEach((groupSlots) => {
+    if (groupSlots.length <= 1) return;
+    const rule = groupSlots.find((slot) => slot.groupRule === 'all_required' || slot.groupRule === 'at_least_n')?.groupRule ?? 'all_required';
+    const weight = groupSlots
+      .map((slot) => (Number.isFinite(slot.scoreWeight) ? Math.max(0, Number(slot.scoreWeight)) : null))
+      .find((value): value is number => value !== null) ?? 1;
+    if (rule === 'at_least_n') {
+      const required =
+        groupSlots
+          .map((slot) => (Number.isInteger(slot.requiredCorrect) ? Number(slot.requiredCorrect) : null))
+          .find((value): value is number => value !== null && value > 0) ?? 1;
+      labels.push(`Scoring: ${required} answers required for ${weight} point`);
+      return;
+    }
+    labels.push(`Scoring: all ${groupSlots.length} answers required for ${weight} point`);
+  });
+
+  return labels;
+}
+
 export function QuestionRenderer({
   question,
   block,
@@ -77,6 +125,7 @@ export function QuestionRenderer({
   onChange,
   isActive = false,
   slotIds = [],
+  slotNumbers = [],
   currentQuestionId = null,
   flags = {},
   onToggleFlag,
@@ -120,6 +169,7 @@ export function QuestionRenderer({
   };
 
   const getSlotId = (index: number, fallback: string) => slotIds[index] ?? fallback;
+  const getSlotNumber = (index: number) => slotNumbers[index] ?? (number + index);
   const getSlotClassName = (slotId: string) => {
     const activeClass = currentQuestionId === slotId ? 'ring-2 ring-blue-500 ring-offset-2' : '';
     const flaggedClass = flags[slotId] ? 'border-amber-300 bg-amber-50' : 'border-transparent';
@@ -513,9 +563,15 @@ export function QuestionRenderer({
     void sentenceBlock;
     const parts = q.sentence.split(/_{2,}/);
     const blanks = q.blanks.length;
+    const scoringLabels = describeGroupedScoring(q.blanks);
 
     return (
       <div className="flex flex-col gap-4">
+        {scoringLabels.map((label) => (
+          <p key={`${q.id}:${label}`} className="inline-flex w-fit rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+            {label}
+          </p>
+        ))}
         <div className="leading-8 text-gray-900 [white-space:pre-wrap]">
           {parts.map((part, index) => (
             <React.Fragment key={`${q.id}-${index}`}>
@@ -528,7 +584,7 @@ export function QuestionRenderer({
                   )}`}
                 >
                   <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                    {number + index}
+                    {getSlotNumber(index)}
                   </span>
                   <ProtectedInput
                     type="text"
@@ -545,7 +601,7 @@ export function QuestionRenderer({
                     security={security}
                     sessionId={sessionId}
                     studentId={studentId}
-                    aria-label={`Answer for question ${number + index}`}
+                    aria-label={`Answer for question ${getSlotNumber(index)}`}
                   />
                   {renderFlagButton(getSlotId(index, `${q.id}:${index}`))}
                 </span>
@@ -575,7 +631,7 @@ export function QuestionRenderer({
                   )}`}
                 >
                   <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                    {number + index}
+                    {getSlotNumber(index)}
                   </span>
                   <ProtectedInput
                     type="text"
@@ -592,7 +648,7 @@ export function QuestionRenderer({
                     security={security}
                     sessionId={sessionId}
                     studentId={studentId}
-                    aria-label={`Answer for question ${number + index}`}
+                    aria-label={`Answer for question ${getSlotNumber(index)}`}
                   />
                   {renderFlagButton(getSlotId(index, `${noteQuestion.id}:${index}`))}
                 </span>
@@ -683,6 +739,7 @@ export function QuestionRenderer({
     const canonicalCells = getCanonicalTableCells(tableBlock);
     const placeholderAnalysis = analyzeTablePlaceholders(tableBlock.rows, tableBlock.headers.length);
     const useInlineBlanks = placeholderAnalysis.slots.length > 0;
+    const scoringLabels = describeGroupedScoring(canonicalCells);
 
     const cellMap = new Map<string, TableSlot>(
       canonicalCells.map((cell, index): [string, TableSlot] => [
@@ -692,8 +749,14 @@ export function QuestionRenderer({
     );
 
     return (
-      <div className="overflow-x-auto rounded-2xl border border-gray-200">
-        <table className={`w-full border-collapse text-sm ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
+      <div className="space-y-2">
+        {scoringLabels.map((label) => (
+          <p key={`${tableBlock.id}:${label}`} className="inline-flex w-fit rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+            {label}
+          </p>
+        ))}
+        <div className="overflow-x-auto rounded-2xl border border-gray-200">
+          <table className={`w-full border-collapse text-sm ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
           <thead className="bg-gray-50">
             <tr>
               {tableBlock.headers.map((header, index) => (
@@ -737,7 +800,7 @@ export function QuestionRenderer({
                               className={`inline-flex max-w-full items-center gap-2 ${getSlotClassName(slot.slotId)}`}
                             >
                               <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                                {number + slot.index}
+                                {getSlotNumber(slot.index)}
                               </span>
                               <ProtectedInput
                                 type="text"
@@ -756,7 +819,7 @@ export function QuestionRenderer({
                                 security={security}
                                 sessionId={sessionId}
                                 studentId={studentId}
-                                aria-label={`Answer for question ${number + slot.index}`}
+                                aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
                               />
                             </span>
                             <FormattedText
@@ -772,7 +835,7 @@ export function QuestionRenderer({
                       ) : (
                         <div className={isCompactPane ? 'space-y-2' : 'flex items-center gap-3'}>
                           <div className="text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                            {number + slot.index}
+                            {getSlotNumber(slot.index)}
                           </div>
                           <ProtectedInput
                             type="text"
@@ -786,7 +849,7 @@ export function QuestionRenderer({
                             security={security}
                             sessionId={sessionId}
                             studentId={studentId}
-                            aria-label={`Answer for question ${number + slot.index}`}
+                            aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
                           />
                           <div className={isCompactPane ? 'flex justify-end' : 'flex-shrink-0'}>{renderFlagButton(slot.slotId)}</div>
                         </div>
@@ -797,7 +860,8 @@ export function QuestionRenderer({
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
     );
   };

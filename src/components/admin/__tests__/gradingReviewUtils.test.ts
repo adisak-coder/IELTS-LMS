@@ -370,6 +370,114 @@ describe('gradingReviewUtils', () => {
     expect(exportData.rows[0]?.correctCount).toBe(1);
   });
 
+  test('awards one point for grouped sentence scoring when 2/2 slots are correct', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'sentence-block-1',
+            type: 'SENTENCE_COMPLETION',
+            instruction: 'Complete the sentence.',
+            questions: [
+              {
+                id: 'q-1',
+                sentence: 'The ____ and ____ are linked.',
+                answerRule: 'ONE_WORD',
+                blanks: [
+                  { id: 'b-1', position: 0, correctAnswer: 'sun', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 1 },
+                  { id: 'b-2', position: 1, correctAnswer: 'moon', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 0 },
+                ],
+              },
+            ],
+          },
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ] as any;
+
+    const sectionSubmission = createSectionSubmission(
+      'sub-1',
+      'reading',
+      { 'q-1': ['sun', 'moon'] },
+      [],
+    );
+
+    const groups = buildQuestionTracebackGroups(examState, sectionSubmission, 'reading');
+    const groupedItems = groups[0]?.items ?? [];
+    expect(groupedItems).toHaveLength(2);
+    expect(groupedItems[0]?.rootCorrectness).toBe(true);
+    expect(groupedItems[0]?.awardedScore).toBe(1);
+    expect(groupedItems[0]?.maxScore).toBe(1);
+    expect(groupedItems[0]?.rootRuleLabel).toContain('2 answers required');
+
+    const exportData = buildWideObjectiveExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
+      examState,
+      moduleType: 'reading',
+    });
+
+    expect(exportData.rows[0]?.totalScore).toBe(1);
+    expect(exportData.rows[0]?.maxScore).toBe(1);
+    expect(exportData.rows[0]?.correctCount).toBe(1);
+  });
+
+  test('awards zero for grouped sentence scoring when only 1/2 slots are correct', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'sentence-block-2',
+            type: 'SENTENCE_COMPLETION',
+            instruction: 'Complete the sentence.',
+            questions: [
+              {
+                id: 'q-2',
+                sentence: 'The ____ and ____ are linked.',
+                answerRule: 'ONE_WORD',
+                blanks: [
+                  { id: 'b-1', position: 0, correctAnswer: 'sun', scoreGroupId: 'pair-2', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 1 },
+                  { id: 'b-2', position: 1, correctAnswer: 'moon', scoreGroupId: 'pair-2', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 0 },
+                ],
+              },
+            ],
+          },
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ] as any;
+
+    const sectionSubmission = createSectionSubmission(
+      'sub-1',
+      'reading',
+      { 'q-2': ['sun', 'wrong'] },
+      [],
+    );
+
+    const exportData = buildWideObjectiveExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      sectionSubmissions: [{ submissionId: 'sub-1', sectionSubmission }],
+      examState,
+      moduleType: 'reading',
+    });
+
+    expect(exportData.rows[0]?.totalScore).toBe(0);
+    expect(exportData.rows[0]?.maxScore).toBe(1);
+    expect(exportData.rows[0]?.correctCount).toBe(0);
+  });
+
   test('uses root-only scoring for sub-answer tree mode with unordered leaf matching', () => {
     const examState = createInitialExamState('Exam', 'Academic');
     examState.reading.passages = [

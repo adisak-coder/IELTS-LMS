@@ -744,9 +744,16 @@ fn validate_sentence_completion(
                     }
                     Some(bs) => {
                         for (blank_idx, blank) in bs.iter().enumerate() {
-                            if blank
-                                .as_object()
-                                .and_then(|b| b.get("correctAnswer"))
+                            let Some(blank_obj) = blank.as_object() else {
+                                result.add_error(
+                                    format!("{}.questions[{}].blanks[{}]", field_prefix, q_idx, blank_idx),
+                                    "Blank must be an object",
+                                );
+                                continue;
+                            };
+
+                            if blank_obj
+                                .get("correctAnswer")
                                 .and_then(|a| a.as_str())
                                 .map(|s| s.trim().is_empty())
                                 .unwrap_or(true)
@@ -759,6 +766,15 @@ fn validate_sentence_completion(
                                     "Blank answer is required",
                                 );
                             }
+
+                            validate_group_scoring_fields(
+                                blank_obj,
+                                &format!(
+                                    "{}.questions[{}].blanks[{}]",
+                                    field_prefix, q_idx, blank_idx
+                                ),
+                                result,
+                            );
                         }
                         blank_count += bs.len() as i32;
                     }
@@ -948,9 +964,89 @@ fn validate_table_completion(
                         "Cell answer is required",
                     );
                 }
+
+                validate_group_scoring_fields(
+                    cell_obj,
+                    &format!("{}.cells[{}]", field_prefix, cell_idx),
+                    result,
+                );
             }
             cs.len() as i32
         }
+    }
+}
+
+fn validate_group_scoring_fields(
+    slot: &serde_json::Map<String, serde_json::Value>,
+    field_prefix: &str,
+    result: &mut ValidationResult,
+) {
+    let score_group_id = slot
+        .get("scoreGroupId")
+        .and_then(|value| value.as_str())
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty());
+    let has_group_rule = slot.get("groupRule").is_some();
+    let has_required_correct = slot.get("requiredCorrect").is_some();
+    let has_score_weight = slot.get("scoreWeight").is_some();
+
+    if score_group_id.is_none() && (has_group_rule || has_required_correct || has_score_weight) {
+        result.add_error(
+            format!("{}.scoreGroupId", field_prefix),
+            "scoreGroupId is required when grouped scoring fields are provided",
+        );
+        return;
+    }
+
+    if let Some(score_weight_value) = slot.get("scoreWeight") {
+        let Some(score_weight) = score_weight_value.as_f64() else {
+            result.add_error(
+                format!("{}.scoreWeight", field_prefix),
+                "scoreWeight must be a number",
+            );
+            return;
+        };
+        if score_weight < 0.0 {
+            result.add_error(
+                format!("{}.scoreWeight", field_prefix),
+                "scoreWeight must be a non-negative number",
+            );
+        }
+    }
+
+    let group_rule = match slot.get("groupRule") {
+        None => "all_required",
+        Some(value) => match value.as_str() {
+            Some(rule) => rule,
+            None => {
+                result.add_error(
+                    format!("{}.groupRule", field_prefix),
+                    "groupRule must be a string",
+                );
+                return;
+            }
+        },
+    };
+
+    if !matches!(group_rule, "all_required" | "at_least_n") {
+        result.add_error(
+            format!("{}.groupRule", field_prefix),
+            "groupRule must be 'all_required' or 'at_least_n'",
+        );
+        return;
+    }
+
+    if group_rule != "at_least_n" {
+        return;
+    }
+
+    let required_correct = slot.get("requiredCorrect").and_then(|value| value.as_i64());
+    match required_correct {
+        Some(value) if value >= 1 => {}
+        _ => result.add_error(
+            format!("{}.requiredCorrect", field_prefix),
+            "requiredCorrect must be an integer >= 1 when groupRule is 'at_least_n'",
+        ),
     }
 }
 

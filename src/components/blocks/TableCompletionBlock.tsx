@@ -59,6 +59,12 @@ function resolveCellUpdateIndex(cells: TableCompletionBlockType['cells'], target
   return -1;
 }
 
+function normalizeScoreGroupId(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
 export function TableCompletionBlock({
   block,
   startNum,
@@ -84,6 +90,22 @@ export function TableCompletionBlock({
   }, [block, updateBlock]);
 
   const canonicalCells = React.useMemo(() => getCanonicalTableCells(block), [block]);
+  const canonicalCellDisplayNumbers = React.useMemo(() => {
+    const rootNumbers = new Map<string, number>();
+    let nextRootNumber = startNum;
+    return canonicalCells.map((cell) => {
+      const groupId = normalizeScoreGroupId(cell.scoreGroupId);
+      const rootId = groupId ? `group:${groupId}` : `slot:${cell.id}`;
+      const existing = rootNumbers.get(rootId);
+      if (existing !== undefined) {
+        return existing;
+      }
+      rootNumbers.set(rootId, nextRootNumber);
+      const assigned = nextRootNumber;
+      nextRootNumber += 1;
+      return assigned;
+    });
+  }, [canonicalCells, startNum]);
   const placeholderAnalysis = React.useMemo(
     () => analyzeTablePlaceholders(block.rows, block.headers.length),
     [block.rows, block.headers.length],
@@ -171,6 +193,102 @@ export function TableCompletionBlock({
     const nextCells = block.cells.map((cell, index) =>
       index === targetIndex ? { ...cell, ...buildAcceptedAnswerFields(nextAnswers) } : cell,
     );
+    commitBlock({ ...block, cells: nextCells });
+  };
+
+  const clearCellScoring = (cell: TableCompletionBlockType['cells'][number]) => {
+    const {
+      scoreGroupId: _scoreGroupId,
+      scoreWeight: _scoreWeight,
+      groupRule: _groupRule,
+      requiredCorrect: _requiredCorrect,
+      ...rest
+    } = cell;
+    void _scoreGroupId;
+    void _scoreWeight;
+    void _groupRule;
+    void _requiredCorrect;
+    return rest;
+  };
+
+  const clearScoreGroup = (
+    cells: TableCompletionBlockType['cells'],
+    scoreGroupId: string | null,
+  ): TableCompletionBlockType['cells'] => {
+    if (!scoreGroupId) return cells;
+    return cells.map((cell) =>
+      normalizeScoreGroupId(cell.scoreGroupId) === scoreGroupId ? clearCellScoring(cell) : cell,
+    );
+  };
+
+  const getCellScoringMode = (index: number): 'independent' | 'grouped_start' | 'grouped_follow' => {
+    const currentCell = canonicalCells[index];
+    if (!currentCell) return 'independent';
+    const currentGroupId = normalizeScoreGroupId(currentCell.scoreGroupId);
+    if (!currentGroupId) return 'independent';
+
+    const previousCell = canonicalCells[index - 1];
+    if (
+      previousCell
+      && normalizeScoreGroupId(previousCell.scoreGroupId) === currentGroupId
+      && previousCell.groupRule === 'at_least_n'
+      && previousCell.requiredCorrect === 2
+    ) {
+      return 'grouped_follow';
+    }
+
+    if (currentCell.groupRule === 'at_least_n' && currentCell.requiredCorrect === 2) {
+      return 'grouped_start';
+    }
+
+    return 'grouped_start';
+  };
+
+  const updateCellScoringMode = (index: number, mode: 'independent' | 'grouped_start') => {
+    const currentCell = canonicalCells[index];
+    if (!currentCell) return;
+    const nextCell = canonicalCells[index + 1];
+    let nextCells = [...block.cells];
+
+    nextCells = clearScoreGroup(nextCells, normalizeScoreGroupId(currentCell.scoreGroupId));
+    if (nextCell) {
+      nextCells = clearScoreGroup(nextCells, normalizeScoreGroupId(nextCell.scoreGroupId));
+    }
+
+    if (mode === 'grouped_start') {
+      if (!nextCell) return;
+      const groupId = `grp-${currentCell.id}`;
+
+      const currentIndex = resolveCellUpdateIndex(nextCells, currentCell);
+      const nextIndex = resolveCellUpdateIndex(nextCells, nextCell);
+      if (currentIndex < 0 || nextIndex < 0) return;
+      const currentCellValue = nextCells[currentIndex];
+      const nextCellValue = nextCells[nextIndex];
+      if (!currentCellValue || !nextCellValue) return;
+
+      nextCells[currentIndex] = {
+        ...currentCellValue,
+        scoreGroupId: groupId,
+        scoreWeight: 1,
+        groupRule: 'at_least_n',
+        requiredCorrect: 2,
+      };
+      nextCells[nextIndex] = {
+        ...nextCellValue,
+        scoreGroupId: groupId,
+        scoreWeight: 0,
+        groupRule: 'at_least_n',
+        requiredCorrect: 2,
+      };
+      commitBlock({ ...block, cells: nextCells });
+      return;
+    }
+
+    const currentIndex = resolveCellUpdateIndex(nextCells, currentCell);
+    if (currentIndex < 0) return;
+    const currentCellValue = nextCells[currentIndex];
+    if (!currentCellValue) return;
+    nextCells[currentIndex] = clearCellScoring(currentCellValue);
     commitBlock({ ...block, cells: nextCells });
   };
 
@@ -355,7 +473,7 @@ export function TableCompletionBlock({
           {canonicalCells.map((cell, index) => (
             <div key={`${cell.id}-${cell.row}-${cell.col}-${index}`} className="rounded-md border border-gray-200 p-3">
               <div className="mb-1 flex items-center justify-between text-sm font-medium text-gray-700">
-                <span>{startNum + index}.</span>
+                <span>{canonicalCellDisplayNumbers[index] ?? (startNum + index)}.</span>
                 {onAddSubAnswerAtSlot ? (
                   <button
                     type="button"
@@ -363,13 +481,33 @@ export function TableCompletionBlock({
                       event.stopPropagation();
                       onAddSubAnswerAtSlot(index);
                     }}
-                    className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
-                    title="Add sub-answer"
-                    aria-label={`Add sub-answer to question ${startNum + index}.1`}
+                                className="rounded-full border border-gray-300 bg-white p-1 text-gray-500 hover:border-blue-400 hover:text-blue-700"
+                                title="Add sub-answer"
+                    aria-label={`Add sub-answer to question ${(canonicalCellDisplayNumbers[index] ?? (startNum + index))}.1`}
                   >
                     <Plus size={12} />
                   </button>
                 ) : null}
+              </div>
+              <div className="mb-2">
+                {getCellScoringMode(index) === 'grouped_follow' ? (
+                  <p className="text-xs text-blue-700">Grouped with previous slot (2 correct required = 1 point)</p>
+                ) : (
+                  <select
+                    value={getCellScoringMode(index) === 'grouped_start' ? 'grouped_start' : 'independent'}
+                    onChange={(event) =>
+                      updateCellScoringMode(
+                        index,
+                        event.target.value as 'independent' | 'grouped_start',
+                      )
+                    }
+                    disabled={index === canonicalCells.length - 1}
+                    className="w-full border border-gray-300 rounded px-2 py-1 text-xs disabled:bg-gray-100"
+                  >
+                    <option value="independent">Independent (1 slot = 1 point)</option>
+                    <option value="grouped_start">Grouped with next slot (2 correct required = 1 point)</option>
+                  </select>
+                )}
               </div>
               <input
                 type="text"
@@ -396,7 +534,7 @@ export function TableCompletionBlock({
           {canonicalCells.map((cell, index) => (
             <div key={`advanced-${cell.id}-${cell.row}-${cell.col}-${index}`} className="rounded-md border border-gray-200 bg-white p-3">
               <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
-                <span>Q{startNum + index}</span>
+                <span>Q{canonicalCellDisplayNumbers[index] ?? (startNum + index)}</span>
                 <span>
                   Row {cell.row + 1}, Column {cell.col + 1}
                 </span>

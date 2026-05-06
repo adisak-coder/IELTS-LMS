@@ -113,6 +113,41 @@ describe('student question descriptors (student exam core logic)', () => {
     expect(getQuestionNumberLabel(questions, questions[1].id)).toBe('2');
   });
 
+  it('numbers grouped sentence blanks as one logical question root', () => {
+    const state = createInitialExamState('Exam', 'Academic');
+
+    state.reading.passages[0].blocks = [
+      {
+        id: 'sentence-1',
+        type: 'SENTENCE_COMPLETION',
+        instruction: 'Complete the sentences.',
+        questions: [
+          {
+            id: 'q-1',
+            sentence: 'The ____ and ____ are linked.',
+            answerRule: 'ONE_WORD',
+            blanks: [
+              { id: 'b-1', position: 0, correctAnswer: 'sun', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 1 },
+              { id: 'b-2', position: 1, correctAnswer: 'moon', scoreGroupId: 'pair-1', groupRule: 'at_least_n', requiredCorrect: 2, scoreWeight: 0 },
+            ],
+          },
+          {
+            id: 'q-2',
+            sentence: 'The ____ moves quickly.',
+            answerRule: 'ONE_WORD',
+            blanks: [{ id: 'b-3', position: 0, correctAnswer: 'river' }],
+          },
+        ],
+      },
+    ] as any;
+
+    const questions = getStudentQuestionsForModule(state, 'reading');
+    expect(questions).toHaveLength(3);
+    expect(questions.map((question) => question.numberLabel)).toEqual(['1', '1', '2']);
+    expect(new Set(questions.map((question) => question.rootId)).size).toBe(2);
+    expect(countQuestionSlots(questions)).toBe(2);
+  });
+
   it('builds sub-answer tree leaf descriptors with dot labels and root completion counting', () => {
     const state = createInitialExamState('Exam', 'Academic');
     state.reading.passages[0].blocks = [

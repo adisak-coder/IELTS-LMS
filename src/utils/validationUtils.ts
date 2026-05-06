@@ -20,6 +20,7 @@ import {
   ClassificationItem,
   MatchingFeaturesBlock,
   MatchingFeature,
+  SlotGroupRule,
   SubAnswerTreeNode,
 } from '../types';
 import { countBlankPlaceholders } from './blankPlaceholders';
@@ -182,6 +183,13 @@ function validateSentenceCompletion(block: SentenceCompletionBlock): ValidationE
         errors.push({ field: `sentence-${index}-blank-${blankIndex}`, message: `Blank ${blankIndex + 1} answer is required` });
       }
     });
+    errors.push(
+      ...validateGroupedSlotScoring(
+        q.blanks ?? [],
+        `sentence-${index}`,
+        'Blank',
+      ),
+    );
   });
 
   return errors;
@@ -272,6 +280,120 @@ function validateTableCompletion(block: TableCompletionBlock): ValidationError[]
     }
     if (cell.col < 0 || cell.col >= block.headers.length) {
       errors.push({ field: `cell-${index}-col`, message: `Cell ${index + 1} column is invalid` });
+    }
+  });
+  errors.push(
+    ...validateGroupedSlotScoring(canonicalCells, 'table-cells', 'Cell'),
+  );
+
+  return errors;
+}
+
+type GroupedSlotCandidate = {
+  scoreGroupId?: string;
+  scoreWeight?: number;
+  groupRule?: SlotGroupRule;
+  requiredCorrect?: number;
+};
+
+function normalizeScoreGroupId(value: string | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function validateGroupedSlotScoring(
+  slots: GroupedSlotCandidate[],
+  fieldPrefix: string,
+  slotLabel: string,
+): ValidationError[] {
+  const errors: ValidationError[] = [];
+  const groupedSlots = new Map<string, Array<{ slot: GroupedSlotCandidate; index: number }>>();
+
+  slots.forEach((slot, index) => {
+    const groupId = normalizeScoreGroupId(slot.scoreGroupId);
+    const hasGroupOnlyFields =
+      slot.groupRule !== undefined
+      || slot.requiredCorrect !== undefined
+      || slot.scoreWeight !== undefined;
+
+    if (!groupId && hasGroupOnlyFields) {
+      errors.push({
+        field: `${fieldPrefix}-${index}-score-group`,
+        message: `${slotLabel} ${index + 1} must define scoreGroupId when grouped scoring fields are used`,
+      });
+      return;
+    }
+
+    if (slot.scoreWeight !== undefined) {
+      const scoreWeight = Number(slot.scoreWeight);
+      if (!Number.isFinite(scoreWeight) || scoreWeight < 0) {
+        errors.push({
+          field: `${fieldPrefix}-${index}-score-weight`,
+          message: `${slotLabel} ${index + 1} score weight must be a non-negative number`,
+        });
+      }
+    }
+
+    if (!groupId) return;
+    const bucket = groupedSlots.get(groupId);
+    if (bucket) {
+      bucket.push({ slot, index });
+    } else {
+      groupedSlots.set(groupId, [{ slot, index }]);
+    }
+  });
+
+  groupedSlots.forEach((groupSlots, groupId) => {
+    const rules = Array.from(
+      new Set(
+        groupSlots
+          .map(({ slot }) => slot.groupRule)
+          .filter((rule): rule is SlotGroupRule => rule === 'all_required' || rule === 'at_least_n'),
+      ),
+    );
+    if (rules.length > 1) {
+      errors.push({
+        field: `${fieldPrefix}-group-${groupId}-rule`,
+        message: `Grouped scoring "${groupId}" must use one consistent rule`,
+      });
+      return;
+    }
+
+    const effectiveRule = rules[0] ?? 'all_required';
+    if (effectiveRule !== 'at_least_n') {
+      return;
+    }
+
+    const requirements = Array.from(
+      new Set(
+        groupSlots
+          .map(({ slot }) => slot.requiredCorrect)
+          .filter((value): value is number => Number.isFinite(value)),
+      ),
+    );
+    if (requirements.length > 1) {
+      errors.push({
+        field: `${fieldPrefix}-group-${groupId}-required`,
+        message: `Grouped scoring "${groupId}" must use one consistent required-correct value`,
+      });
+      return;
+    }
+
+    const requiredCorrect = requirements[0];
+    if (requiredCorrect === undefined || !Number.isInteger(requiredCorrect) || requiredCorrect < 1) {
+      errors.push({
+        field: `${fieldPrefix}-group-${groupId}-required`,
+        message: `Grouped scoring "${groupId}" must define requiredCorrect as an integer >= 1`,
+      });
+      return;
+    }
+
+    if (requiredCorrect > groupSlots.length) {
+      errors.push({
+        field: `${fieldPrefix}-group-${groupId}-required`,
+        message: `Grouped scoring "${groupId}" requires ${requiredCorrect} correct answers but has only ${groupSlots.length} slot(s)`,
+      });
     }
   });
 
