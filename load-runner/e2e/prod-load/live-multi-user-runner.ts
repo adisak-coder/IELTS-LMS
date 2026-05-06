@@ -404,6 +404,35 @@ function eventBase(userId: string, status: string, phase: Phase, error?: string)
   return { userId, status, phase, lastSeenAt: new Date().toISOString(), ...(error ? { error } : {}) };
 }
 
+function createMirroredBroadcaster(base: { broadcast: (event: DashboardEvent) => void }): {
+  broadcast: (event: DashboardEvent) => void;
+} {
+  const endpoint = process.env['LIVE_EVENT_ENDPOINT']?.trim();
+  const token = process.env['LIVE_EVENT_TOKEN']?.trim();
+
+  if (!endpoint || !token) {
+    return base;
+  }
+
+  const mirror = (event: DashboardEvent) => {
+    void fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-live-event-token': token,
+      },
+      body: JSON.stringify(event),
+    }).catch(() => {});
+  };
+
+  return {
+    broadcast: (event: DashboardEvent) => {
+      base.broadcast(event);
+      mirror(event);
+    },
+  };
+}
+
 async function run(): Promise<void> {
   const liveMode = resolveLiveMode();
   const config: RunnerConfig = {
@@ -449,7 +478,7 @@ async function run(): Promise<void> {
   );
   console.log(`[live-runner] events: ${liveLogFile}`);
 
-  const dashboard = startLiveDashboardServer(config.dashboardPort);
+  const dashboard = createMirroredBroadcaster(startLiveDashboardServer(config.dashboardPort));
   const headlessBrowser =
     config.headless || config.headedUsers < users.length ? await chromium.launch({ headless: true }) : null;
   const headedBrowser =

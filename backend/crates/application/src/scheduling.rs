@@ -166,6 +166,11 @@ impl SchedulingService {
                 "Published version does not belong to the requested exam.".to_owned(),
             ));
         }
+        if !version.is_published {
+            return Err(SchedulingError::Validation(
+                "Only published versions can be scheduled.".to_owned(),
+            ));
+        }
 
         let plan = build_section_plan(&version.config_snapshot)?;
         let planned_duration_minutes = plan_total_minutes(&plan);
@@ -343,6 +348,11 @@ impl SchedulingService {
             if version.exam_id.to_string() != existing.exam_id {
                 return Err(SchedulingError::Validation(
                     "Published version does not belong to the schedule exam.".to_owned(),
+                ));
+            }
+            if !version.is_published {
+                return Err(SchedulingError::Validation(
+                    "Only published versions can be scheduled.".to_owned(),
                 ));
             }
 
@@ -946,7 +956,7 @@ impl SchedulingService {
         version_id: String,
     ) -> Result<VersionContext, SchedulingError> {
         sqlx::query_as::<_, VersionContext>(
-            "SELECT exam_id, config_snapshot FROM exam_versions WHERE id = ?",
+            "SELECT exam_id, config_snapshot, is_published FROM exam_versions WHERE id = ?",
         )
         .bind(&version_id)
         .fetch_optional(&self.pool)
@@ -1122,6 +1132,7 @@ struct ExamContext {
 struct VersionContext {
     exam_id: Hyphenated,
     config_snapshot: Value,
+    is_published: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -617,16 +617,27 @@ impl BuilderService {
         exam_id: String,
     ) -> Result<(), BuilderError> {
         // Check authorization: user must have access to this exam
-        let exam = self.get_exam(ctx, exam_id.clone()).await?;
+        let _exam = self.get_exam(ctx, exam_id.clone()).await?;
+
+        let mut tx = self.pool.begin().await?;
+
+        // Remove schedules first so published_version_id references are gone before
+        // exam_versions are cascaded by exam_entities deletion.
+        sqlx::query("DELETE FROM exam_schedules WHERE exam_id = ?")
+            .bind(&exam_id)
+            .execute(&mut *tx)
+            .await?;
 
         let deleted = sqlx::query("DELETE FROM exam_entities WHERE id = ?")
             .bind(&exam_id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
 
         if deleted.rows_affected() == 0 {
             return Err(BuilderError::NotFound);
         }
+
+        tx.commit().await?;
 
         Ok(())
     }
