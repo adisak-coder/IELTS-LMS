@@ -8,7 +8,7 @@ interface ValidationSummaryProps {
   validationScope?: ValidationScope;
   onScheduleClick?: () => void;
   onNavigateToConfig?: () => void;
-  onNavigateToBuilder?: () => void;
+  onNavigateToBuilder?: (field?: string) => void;
 }
 
 export function ValidationSummary({
@@ -69,13 +69,19 @@ export function ValidationSummary({
         <div className="space-y-2">
           <p className="text-xs font-semibold text-red-700 uppercase tracking-wider">Errors</p>
           {publishReadiness.errors.map((error, idx) => (
-            <div key={idx} className="flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-100">
+            <button
+              key={idx}
+              type="button"
+              onClick={() => onNavigateToBuilder?.(error.field)}
+              className="w-full text-left flex items-start gap-2 p-3 bg-red-50 rounded-lg border border-red-100 hover:border-red-300 hover:bg-red-100/60 transition-colors"
+              aria-label={`Go to field ${error.field}`}
+            >
               <AlertCircle size={14} className="text-red-600 mt-0.5 flex-shrink-0" aria-hidden="true" />
               <div>
                 <p className="text-xs font-medium text-red-900">{error.message}</p>
                 <p className="text-[10px] text-red-600 capitalize">Field: {error.field}</p>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}

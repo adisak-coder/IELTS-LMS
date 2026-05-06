@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Header } from '@components/Header';
 import { Sidebar } from '@components/Sidebar';
@@ -161,6 +161,7 @@ function ScoringAside({
 export function BuilderRoot() {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const {
     error,
     exam,
@@ -226,10 +227,89 @@ export function BuilderRoot() {
     [currentState],
   );
   const canInteractWithBuilder = !!currentState && !builderRecoveryIssue;
+  const handledJumpFieldRef = useRef<string | null>(null);
+
+  const jumpTarget = useMemo(() => {
+    const jumpField = new URLSearchParams(location.search).get('jumpField');
+    if (!jumpField) {
+      return null;
+    }
+
+    const contentMatch = jumpField.match(
+      /^content\.(listening|reading)\.(parts|passages)\[(\d+)\]\.blocks\[(\d+)\]/,
+    );
+    if (contentMatch) {
+      const module = contentMatch[1] as 'listening' | 'reading';
+      const container = contentMatch[2];
+      const sectionIndex = Number.parseInt(contentMatch[3] ?? '', 10);
+      const blockIndex = Number.parseInt(contentMatch[4] ?? '', 10);
+      if (Number.isFinite(sectionIndex) && Number.isFinite(blockIndex)) {
+        return { jumpField, module, container, sectionIndex, blockIndex };
+      }
+    }
+
+    const shortMatch = jumpField.match(/^(listening|reading)\.parts\[(\d+)\]\.blocks\[(\d+)\]/);
+    if (shortMatch) {
+      const module = shortMatch[1] as 'listening' | 'reading';
+      const sectionIndex = Number.parseInt(shortMatch[2] ?? '', 10);
+      const blockIndex = Number.parseInt(shortMatch[3] ?? '', 10);
+      if (Number.isFinite(sectionIndex) && Number.isFinite(blockIndex)) {
+        return { jumpField, module, container: 'parts', sectionIndex, blockIndex };
+      }
+    }
+
+    return null;
+  }, [location.search]);
 
   useEffect(() => {
     currentStateRef.current = currentState;
   }, [currentState]);
+
+  useEffect(() => {
+    if (!canInteractWithBuilder || !currentState || !jumpTarget) {
+      return;
+    }
+    if (handledJumpFieldRef.current === jumpTarget.jumpField) {
+      return;
+    }
+
+    handledJumpFieldRef.current = jumpTarget.jumpField;
+    const nextState = { ...currentState };
+
+    if (jumpTarget.module === 'listening') {
+      nextState.activeModule = 'listening';
+      const targetPart = nextState.listening.parts[jumpTarget.sectionIndex];
+      if (targetPart?.id) {
+        nextState.activeListeningPartId = targetPart.id;
+      }
+    } else {
+      nextState.activeModule = 'reading';
+      const targetPassage = nextState.reading.passages[jumpTarget.sectionIndex];
+      if (targetPassage?.id) {
+        nextState.activePassageId = targetPassage.id;
+      }
+    }
+
+    updateBuilderState(nextState, 'Jump to validation field');
+
+    window.setTimeout(() => {
+      window.dispatchEvent(
+        new CustomEvent('builder:jump-to-block', {
+          detail: { blockIndex: jumpTarget.blockIndex },
+        }),
+      );
+    }, 50);
+
+    const nextParams = new URLSearchParams(location.search);
+    nextParams.delete('jumpField');
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextParams.toString() ? `?${nextParams.toString()}` : '',
+      },
+      { replace: true },
+    );
+  }, [canInteractWithBuilder, currentState, jumpTarget, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     handleUpdateExamContentRef.current = handleUpdateExamContent;

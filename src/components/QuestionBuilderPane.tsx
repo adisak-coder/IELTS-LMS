@@ -75,6 +75,26 @@ export function QuestionBuilderPane({
     window.addEventListener('builder:add-question-block', openModal);
     return () => window.removeEventListener('builder:add-question-block', openModal);
   }, []);
+
+  useEffect(() => {
+    const handleJumpToBlock = (event: Event) => {
+      const customEvent = event as CustomEvent<{ blockIndex?: number }>;
+      const blockIndex = customEvent.detail?.blockIndex;
+      if (!Number.isInteger(blockIndex) || blockIndex < 0) {
+        return;
+      }
+
+      const target = document.querySelector<HTMLElement>(`[data-builder-block-index="${blockIndex}"]`);
+      if (!target) {
+        return;
+      }
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.click();
+    };
+
+    window.addEventListener('builder:jump-to-block', handleJumpToBlock as EventListener);
+    return () => window.removeEventListener('builder:jump-to-block', handleJumpToBlock as EventListener);
+  }, []);
   
   const getBlockErrors = (blockId: string) => {
     const blockError = errors.find(e => e.blockId === blockId);
@@ -745,8 +765,10 @@ export function QuestionBuilderPane({
           </div>
         ) : (
           <div className="space-y-6">
-            {blocksWithNumbers.map((item) => (
-              <React.Fragment key={item.block.id}>{renderBlock(item)}</React.Fragment>
+            {blocksWithNumbers.map((item, index) => (
+              <div key={item.block.id} data-builder-block-index={index}>
+                {renderBlock(item)}
+              </div>
             ))}
           </div>
         )}

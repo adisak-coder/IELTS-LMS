@@ -419,8 +419,11 @@ fn validate_question_block(
         .and_then(|t| t.as_str())
         .unwrap_or("unknown");
 
-    if let Some(root_count) = validate_sub_answer_tree_block(block_obj, &field_prefix, result) {
-        return root_count;
+    if block_type != "TABLE_COMPLETION" {
+        if let Some(root_count) = validate_sub_answer_tree_block(block_obj, &field_prefix, result)
+        {
+            return root_count;
+        }
     }
 
     match block_type {
@@ -1666,6 +1669,61 @@ mod tests {
         assert!(
             result.errors.is_empty(),
             "expected empty-instruction to be allowed for reading blocks, got errors: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn table_completion_ignores_sub_answer_tree_validation() {
+        let content = json!({
+            "listening": {
+                "parts": [{
+                    "id": "part-1",
+                    "title": "Part 1",
+                    "blocks": [{
+                        "id": "block-table-1",
+                        "type": "TABLE_COMPLETION",
+                        "subAnswerModeEnabled": true,
+                        "answerTree": [{
+                            "id": "root-a",
+                            "children": [{ "id": "leaf-a", "required": true, "acceptedAnswers": [] }]
+                        }],
+                        "headers": ["Col A", "Col B"],
+                        "rows": ["Row 1"],
+                        "cells": [{
+                            "id": "cell-1",
+                            "row": 0,
+                            "col": 1,
+                            "correctAnswer": "alpha"
+                        }]
+                    }]
+                }]
+            }
+        });
+
+        let config = json!({
+            "sections": {
+                "listening": {
+                    "enabled": true,
+                    "bandScoreTable": {
+                        "1": 1.0, "2": 2.0, "3": 3.0, "4": 4.0, "5": 5.0,
+                        "6": 6.0, "7": 7.0, "8": 8.0, "9": 9.0, "10": 10.0
+                    }
+                },
+                "reading": {"enabled": false},
+                "writing": {"enabled": false},
+                "speaking": {"enabled": false}
+            }
+        });
+
+        let result = validate_exam_content(&content, &config);
+
+        assert!(
+            !result
+                .errors
+                .iter()
+                .any(|error| error.field.contains("answerTree") || error.message.contains("accepted answer")),
+            "expected TABLE_COMPLETION to skip answerTree validation, got errors: {:?}",
             result.errors
         );
     }

@@ -24,7 +24,7 @@ export interface ReviewRouteController {
   handleUnpublish: (reason?: string) => Promise<void>;
   handleRestoreVersion: (versionId: string) => Promise<void>;
   handleRepublishVersion: (versionId: string) => Promise<void>;
-  handleNavigateToBuilder: () => void;
+  handleNavigateToBuilder: (field?: string) => void;
   handleOpenScheduling: () => void;
   handleCreateSchedule: (schedule: ExamSchedule) => Promise<void>;
   handleBackToAdmin: () => void;
@@ -147,11 +147,15 @@ export function useReviewRouteController(
     [examId, loadExam],
   );
 
-  const handleNavigateToBuilder = useCallback(() => {
+  const handleNavigateToBuilder = useCallback((field?: string) => {
     if (!examId) {
       return;
     }
-    navigate(`/builder/${examId}/builder`);
+    const params = new URLSearchParams();
+    if (field) {
+      params.set('jumpField', field);
+    }
+    navigate(`/builder/${examId}/builder${params.toString() ? `?${params.toString()}` : ''}`);
   }, [examId, navigate]);
 
   const handleOpenScheduling = useCallback(() => {

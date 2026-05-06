@@ -82,7 +82,10 @@ export function ExamReviewRoute() {
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm ring-1 ring-slate-900/5 p-6">
               <h2 className="text-lg font-semibold text-slate-900 mb-4">Validation Summary</h2>
               {controller.publishReadiness ? (
-                <ValidationSummary publishReadiness={controller.publishReadiness} />
+                <ValidationSummary
+                  publishReadiness={controller.publishReadiness}
+                  onNavigateToBuilder={controller.handleNavigateToBuilder}
+                />
               ) : (
                 <div className="space-y-3" role="status" aria-live="polite" aria-busy="true">
                   <span className="sr-only">Loading validation…</span>

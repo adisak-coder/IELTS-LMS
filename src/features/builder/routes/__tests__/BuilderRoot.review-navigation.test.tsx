@@ -26,6 +26,7 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     useNavigate: () => mockNavigate,
     useParams: () => ({ examId: 'exam-1' }),
+    useLocation: () => ({ pathname: '/builder/exam-1/builder', search: '', hash: '', state: null, key: 'test' }),
   };
 });
 
