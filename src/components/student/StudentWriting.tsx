@@ -296,12 +296,6 @@ export function StudentWriting({
   const isTimeCritical = resolvedTimeRemaining <= 300;
   const isTimeWarning = resolvedTimeRemaining <= 600;
 
-  const handleEditorInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const nextValue = event.target.value;
-    latestEditorTextRef.current = nextValue;
-    commitDraftText(activeTaskId, nextValue, { flushDurability: false });
-  };
-
   const handleEditorInput = () => {
     if (editorRef.current) {
       const htmlContent = editorRef.current.innerHTML;

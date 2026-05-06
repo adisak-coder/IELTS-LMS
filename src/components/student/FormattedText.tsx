@@ -20,6 +20,7 @@ type FormattedTextProps = {
   highlightClassName?: string | undefined;
   highlightPersistenceKey?: string | undefined;
 };
+const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
 
 export function FormattedText({
   text,
@@ -72,6 +73,12 @@ export function FormattedText({
 
     return false;
   }, [highlightClassName, highlightColor, highlightEnabled, setHtml]);
+  const handleMouseUp = useCallback(() => {
+    const applied = handleSelection();
+    if (applied) {
+      lastMouseSelectionIntentAtRef.current = Date.now();
+    }
+  }, [handleSelection]);
   const applySelectionFromSnapshot = useCallback(
     (snapshot: HighlightSelectionSnapshot) => {
       if (!highlightEnabled) {
@@ -116,6 +123,10 @@ export function FormattedText({
       if (isWithinRecentTouchAutoApplyGuard()) {
         return;
       }
+      const lastMouseSelectionIntentAt = lastMouseSelectionIntentAtRef.current;
+      if (lastMouseSelectionIntentAt && Date.now() - lastMouseSelectionIntentAt < MOUSE_SELECTION_REMOVE_GUARD_MS) {
+        return;
+      }
 
       const container = containerRef.current;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -144,7 +155,7 @@ export function FormattedText({
           data-student-highlightable="true"
           style={{ WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' }}
           onClick={removeTappedHighlight}
-          onMouseUp={highlightEnabled ? handleSelection : undefined}
+          onMouseUp={highlightEnabled ? handleMouseUp : undefined}
           onTouchStart={highlightEnabled ? startTouchSelectionSession : undefined}
           onTouchEnd={highlightEnabled ? scheduleSelectionHighlight : undefined}
           onKeyUp={highlightEnabled ? handleSelection : undefined}

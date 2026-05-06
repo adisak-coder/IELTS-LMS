@@ -425,8 +425,7 @@ export function StudentReading({
                           hideDiagramReference={isInstructionReferencePlacement(block)}
                         />
                       </div>
-                    )
-                    ) : null}
+                    )}
                   </div>
                 </div>
               );

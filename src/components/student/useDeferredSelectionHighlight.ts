@@ -7,20 +7,30 @@ interface UseDeferredSelectionHighlightOptions {
   containerRef: RefObject<HTMLElement | null>;
   applySelection: () => boolean;
   applySelectionFromSnapshot?: ((snapshot: HighlightSelectionSnapshot) => boolean) | undefined;
+  touchApplyDelayMs?: number | undefined;
+  touchApplyRetryIntervalMs?: number | undefined;
+  touchApplyMaxRetries?: number | undefined;
 }
 
 const TOUCH_AUTO_APPLY_REMOVE_GUARD_MS = 700;
+const DEFAULT_TOUCH_APPLY_DELAY_MS = 120;
+const DEFAULT_TOUCH_APPLY_RETRY_INTERVAL_MS = 90;
+const DEFAULT_TOUCH_APPLY_MAX_RETRIES = 3;
 
 export function useDeferredSelectionHighlight({
   enabled,
   containerRef,
   applySelection,
   applySelectionFromSnapshot,
+  touchApplyDelayMs = DEFAULT_TOUCH_APPLY_DELAY_MS,
+  touchApplyRetryIntervalMs = DEFAULT_TOUCH_APPLY_RETRY_INTERVAL_MS,
+  touchApplyMaxRetries = DEFAULT_TOUCH_APPLY_MAX_RETRIES,
 }: UseDeferredSelectionHighlightOptions) {
   const touchSessionActiveRef = useRef(false);
   const pendingSnapshotRef = useRef<HighlightSelectionSnapshot | null>(null);
   const pendingSignatureRef = useRef<string | null>(null);
   const lastTouchAutoApplyAtRef = useRef<number | null>(null);
+  const touchApplyTimerRef = useRef<number | null>(null);
 
   const clearPending = useCallback(() => {
     pendingSnapshotRef.current = null;
@@ -28,9 +38,15 @@ export function useDeferredSelectionHighlight({
     touchSessionActiveRef.current = false;
   }, []);
 
+  const clearTouchApplyTimer = useCallback(() => {
+    if (touchApplyTimerRef.current !== null) {
+      window.clearTimeout(touchApplyTimerRef.current);
+      touchApplyTimerRef.current = null;
+    }
+  }, []);
+
   const applyPending = useCallback(() => {
     const pendingSnapshot = pendingSnapshotRef.current;
-    clearPending();
 
     let applied = false;
     if (pendingSnapshot && applySelectionFromSnapshot?.(pendingSnapshot)) {
@@ -41,7 +57,9 @@ export function useDeferredSelectionHighlight({
 
     if (applied) {
       lastTouchAutoApplyAtRef.current = Date.now();
+      clearPending();
     }
+    return applied;
   }, [applySelection, applySelectionFromSnapshot, clearPending]);
 
   const queueSelectionHighlight = useCallback(
@@ -76,13 +94,14 @@ export function useDeferredSelectionHighlight({
       return;
     }
 
+    clearTouchApplyTimer();
     if (pendingSnapshotRef.current) {
       clearPending();
     }
 
     touchSessionActiveRef.current = true;
     queueCurrentSelection();
-  }, [clearPending, enabled, queueCurrentSelection]);
+  }, [clearPending, clearTouchApplyTimer, enabled, queueCurrentSelection]);
 
   const scheduleSelectionHighlight = useCallback(() => {
     if (!enabled) {
@@ -94,8 +113,46 @@ export function useDeferredSelectionHighlight({
     }
 
     queueCurrentSelection();
-    applyPending();
-  }, [applyPending, enabled, queueCurrentSelection]);
+    clearTouchApplyTimer();
+
+    const maxRetries = Math.max(0, Math.floor(touchApplyMaxRetries));
+    const retryIntervalMs = Math.max(0, Math.floor(touchApplyRetryIntervalMs));
+    const initialDelayMs = Math.max(0, Math.floor(touchApplyDelayMs));
+    let attempts = 0;
+
+    const runAttempt = () => {
+      if (!touchSessionActiveRef.current) {
+        clearTouchApplyTimer();
+        return;
+      }
+
+      queueCurrentSelection();
+      const applied = applyPending();
+      if (applied) {
+        clearTouchApplyTimer();
+        return;
+      }
+
+      if (attempts >= maxRetries) {
+        clearPending();
+        clearTouchApplyTimer();
+        return;
+      }
+
+      attempts += 1;
+      touchApplyTimerRef.current = window.setTimeout(runAttempt, retryIntervalMs);
+    };
+
+    touchApplyTimerRef.current = window.setTimeout(runAttempt, initialDelayMs);
+  }, [
+    applyPending,
+    clearTouchApplyTimer,
+    enabled,
+    queueCurrentSelection,
+    touchApplyDelayMs,
+    touchApplyMaxRetries,
+    touchApplyRetryIntervalMs,
+  ]);
 
   const isWithinRecentTouchAutoApplyGuard = useCallback(() => {
     const lastTouchAutoApplyAt = lastTouchAutoApplyAtRef.current;
@@ -108,12 +165,14 @@ export function useDeferredSelectionHighlight({
 
   useEffect(() => {
     return () => {
+      clearTouchApplyTimer();
       clearPending();
     };
-  }, [clearPending]);
+  }, [clearPending, clearTouchApplyTimer]);
 
   useEffect(() => {
     if (!enabled) {
+      clearTouchApplyTimer();
       clearPending();
       return;
     }
@@ -131,7 +190,7 @@ export function useDeferredSelectionHighlight({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [clearPending, enabled, queueCurrentSelection]);
+  }, [clearPending, clearTouchApplyTimer, enabled, queueCurrentSelection]);
 
   useEffect(() => {
     if (!enabled) {

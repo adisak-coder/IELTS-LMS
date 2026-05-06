@@ -23,6 +23,7 @@ interface RichTextHighlighterProps {
   showHighlightButton?: boolean | undefined;
   highlightButtonLabel?: string | undefined;
 }
+const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
 
 export function RichTextHighlighter({
   content,
@@ -73,6 +74,12 @@ export function RichTextHighlighter({
 
     return false;
   }, [enabled, highlightClassName, highlightColor, setHtml]);
+  const handleMouseUp = useCallback(() => {
+    const applied = handleSelection();
+    if (applied) {
+      lastMouseSelectionIntentAtRef.current = Date.now();
+    }
+  }, [handleSelection]);
   const applySelectionFromSnapshot = useCallback(
     (snapshot: HighlightSelectionSnapshot) => {
       if (!enabled) {
@@ -117,6 +124,10 @@ export function RichTextHighlighter({
       if (isWithinRecentTouchAutoApplyGuard()) {
         return;
       }
+      const lastMouseSelectionIntentAt = lastMouseSelectionIntentAtRef.current;
+      if (lastMouseSelectionIntentAt && Date.now() - lastMouseSelectionIntentAt < MOUSE_SELECTION_REMOVE_GUARD_MS) {
+        return;
+      }
 
       const container = containerRef.current;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -144,7 +155,7 @@ export function RichTextHighlighter({
         data-student-highlightable="true"
         style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
         onClick={removeTappedHighlight}
-        onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
+        onMouseUp={enabled && !showHighlightButton ? handleMouseUp : undefined}
         onTouchStart={enabled && !showHighlightButton ? startTouchSelectionSession : undefined}
         onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionHighlight : undefined}
         onKeyUp={enabled ? handleSelection : undefined}

@@ -636,8 +636,7 @@ export function StudentListening({
                           hideDiagramReference={hiddenDiagramReferenceBlockIds.has(block.id)}
                         />
                       </div>
-                    )
-                    ) : null}
+                    )}
                   </div>
                 </div>
               );
