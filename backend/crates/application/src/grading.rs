@@ -1108,12 +1108,15 @@ impl GradingService {
         &self,
         request: GradingProjectionRequest,
     ) -> Result<GradingProjectionReport, GradingError> {
-        let schedule_sync = self.sync_sessions_from_schedules(request.watermark).await?;
+        let cycle_batch_size = request.batch_size.unwrap_or(500).max(1);
+        let schedule_sync = self
+            .sync_sessions_from_schedules(request.watermark, cycle_batch_size)
+            .await?;
         let submission_sync = self
             .sync_submissions_from_attempts(
                 request.watermark,
                 request.bootstrap_after,
-                request.batch_size.unwrap_or(500).max(1),
+                cycle_batch_size,
             )
             .await?;
         let mut affected_schedule_ids = schedule_sync.affected_schedule_ids;
@@ -1152,6 +1155,7 @@ impl GradingService {
     async fn sync_sessions_from_schedules(
         &self,
         watermark: Option<DateTime<Utc>>,
+        batch_size: i64,
     ) -> Result<ScheduleSyncReport, GradingError> {
         let schedules = if let Some(watermark) = watermark {
             sqlx::query_as::<_, ScheduleSeedRow>(
@@ -1171,10 +1175,12 @@ impl GradingService {
                     updated_at
                 FROM exam_schedules
                 WHERE updated_at >= ?
-                ORDER BY updated_at ASC, start_time ASC
+                ORDER BY updated_at ASC, id ASC
+                LIMIT ?
                 "#,
             )
             .bind(watermark)
+            .bind(batch_size)
             .fetch_all(&self.pool)
             .await?
         } else {
@@ -1194,9 +1200,11 @@ impl GradingService {
                     created_by,
                     updated_at
                 FROM exam_schedules
-                ORDER BY updated_at ASC, start_time ASC
+                ORDER BY updated_at ASC, id ASC
+                LIMIT ?
                 "#,
             )
+            .bind(batch_size)
             .fetch_all(&self.pool)
             .await?
         };
@@ -1280,13 +1288,26 @@ impl GradingService {
                     v.content_snapshot,
                     v.config_snapshot,
                     a.updated_at
-                FROM student_attempts a
+                FROM (
+                    SELECT
+                        id,
+                        schedule_id,
+                        exam_id,
+                        published_version_id,
+                        candidate_id,
+                        candidate_name,
+                        candidate_email,
+                        submitted_at,
+                        final_submission,
+                        updated_at
+                    FROM student_attempts
+                    WHERE submitted_at IS NOT NULL
+                      AND updated_at >= ?
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT ?
+                ) a
                 JOIN exam_schedules s ON s.id = a.schedule_id
                 JOIN exam_versions v ON v.id = a.published_version_id
-                WHERE a.submitted_at IS NOT NULL
-                  AND a.updated_at >= ?
-                ORDER BY a.updated_at ASC, a.id ASC
-                LIMIT ?
                 "#,
             )
             .bind(watermark)
@@ -1310,13 +1331,26 @@ impl GradingService {
                     v.content_snapshot,
                     v.config_snapshot,
                     a.updated_at
-                FROM student_attempts a
+                FROM (
+                    SELECT
+                        id,
+                        schedule_id,
+                        exam_id,
+                        published_version_id,
+                        candidate_id,
+                        candidate_name,
+                        candidate_email,
+                        submitted_at,
+                        final_submission,
+                        updated_at
+                    FROM student_attempts
+                    WHERE submitted_at IS NOT NULL
+                      AND updated_at >= ?
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT ?
+                ) a
                 JOIN exam_schedules s ON s.id = a.schedule_id
                 JOIN exam_versions v ON v.id = a.published_version_id
-                WHERE a.submitted_at IS NOT NULL
-                  AND a.updated_at >= ?
-                ORDER BY a.updated_at ASC, a.id ASC
-                LIMIT ?
                 "#,
             )
             .bind(bootstrap_after)
@@ -1340,12 +1374,25 @@ impl GradingService {
                     v.content_snapshot,
                     v.config_snapshot,
                     a.updated_at
-                FROM student_attempts a
+                FROM (
+                    SELECT
+                        id,
+                        schedule_id,
+                        exam_id,
+                        published_version_id,
+                        candidate_id,
+                        candidate_name,
+                        candidate_email,
+                        submitted_at,
+                        final_submission,
+                        updated_at
+                    FROM student_attempts
+                    WHERE submitted_at IS NOT NULL
+                    ORDER BY updated_at ASC, id ASC
+                    LIMIT ?
+                ) a
                 JOIN exam_schedules s ON s.id = a.schedule_id
                 JOIN exam_versions v ON v.id = a.published_version_id
-                WHERE a.submitted_at IS NOT NULL
-                ORDER BY a.updated_at ASC, a.id ASC
-                LIMIT ?
                 "#,
             )
             .bind(batch_size)
