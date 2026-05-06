@@ -148,6 +148,8 @@ export function QuestionRenderer({
   const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
   const inlineAnswerInputClass =
     'min-w-[8rem] w-fit max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
+  const tableAnswerInputClass =
+    'min-w-[8rem] w-fit max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
   const matchingSelectClass = isCompactPane
     ? 'w-full min-w-0 max-w-full'
     : tabletMode
@@ -760,7 +762,7 @@ export function QuestionRenderer({
           </p>
         ))}
         <div className="overflow-x-auto rounded-2xl border border-gray-200">
-          <table className={`w-full border-collapse text-sm ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
+          <table className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
           <thead className="bg-gray-50">
             <tr>
               {tableBlock.headers.map((header, index) => (
@@ -819,7 +821,7 @@ export function QuestionRenderer({
                                         onChange={(event) =>
                                           updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
                                         }
-                                        className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
+                                        className={`${tableAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
                                         style={
                                           isCompactPane
                                             ? undefined
@@ -855,7 +857,7 @@ export function QuestionRenderer({
                                 onChange={(event) =>
                                   updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
                                 }
-                                className={`${isCompactPane ? 'w-full' : 'min-w-[10rem]'} rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100`}
+                                className={`${isCompactPane ? 'w-full' : 'min-w-[10rem]'} rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100`}
                                 placeholder="Enter answer..."
                                 security={security}
                                 sessionId={sessionId}

@@ -727,12 +727,20 @@ describe('student question experience', () => {
       />,
     );
 
+    const table = screen.getByRole('table');
+    const firstInput = screen.getByRole('textbox', { name: 'Answer for question 10' });
+    const secondInput = screen.getByRole('textbox', { name: 'Answer for question 11' });
+
     expect(screen.getByText('Name:')).toBeInTheDocument();
     expect(screen.getByText('Country:')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Answer for question 10' })).toHaveValue('anu');
-    expect(screen.getByRole('textbox', { name: 'Answer for question 11' })).toHaveValue('india');
+    expect(table).toHaveClass('text-[length:var(--student-control-font-size)]');
+    expect(table).not.toHaveClass('text-sm');
+    expect(firstInput).toHaveValue('anu');
+    expect(firstInput).toHaveClass('text-[length:var(--student-control-font-size)]');
+    expect(firstInput).not.toHaveClass('text-sm');
+    expect(secondInput).toHaveValue('india');
 
-    fireEvent.change(screen.getByRole('textbox', { name: 'Answer for question 11' }), {
+    fireEvent.change(secondInput, {
       target: { value: 'thai' },
     });
 
@@ -1225,6 +1233,7 @@ describe('student question experience', () => {
     expect(passagePanel?.className).not.toContain('md:text-base');
     expect(passageTitle).toHaveStyle({ fontSize: 'var(--student-passage-title-font-size)' });
     expect(passageContent?.className).toContain('student-reading-passage-content');
+    expect(passageContent?.className).toContain('student-stimulus-content');
   });
 
   it('renders HTML reading passages with normal whitespace handling', () => {
@@ -2536,6 +2545,11 @@ describe('student question experience', () => {
         contentZoom={1.3}
       />,
     );
+
+    const transcriptReference = screen.getByText('Reference transcript text.');
+    const transcriptHighlighter = transcriptReference.closest('[data-student-highlightable="true"]');
+    expect(transcriptHighlighter).not.toBeNull();
+    expect(transcriptHighlighter).toHaveClass('student-stimulus-content');
 
     const listeningZoomedPanes = screen
       .getByTestId('listening-split-workspace')
