@@ -50,6 +50,7 @@ export function StudentZoomableMedia({
     [sources],
   );
   const [sourceIndex, setSourceIndex] = useState(0);
+  const [isCurrentSourceLoaded, setIsCurrentSourceLoaded] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -63,6 +64,10 @@ export function StudentZoomableMedia({
   useEffect(() => {
     setSourceIndex(0);
   }, [normalizedSources]);
+
+  useEffect(() => {
+    setIsCurrentSourceLoaded(false);
+  }, [currentSource]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -114,6 +119,8 @@ export function StudentZoomableMedia({
   }, []);
 
   const handleImageError = () => {
+    setIsCurrentSourceLoaded(false);
+
     if (!hasMultipleSources) {
       return;
     }
@@ -166,10 +173,13 @@ export function StudentZoomableMedia({
       <img
         src={currentSource}
         alt={alt}
-        className={`h-auto w-full object-contain select-none ${imageClassName ?? ''}`}
+        className={`h-auto w-full object-contain select-none transition-opacity duration-150 ${
+          isCurrentSourceLoaded ? 'opacity-100' : 'opacity-0'
+        } ${imageClassName ?? ''}`}
         loading="lazy"
         draggable={false}
         referrerPolicy="no-referrer"
+        onLoad={() => setIsCurrentSourceLoaded(true)}
         onError={handleImageError}
         onContextMenu={handleContextMenu}
         onDragStart={handleContextMenu}
@@ -180,6 +190,9 @@ export function StudentZoomableMedia({
           touchAction: 'manipulation',
         }}
       />
+      {!isCurrentSourceLoaded ? (
+        <div className="absolute inset-0 animate-pulse bg-gray-100" aria-hidden="true" />
+      ) : null}
       {renderOverlay ? (
         <div className="pointer-events-none absolute inset-0">
           {renderOverlay(1)}
@@ -382,9 +395,12 @@ export function StudentZoomableMedia({
                       <img
                         src={currentSource}
                         alt={alt}
-                        className={`block h-auto w-full max-w-full object-contain ${modalImageClassName ?? ''}`}
+                        className={`block h-auto w-full max-w-full object-contain transition-opacity duration-150 ${
+                          isCurrentSourceLoaded ? 'opacity-100' : 'opacity-0'
+                        } ${modalImageClassName ?? ''}`}
                         draggable={false}
                         referrerPolicy="no-referrer"
+                        onLoad={() => setIsCurrentSourceLoaded(true)}
                         onError={handleImageError}
                         onContextMenu={handleContextMenu}
                         onDragStart={handleContextMenu}
@@ -396,6 +412,9 @@ export function StudentZoomableMedia({
                           userSelect: 'none',
                         }}
                       />
+                      {!isCurrentSourceLoaded ? (
+                        <div className="absolute inset-0 animate-pulse bg-gray-100" aria-hidden="true" />
+                      ) : null}
                       {renderOverlay ? <div className="pointer-events-none absolute inset-0">{renderOverlay(annotationScale)}</div> : null}
                     </div>
                   </div>

@@ -311,7 +311,7 @@ export function StudentReading({
             {(activePassage.images ?? []).map((image) => (
               <div key={image.id} className={isTabletMode ? '' : 'lg:sticky lg:top-0 lg:z-10 lg:bg-white lg:py-2'}>
                 <StudentZoomableMedia
-                  sources={[image.src]}
+                  sources={getImageUrlCandidates(image.src)}
                   alt={image.alt}
                   label={image.alt || 'Passage image'}
                   hint="Tap to zoom the passage image"

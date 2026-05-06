@@ -4,6 +4,7 @@ import { ArrowLeftRight, Check, X } from 'lucide-react';
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
 import { saveStudentAuditEvent } from '../../services/studentAuditService';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
+import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { WritingChartPreview } from '../writing/WritingChartPreview';
@@ -404,7 +405,7 @@ export function StudentWriting({
                 </p>
                 {currentChart.imageSrc ? (
                   <StudentZoomableMedia
-                    sources={[currentChart.imageSrc]}
+                    sources={getImageUrlCandidates(currentChart.imageSrc)}
                     alt={currentChart.title}
                     label={currentChart.title}
                     showZoomUi={false}

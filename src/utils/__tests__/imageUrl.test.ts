@@ -14,6 +14,14 @@ describe('imageUrl', () => {
     ).toBe('https://drive.google.com/thumbnail?id=1AbCDefG123456&sz=w2000');
   });
 
+  it('includes direct googleusercontent fallbacks for drive images', () => {
+    const candidates = getImageUrlCandidates('https://drive.google.com/open?id=1AbCDefG123456');
+    expect(candidates).toContain(
+      'https://drive.usercontent.google.com/download?id=1AbCDefG123456&export=view',
+    );
+    expect(candidates).toContain('https://lh3.googleusercontent.com/d/1AbCDefG123456=s2000');
+  });
+
   it('leaves non-drive urls unchanged', () => {
     expect(normalizeImageUrl('https://example.com/image.png')).toBe('https://example.com/image.png');
   });

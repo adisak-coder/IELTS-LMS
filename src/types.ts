@@ -26,6 +26,7 @@ export type QuestionType =
 
 export type TFNGMode = 'TFNG' | 'YNNG';
 export type AnswerRule = 'ONE_WORD' | 'TWO_WORDS' | 'THREE_WORDS';
+export type SlotGroupRule = 'all_required' | 'at_least_n';
 
 export interface SubAnswerTreeNode {
   id: string;
@@ -247,6 +248,10 @@ export interface SentenceBlank {
   correctAnswer: string;
   acceptedAnswers?: string[];
   position: number;
+  scoreGroupId?: string;
+  scoreWeight?: number;
+  groupRule?: SlotGroupRule;
+  requiredCorrect?: number;
 }
 
 export interface SentenceCompletionQuestion {
@@ -299,6 +304,10 @@ export interface TableCell {
   acceptedAnswers?: string[];
   row: number;
   col: number;
+  scoreGroupId?: string;
+  scoreWeight?: number;
+  groupRule?: SlotGroupRule;
+  requiredCorrect?: number;
 }
 
 export interface TableCompletionBlock extends BaseQuestionBlock {

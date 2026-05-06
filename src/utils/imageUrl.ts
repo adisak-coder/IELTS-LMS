@@ -14,7 +14,8 @@ export const getImageUrlCandidates = (value: string): string[] => {
   return [
     `https://drive.google.com/uc?export=view&id=${driveFileId}`,
     `https://drive.google.com/thumbnail?id=${driveFileId}&sz=w2000`,
-    `https://drive.googleusercontent.com/uc?export=view&id=${driveFileId}`,
+    `https://drive.usercontent.google.com/download?id=${driveFileId}&export=view`,
+    `https://lh3.googleusercontent.com/d/${driveFileId}=s2000`,
   ];
 };
 
