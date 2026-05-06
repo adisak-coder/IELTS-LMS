@@ -151,6 +151,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
+  const latestAnswersRef = useRef(runtimeState.answers);
+  const liveObjectiveAnswersRef = useRef(runtimeState.answers);
+  const liveWritingAnswersRef = useRef(runtimeState.writingAnswers);
   const viewportLockForExamSessionRef = useRef<boolean | null>(null);
   const lockedViewportHeightRef = useRef<number | null>(null);
   const moduleSubmitInFlightRef = useRef<Promise<void> | null>(null);
@@ -202,6 +205,25 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       node.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
     });
   }, []);
+  const reconcileLiveAnswerCacheNow = useCallback(() => {
+    const objectiveAnswers = liveObjectiveAnswersRef.current;
+    const writingAnswers = liveWritingAnswersRef.current;
+    const runtimeNow = runtimeStateRef.current;
+
+    latestAnswersRef.current = objectiveAnswers;
+
+    for (const [questionId, value] of Object.entries(objectiveAnswers)) {
+      if (runtimeNow.answers[questionId] !== value) {
+        runtimeActions.setAnswer(questionId, value);
+      }
+    }
+
+    for (const [taskId, value] of Object.entries(writingAnswers)) {
+      if (runtimeNow.writingAnswers[taskId] !== value) {
+        runtimeActions.setWritingAnswer(taskId, value);
+      }
+    }
+  }, [runtimeActions]);
   const latestPendingWarning = useMemo(() => {
     const warnings =
       attemptState.attempt?.violations.filter((violation) => violation.type === 'PROCTOR_WARNING') ??
