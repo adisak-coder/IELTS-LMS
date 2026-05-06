@@ -74,11 +74,13 @@ describe('StudentWriting a11y', () => {
     );
 
     const workspace = screen.getByTestId('writing-split-workspace');
+    const resizer = screen.getByTestId('writing-pane-resizer');
     expect(workspace).toHaveStyle({
       '--writing-prompt-pane-width': '50%',
       '--writing-editor-pane-width': 'calc(50% - var(--split-divider-width))',
       '--split-divider-width': '16px',
     });
+    expect(resizer.querySelector('.h-10.w-8')).toBeInTheDocument();
 
     vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
       bottom: 600,

@@ -84,12 +84,12 @@ export function StudentFooter({
   return (
     <footer
       className={`student-exam-footer border-t border-gray-200 bg-white flex flex-col flex-shrink-0 z-10 shadow-[0_-2px_10px_rgba(0,0,0,0.03)] ${
-        tabletMode ? 'max-h-24 md:max-h-24' : 'max-h-32 md:max-h-28 lg:max-h-24'
+        tabletMode ? 'max-h-[5.5rem] md:max-h-[5.5rem]' : 'max-h-28 md:max-h-24 lg:max-h-[5.5rem]'
       }`}
       role="contentinfo"
       aria-label="Question navigation and progress"
     >
-      <div className={`flex items-center justify-between px-2 md:px-3 lg:px-4 ${tabletMode ? 'py-1' : 'py-1.5 md:py-2'}`}>
+      <div className={`flex items-center justify-between px-2 md:px-3 lg:px-4 ${tabletMode ? 'py-0.5' : 'py-1 md:py-1.5'}`}>
         <div className="flex items-center gap-2 md:gap-3 flex-1 overflow-x-auto">
           <div className="flex items-center gap-1 md:gap-1.5 px-2 md:px-2.5 py-1 bg-gray-50 rounded-sm flex-shrink-0">
             <span className="text-[length:var(--student-chip-font-size)] font-black text-gray-900">
@@ -109,7 +109,7 @@ export function StudentFooter({
         </div>
       </div>
 
-      <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 lg:px-4 pb-1.5 md:pb-2 overflow-x-auto">
+      <div className="flex items-center gap-2 md:gap-3 px-2 md:px-3 lg:px-4 pb-1 md:pb-1.5 overflow-x-auto">
         {passageGroups.map(({ groupId, groupQuestions, index }) => {
           const isActiveGroup = groupQuestions.some(
             (question) => question.id === currentQuestionId,
