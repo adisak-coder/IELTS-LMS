@@ -130,6 +130,33 @@ describe('StudentWriting a11y', () => {
     expect(resizer.querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
   });
 
+  it('offsets tablet writing header and editor content away from the splitter overlay', () => {
+    render(
+      <StudentWriting
+        state={createExamState()}
+        writingAnswers={{}}
+        onWritingChange={() => undefined}
+        onSubmit={() => undefined}
+        currentQuestionId={null}
+        onNavigate={() => undefined}
+        tabletMode
+      />,
+    );
+
+    const headerLabel = screen.getByText('Writing Response');
+    const headerRow = headerLabel.closest('div');
+    if (!headerRow) {
+      throw new Error('Expected writing header row to render');
+    }
+    expect(headerRow).toHaveClass('pl-10');
+    expect(headerRow).toHaveClass('pr-3');
+
+    const editor = screen.getByRole('textbox', { name: /writing response/i });
+    expect(editor).toHaveClass('pl-10');
+    expect(editor).toHaveClass('md:pl-10');
+    expect(editor).toHaveClass('lg:pl-10');
+  });
+
   it('preserves builder-authored HTML prompt formatting in the writing exam', () => {
     const state = createExamState();
     state.writing.task1Prompt = [

@@ -453,7 +453,11 @@ export function StudentWriting({
         >
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
             <div className="relative flex-1 min-h-0 w-full flex flex-col">
-              <div className="flex flex-col gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+              <div
+                className={`flex flex-col gap-2 border-b border-gray-200 bg-gray-50 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between ${
+                  isTabletMode ? 'pl-10 pr-3' : 'px-3'
+                }`}
+              >
                 <span>Writing Response</span>
                 <div className="flex items-center gap-2" aria-label="Current word count">
                   <span className="text-[length:var(--student-meta-font-size)] font-bold text-gray-400 uppercase tracking-widest">
@@ -489,7 +493,9 @@ export function StudentWriting({
                 onCut={blockWritingEditorInteraction}
                 onDrop={blockWritingEditorInteraction}
                 onContextMenu={blockWritingEditorInteraction}
-                className="h-full w-full resize-none p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 whitespace-pre-wrap"
+                className={`h-full w-full resize-none p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 whitespace-pre-wrap ${
+                  isTabletMode ? 'pl-10 md:pl-10 lg:pl-10' : ''
+                }`}
                 data-student-zoom-scroll
                 spellCheck={!security.preventAutocorrect}
                 autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
