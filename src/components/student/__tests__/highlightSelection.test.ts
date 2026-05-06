@@ -32,7 +32,7 @@ describe('applySelectionHighlight', () => {
     expect(container.textContent).toBe('Alpha beta gamma');
   });
 
-  it('returns null when the selection spans multiple paragraphs', () => {
+  it('splits the highlight when the selection spans multiple paragraphs', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
 
@@ -61,8 +61,22 @@ describe('applySelectionHighlight', () => {
 
     const html = applySelectionHighlight(container, selection, 'bg-blue-200');
 
-    expect(html).toBeNull();
-    expect(removeAllRanges).not.toHaveBeenCalled();
+    expect(html).not.toBeNull();
+    if (!html) {
+      throw new Error('Expected highlight HTML for multi-paragraph selection');
+    }
+
+    const rendered = document.createElement('div');
+    rendered.innerHTML = html;
+
+    const marks = rendered.querySelectorAll('mark[data-highlighted="true"]');
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toHaveTextContent('beta');
+    expect(marks[1]).toHaveTextContent('Gamma');
+    expect(rendered.querySelectorAll('p')).toHaveLength(2);
+    expect(rendered.querySelectorAll('p')[0]).toHaveTextContent('Alpha beta');
+    expect(rendered.querySelectorAll('p')[1]).toHaveTextContent('Gamma delta');
+    expect(removeAllRanges).toHaveBeenCalledTimes(1);
   });
 
   it('still highlights when selection stays inside a single paragraph', () => {
@@ -90,6 +104,49 @@ describe('applySelectionHighlight', () => {
     expect(html).toContain('<p><mark');
     expect(html).toContain('Gamma');
     expect(html).toContain('data-highlighted="true"');
+  });
+
+  it('can apply a cross-paragraph snapshot into split highlights', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
+
+    const firstParagraphTextNode = container.querySelectorAll('p')[0]?.firstChild;
+    const secondParagraphTextNode = container.querySelectorAll('p')[1]?.firstChild;
+    if (
+      !firstParagraphTextNode ||
+      firstParagraphTextNode.nodeType !== Node.TEXT_NODE ||
+      !secondParagraphTextNode ||
+      secondParagraphTextNode.nodeType !== Node.TEXT_NODE
+    ) {
+      throw new Error('Expected two text nodes');
+    }
+
+    const range = document.createRange();
+    range.setStart(firstParagraphTextNode, 6);
+    range.setEnd(secondParagraphTextNode, 5);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => range.toString(),
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const snapshot = createHighlightSelectionSnapshot(container, selection);
+    expect(snapshot).not.toBeNull();
+
+    const html = applyHighlightFromSnapshot(container, snapshot!, 'bg-blue-200');
+    expect(html).not.toBeNull();
+    if (!html) {
+      throw new Error('Expected highlight HTML from cross-paragraph snapshot');
+    }
+
+    const rendered = document.createElement('div');
+    rendered.innerHTML = html;
+    const marks = rendered.querySelectorAll('mark[data-highlighted="true"]');
+    expect(marks).toHaveLength(2);
+    expect(marks[0]).toHaveTextContent('beta');
+    expect(marks[1]).toHaveTextContent('Gamma');
   });
 
   it('uses highlight styles that do not add spacing around highlighted text', () => {

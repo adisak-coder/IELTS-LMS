@@ -32,24 +32,18 @@ export function applySelectionHighlight(
     return null;
   }
 
-  const wrapper = document.createElement('mark');
-  wrapper.className = highlightClassName;
-  wrapper.setAttribute('data-highlighted', 'true');
-
-  try {
-    clonedRange.surroundContents(wrapper);
-  } catch {
-    try {
-      wrapper.appendChild(clonedRange.extractContents());
-      clonedRange.insertNode(wrapper);
-    } catch {
-      return null;
-    }
+  const highlightedHtml = applyHighlightToClonedRange(
+    clonedContainer,
+    clonedRange,
+    highlightClassName,
+  );
+  if (!highlightedHtml) {
+    return null;
   }
 
   selection.removeAllRanges();
 
-  return clonedContainer.innerHTML;
+  return highlightedHtml;
 }
 
 export function applyHighlightFromSnapshot(
@@ -63,26 +57,11 @@ export function applyHighlightFromSnapshot(
     return null;
   }
 
-  if (!clonedRange.toString().trim()) {
-    return null;
-  }
-
-  const wrapper = document.createElement('mark');
-  wrapper.className = highlightClassName;
-  wrapper.setAttribute('data-highlighted', 'true');
-
-  try {
-    clonedRange.surroundContents(wrapper);
-  } catch {
-    try {
-      wrapper.appendChild(clonedRange.extractContents());
-      clonedRange.insertNode(wrapper);
-    } catch {
-      return null;
-    }
-  }
-
-  return clonedContainer.innerHTML;
+  return applyHighlightToClonedRange(
+    clonedContainer,
+    clonedRange,
+    highlightClassName,
+  );
 }
 
 export function removeHighlightAtIndex(container: HTMLElement, highlightIndex: number): string | null {
@@ -126,10 +105,6 @@ export function createHighlightSelectionSnapshot(
   }
 
   if (!container.contains(range.commonAncestorContainer)) {
-    return null;
-  }
-
-  if (selectionCrossesBlockBoundary(container, range)) {
     return null;
   }
 
@@ -189,6 +164,175 @@ function selectionCrossesBlockBoundary(container: HTMLElement, range: Range): bo
   const startBlock = findNearestBlockBoundary(container, range.startContainer);
   const endBlock = findNearestBlockBoundary(container, range.endContainer);
   return startBlock !== endBlock;
+}
+
+function applyHighlightToClonedRange(
+  clonedContainer: HTMLElement,
+  clonedRange: Range,
+  highlightClassName: string,
+): string | null {
+  if (!clonedRange.toString().trim()) {
+    return null;
+  }
+
+  if (selectionCrossesBlockBoundary(clonedContainer, clonedRange)) {
+    const didApplySplitHighlight = applySplitRangeHighlight(
+      clonedContainer,
+      clonedRange,
+      highlightClassName,
+    );
+    return didApplySplitHighlight ? clonedContainer.innerHTML : null;
+  }
+
+  const didApplySingleHighlight = applySingleRangeHighlight(
+    clonedRange,
+    highlightClassName,
+  );
+  return didApplySingleHighlight ? clonedContainer.innerHTML : null;
+}
+
+function applySingleRangeHighlight(
+  range: Range,
+  highlightClassName: string,
+): boolean {
+  const wrapper = document.createElement('mark');
+  wrapper.className = highlightClassName;
+  wrapper.setAttribute('data-highlighted', 'true');
+
+  try {
+    range.surroundContents(wrapper);
+    return true;
+  } catch {
+    try {
+      wrapper.appendChild(range.extractContents());
+      range.insertNode(wrapper);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function applySplitRangeHighlight(
+  container: HTMLElement,
+  range: Range,
+  highlightClassName: string,
+): boolean {
+  const textNodes: Text[] = [];
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let currentNode = walker.nextNode();
+  while (currentNode) {
+    if (
+      currentNode.nodeType === Node.TEXT_NODE &&
+      currentNode.textContent &&
+      currentNode.textContent.length > 0 &&
+      range.intersectsNode(currentNode)
+    ) {
+      textNodes.push(currentNode as Text);
+    }
+    currentNode = walker.nextNode();
+  }
+
+  let didApplyHighlight = false;
+  for (const textNode of textNodes) {
+    const offsets = getTextNodeSelectionOffsets(range, textNode);
+    if (!offsets) {
+      continue;
+    }
+
+    const { startOffset, endOffset } = offsets;
+    if (wrapTextNodeSegment(textNode, startOffset, endOffset, highlightClassName)) {
+      didApplyHighlight = true;
+    }
+  }
+
+  return didApplyHighlight;
+}
+
+function getTextNodeSelectionOffsets(
+  range: Range,
+  textNode: Text,
+): { startOffset: number; endOffset: number } | null {
+  const textLength = textNode.textContent?.length ?? 0;
+  if (textLength === 0) {
+    return null;
+  }
+
+  let startOffset = 0;
+  let endOffset = textLength;
+
+  if (range.startContainer === textNode) {
+    startOffset = range.startOffset;
+  } else if (
+    range.startContainer.nodeType === Node.ELEMENT_NODE &&
+    textNode.parentNode === range.startContainer
+  ) {
+    const nodeIndex = Array.from(range.startContainer.childNodes).indexOf(textNode);
+    if (nodeIndex >= 0 && nodeIndex < range.startOffset) {
+      return null;
+    }
+  }
+
+  if (range.endContainer === textNode) {
+    endOffset = range.endOffset;
+  } else if (
+    range.endContainer.nodeType === Node.ELEMENT_NODE &&
+    textNode.parentNode === range.endContainer
+  ) {
+    const nodeIndex = Array.from(range.endContainer.childNodes).indexOf(textNode);
+    if (nodeIndex >= range.endOffset) {
+      return null;
+    }
+  }
+
+  const normalizedStart = Math.max(0, Math.min(startOffset, textLength));
+  const normalizedEnd = Math.max(0, Math.min(endOffset, textLength));
+  if (normalizedEnd <= normalizedStart) {
+    return null;
+  }
+
+  return {
+    startOffset: normalizedStart,
+    endOffset: normalizedEnd,
+  };
+}
+
+function wrapTextNodeSegment(
+  textNode: Text,
+  startOffset: number,
+  endOffset: number,
+  highlightClassName: string,
+): boolean {
+  const fullText = textNode.textContent ?? '';
+  const selectedText = fullText.slice(startOffset, endOffset);
+  if (!selectedText) {
+    return false;
+  }
+
+  const beforeText = fullText.slice(0, startOffset);
+  const afterText = fullText.slice(endOffset);
+  const fragment = document.createDocumentFragment();
+
+  if (beforeText) {
+    fragment.appendChild(document.createTextNode(beforeText));
+  }
+
+  const wrapper = document.createElement('mark');
+  wrapper.className = highlightClassName;
+  wrapper.setAttribute('data-highlighted', 'true');
+  wrapper.textContent = selectedText;
+  fragment.appendChild(wrapper);
+
+  if (afterText) {
+    fragment.appendChild(document.createTextNode(afterText));
+  }
+
+  if (!textNode.parentNode) {
+    return false;
+  }
+
+  textNode.parentNode.replaceChild(fragment, textNode);
+  return true;
 }
 
 function findNearestBlockBoundary(container: HTMLElement, node: Node): Node {
