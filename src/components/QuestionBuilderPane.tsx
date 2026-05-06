@@ -35,7 +35,6 @@ const INLINE_ADD_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
   'CLOZE',
   'MATCHING',
   'MULTI_MCQ',
-  'SINGLE_MCQ',
   'SHORT_ANSWER',
   'SENTENCE_COMPLETION',
 ]);
@@ -212,31 +211,8 @@ export function QuestionBuilderPane({
           };
           break;
         case 'SINGLE_MCQ':
-          {
-            const typedBlock = currentBlock as SingleMCQBlockType;
-            const existingQuestions =
-              Array.isArray(typedBlock.questions) && typedBlock.questions.length > 0
-                ? typedBlock.questions
-                : [
-                    {
-                      id: typedBlock.id,
-                      stem: typedBlock.stem || '',
-                      options: typedBlock.options,
-                    },
-                  ];
-            const nextQuestions = [...existingQuestions, createDefaultSingleMcqQuestion()];
-            const firstQuestion = nextQuestions[0];
-            if (!firstQuestion) {
-              return currentBlocks;
-            }
-            nextBlock = {
-              ...typedBlock,
-              stem: firstQuestion.stem,
-              options: firstQuestion.options,
-              questions: nextQuestions,
-            };
-          }
-          break;
+          // Defensive no-op: SINGLE_MCQ uses block-local add controls only.
+          return currentBlocks;
         case 'SHORT_ANSWER':
           nextBlock = {
             ...currentBlock,

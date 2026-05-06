@@ -174,6 +174,9 @@ export function SingleMCQBlock({
           </button>
         </div>
       </div>
+      <p className="mb-3 text-xs text-gray-600">
+        Use Add Question above; Add Option is per question.
+      </p>
 
       <div className="mb-4">
         <label className="block text-sm font-medium text-gray-700 mb-2">
