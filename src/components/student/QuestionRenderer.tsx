@@ -370,40 +370,58 @@ export function QuestionRenderer({
     </div>
   );
 
-  const renderSingleMCQ = (mcqBlock: SingleMCQBlock, blockNum: number) => (
-    <fieldset className="flex flex-col gap-4">
-      <legend className="flex gap-3">
-        <span className="min-w-[1.75rem] font-bold text-gray-900">{blockNum}.</span>
-        <FormattedText
-          as="span"
-          className="text-gray-800"
-          text={mcqBlock.stem || 'Select the correct option:'}
-          highlightEnabled={highlightEnabled}
-          highlightColor={highlightColor}
-        />
-      </legend>
-      <div className={`${fieldIndentClass} space-y-3`}>
-        {mcqBlock.options?.map((option, index) => {
-          const letter = String.fromCharCode(65 + index);
-          return (
-            <label key={option.id} className="flex cursor-pointer items-start gap-3">
-              <input
-                type="radio"
-                name={`q-${mcqBlock.id}`}
-                checked={answer === option.id}
-                onChange={() => onChange(option.id)}
-                className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div className="flex gap-2">
-                <span className="font-bold text-gray-700">{letter}.</span>
-                  <FormattedText as="span" className="text-gray-800" text={option.text} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
-              </div>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
+  const renderSingleMCQ = (
+    mcqBlock: SingleMCQBlock,
+    blockNum: number,
+    questionLevel: SingleMCQQuestion | null,
+  ) => {
+    const stem = questionLevel?.stem || mcqBlock.stem || 'Select the correct option:';
+    const options = Array.isArray(questionLevel?.options) && questionLevel.options.length > 0
+      ? questionLevel.options
+      : mcqBlock.options ?? [];
+    const inputGroupName = questionLevel ? `q-${questionLevel.id}` : `q-${mcqBlock.id}`;
+
+    return (
+      <fieldset className="flex flex-col gap-4">
+        <legend className="flex gap-3">
+          <span className="min-w-[1.75rem] font-bold text-gray-900">{blockNum}.</span>
+          <FormattedText
+            as="span"
+            className="text-gray-800"
+            text={stem}
+            highlightEnabled={highlightEnabled}
+            highlightColor={highlightColor}
+          />
+        </legend>
+        <div className={`${fieldIndentClass} space-y-3`}>
+          {options.map((option, index) => {
+            const letter = String.fromCharCode(65 + index);
+            return (
+              <label key={option.id} className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="radio"
+                  name={inputGroupName}
+                  checked={answer === option.id}
+                  onChange={() => onChange(option.id)}
+                  className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <div className="flex gap-2">
+                  <span className="font-bold text-gray-700">{letter}.</span>
+                  <FormattedText
+                    as="span"
+                    className="text-gray-800"
+                    text={option.text}
+                    highlightEnabled={highlightEnabled}
+                    highlightColor={highlightColor}
+                  />
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+    );
+  };
 
   const renderShortAnswer = (shortBlock: ShortAnswerBlock, q: ShortAnswerQuestion, num: number) => {
     void shortBlock;

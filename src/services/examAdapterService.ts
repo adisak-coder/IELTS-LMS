@@ -76,12 +76,76 @@ function normalizeDiagramImageUrl(block: DiagramLabelingBlock): DiagramLabelingB
   };
 }
 
-function normalizeQuestionBlockDiagram(block: QuestionBlock): QuestionBlock {
-  if (block.type !== 'DIAGRAM_LABELING') {
-    return block;
+function normalizeMcqOptions(options: unknown, idPrefix: string): MCQOption[] {
+  if (!Array.isArray(options)) {
+    return [];
   }
 
-  return normalizeDiagramImageUrl(block);
+  return options.map((option, optionIndex) => {
+    const optionValue = option as Partial<MCQOption> | undefined;
+    return {
+      id: readNonEmptyString(optionValue?.id) ?? `${idPrefix}:opt${optionIndex + 1}`,
+      text: typeof optionValue?.text === 'string' ? optionValue.text : '',
+      isCorrect: Boolean(optionValue?.isCorrect),
+    };
+  });
+}
+
+function normalizeSingleMcqBlock(block: SingleMCQBlock): SingleMCQBlock {
+  const legacyStem = readNonEmptyString(block.stem) ?? '';
+  const legacyOptions = normalizeMcqOptions(block.options, block.id);
+  const blockWithQuestions = block as SingleMCQBlock & { questions?: unknown };
+  const rawQuestions = Array.isArray(blockWithQuestions.questions) ? blockWithQuestions.questions : [];
+
+  const normalizedQuestions = rawQuestions.map((question, questionIndex) => {
+    const questionValue = question as Partial<SingleMCQQuestion> | undefined;
+    const questionId =
+      readNonEmptyString(questionValue?.id) ??
+      (questionIndex === 0 ? block.id : `${block.id}:q${questionIndex + 1}`);
+    const questionStem = readNonEmptyString(questionValue?.stem) ?? '';
+    const questionOptions = normalizeMcqOptions(questionValue?.options, questionId);
+
+    return {
+      id: questionId,
+      stem: questionStem,
+      options: questionOptions,
+    } satisfies SingleMCQQuestion;
+  });
+
+  if (normalizedQuestions.length === 0) {
+    return {
+      ...block,
+      stem: legacyStem,
+      options: legacyOptions,
+      questions: [
+        {
+          id: block.id,
+          stem: legacyStem,
+          options: legacyOptions,
+        },
+      ],
+    };
+  }
+
+  const firstQuestion = normalizedQuestions[0];
+  return {
+    ...block,
+    stem: legacyStem || firstQuestion?.stem || '',
+    options: legacyOptions.length > 0 ? legacyOptions : firstQuestion?.options ?? [],
+    questions: normalizedQuestions,
+  };
+}
+
+function normalizeQuestionBlock(block: QuestionBlock): QuestionBlock {
+  if (block.type === 'DIAGRAM_LABELING') {
+    return normalizeDiagramImageUrl(block);
+  }
+
+  if (block.type === 'SINGLE_MCQ') {
+    return normalizeSingleMcqBlock(block);
+  }
+
+  return block;
 }
 
 function normalizeQuestionBlocks(blocks: QuestionBlock[] | undefined): QuestionBlock[] {
@@ -89,7 +153,7 @@ function normalizeQuestionBlocks(blocks: QuestionBlock[] | undefined): QuestionB
     return [];
   }
 
-  return blocks.map((block) => normalizeQuestionBlockDiagram(block));
+  return blocks.map((block) => normalizeQuestionBlock(block));
 }
 
 export interface StudentQuestionDescriptor {

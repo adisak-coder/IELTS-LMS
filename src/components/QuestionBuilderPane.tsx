@@ -211,8 +211,31 @@ export function QuestionBuilderPane({
           };
           break;
         case 'SINGLE_MCQ':
-          // Defensive no-op: SINGLE_MCQ uses block-local add controls only.
-          return currentBlocks;
+          {
+            const typedBlock = currentBlock as SingleMCQBlockType;
+            const existingQuestions =
+              Array.isArray(typedBlock.questions) && typedBlock.questions.length > 0
+                ? typedBlock.questions
+                : [
+                    {
+                      id: typedBlock.id,
+                      stem: typedBlock.stem || '',
+                      options: typedBlock.options,
+                    },
+                  ];
+            const nextQuestions = [...existingQuestions, createDefaultSingleMcqQuestion()];
+            const firstQuestion = nextQuestions[0];
+            if (!firstQuestion) {
+              return currentBlocks;
+            }
+            nextBlock = {
+              ...typedBlock,
+              stem: firstQuestion.stem,
+              options: firstQuestion.options,
+              questions: nextQuestions,
+            };
+          }
+          break;
         case 'SHORT_ANSWER':
           nextBlock = {
             ...currentBlock,

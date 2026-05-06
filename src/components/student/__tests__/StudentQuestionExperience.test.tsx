@@ -8,6 +8,7 @@ import type {
   ExamState,
   MatchingFeaturesBlock,
   MultiMCQBlock,
+  SingleMCQBlock,
   SentenceCompletionBlock,
   TableCompletionBlock,
 } from '../../../types';
@@ -712,7 +713,98 @@ describe('student question experience', () => {
     expect(screen.getByTestId('reading-question-scroll')).toHaveClass('p-2.5');
   });
 
-  it('shows a single reading question number without a repeated range', () => {
+  it('allows desktop reading split drag to reach near-boundary widths', () => {
+    const state = {
+      title: 'Reading Test',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: {
+        passages: [
+          {
+            id: 'passage-1',
+            title: 'Passage 1',
+            content: 'Read this passage carefully.',
+            images: [],
+            blocks: [
+              {
+                id: 'reading-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question.',
+                questions: [{ id: 'reading-q1', prompt: 'What?', correctAnswer: 'answer', answerRule: 'ONE_WORD' }],
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentReading
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="reading-q1"
+        onNavigate={() => {}}
+      />,
+    );
+
+    const workspace = screen.getByTestId('reading-split-workspace');
+    const resizer = screen.getByTestId('reading-pane-resizer');
+    expect(workspace).toHaveStyle({
+      '--reading-pane-width': '40%',
+      '--question-pane-width': 'calc(60% - var(--split-divider-width))',
+      '--split-divider-width': '16px',
+    });
+
+    vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 100,
+      right: 900,
+      top: 0,
+      width: 800,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.mouseDown(resizer, { clientX: 420 });
+    fireEvent.mouseMove(document, { clientX: 0 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--reading-pane-width': '6%',
+      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
+    });
+
+    fireEvent.mouseDown(resizer, { clientX: 200 });
+    fireEvent.mouseMove(document, { clientX: 1800 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--reading-pane-width': '92%',
+      '--question-pane-width': 'calc(8% - var(--split-divider-width))',
+    });
+  });
+
+  it('hides single reading question headings and keeps multi-question range headings', () => {
     const state = {
       title: 'Reading Test',
       type: 'Academic',
@@ -786,12 +878,13 @@ describe('student question experience', () => {
       />,
     );
 
-    expect(screen.getByText('Questions 11')).toBeInTheDocument();
+    expect(screen.queryByText('Questions 11')).not.toBeInTheDocument();
     expect(screen.queryByText('Questions 11–11')).not.toBeInTheDocument();
     expect(screen.getByText('Questions 12–13')).toBeInTheDocument();
+    expect(screen.getByText('Answer question 11.')).toBeInTheDocument();
   });
 
-  it('shows a single listening question number without a repeated range', () => {
+  it('hides single listening question headings and keeps multi-question range headings', () => {
     const state = {
       title: 'Listening Test',
       type: 'Academic',
@@ -866,9 +959,10 @@ describe('student question experience', () => {
       />,
     );
 
-    expect(screen.getByText('Questions 11')).toBeInTheDocument();
+    expect(screen.queryByText('Questions 11')).not.toBeInTheDocument();
     expect(screen.queryByText('Questions 11–11')).not.toBeInTheDocument();
     expect(screen.getByText('Questions 12–13')).toBeInTheDocument();
+    expect(screen.getByText('Answer question 11.')).toBeInTheDocument();
   });
 
   it('opens the question navigator from the header when the control is available', () => {
@@ -1560,6 +1654,105 @@ describe('student question experience', () => {
       '--question-pane-width': 'calc(3%)',
     });
     expect(screen.getByTestId('listening-question-scroll')).toHaveClass('p-2.5');
+  });
+
+  it('allows desktop listening split drag to reach near-boundary widths', () => {
+    const state: ExamState = {
+      title: 'Listening Test',
+      type: 'Academic',
+      activeModule: 'listening',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: {
+            enabled: true,
+            order: 1,
+            duration: 30,
+            autoContinue: true,
+            allowedQuestionTypes: ['SHORT_ANSWER'],
+            audioPlaybackEnabled: false,
+          },
+          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
+        },
+      },
+      reading: { passages: [] },
+      listening: {
+        parts: [
+          {
+            id: 'part-1',
+            title: 'Part 1',
+            audioUrl: '',
+            transcript: 'Reference transcript text.',
+            pins: [],
+            blocks: [
+              {
+                id: 'listening-block-1',
+                type: 'SHORT_ANSWER',
+                instruction: 'Answer the question.',
+                questions: [{ id: 'q1', prompt: 'What?', correctAnswer: 'answer', answerRule: 'ONE_WORD' }],
+              },
+            ],
+          },
+        ],
+      },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    };
+
+    render(
+      <StudentListening
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="q1"
+        onNavigate={() => {}}
+      />,
+    );
+
+    const workspace = screen.getByTestId('listening-split-workspace');
+    const resizer = screen.getByTestId('listening-pane-resizer');
+    expect(workspace).toHaveStyle({
+      '--listening-pane-width': '40%',
+      '--question-pane-width': 'calc(60% - var(--split-divider-width))',
+      '--split-divider-width': '16px',
+    });
+
+    vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
+      bottom: 600,
+      height: 600,
+      left: 100,
+      right: 900,
+      top: 0,
+      width: 800,
+      x: 100,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    fireEvent.mouseDown(resizer, { clientX: 420 });
+    fireEvent.mouseMove(document, { clientX: 0 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--listening-pane-width': '6%',
+      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
+    });
+
+    fireEvent.mouseDown(resizer, { clientX: 200 });
+    fireEvent.mouseMove(document, { clientX: 1800 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--listening-pane-width': '92%',
+      '--question-pane-width': 'calc(8% - var(--split-divider-width))',
+    });
   });
 
   it('applies tablet zoom scaling to reading and listening content panes', () => {
