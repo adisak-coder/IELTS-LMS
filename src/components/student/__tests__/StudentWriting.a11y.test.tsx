@@ -74,11 +74,13 @@ describe('StudentWriting a11y', () => {
     );
 
     const workspace = screen.getByTestId('writing-split-workspace');
+    const resizer = screen.getByTestId('writing-pane-resizer');
     expect(workspace).toHaveStyle({
       '--writing-prompt-pane-width': '50%',
       '--writing-editor-pane-width': 'calc(50% - var(--split-divider-width))',
       '--split-divider-width': '16px',
     });
+    expect(resizer.querySelector('.h-10.w-8')).toBeInTheDocument();
 
     vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
       bottom: 600,
@@ -126,6 +128,33 @@ describe('StudentWriting a11y', () => {
     expect(resizer).toHaveClass('absolute');
     expect(resizer.querySelector('.w-14')).toBeInTheDocument();
     expect(resizer.querySelector('.h-\\[5\\.5rem\\]')).toBeInTheDocument();
+  });
+
+  it('offsets tablet writing header and placeholder away from the splitter overlay', () => {
+    render(
+      <StudentWriting
+        state={createExamState()}
+        writingAnswers={{}}
+        onWritingChange={() => undefined}
+        onSubmit={() => undefined}
+        currentQuestionId={null}
+        onNavigate={() => undefined}
+        tabletMode
+      />,
+    );
+
+    const headerLabel = screen.getByText('Writing Response');
+    const headerRow = headerLabel.closest('div');
+    if (!headerRow) {
+      throw new Error('Expected writing header row to render');
+    }
+    expect(headerRow).toHaveClass('pl-10');
+    expect(headerRow).toHaveClass('pr-3');
+
+    const placeholder = screen.getByText('Write your answer here…');
+    expect(placeholder).toHaveClass('left-10');
+    expect(placeholder).toHaveClass('md:left-10');
+    expect(placeholder).toHaveClass('lg:left-10');
   });
 
   it('shows builder-authored HTML prompts as plain text in the writing exam', () => {

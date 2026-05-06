@@ -449,7 +449,7 @@ export function StudentWriting({
           aria-orientation="vertical"
           data-testid="writing-pane-resizer"
         >
-          <div className={`${isTabletMode ? 'h-[5.5rem] w-14' : 'w-8 h-8'} bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none`}>
+          <div className={`${isTabletMode ? 'h-[5.5rem] w-14' : 'h-10 w-8'} bg-white border border-gray-400 flex items-center justify-center absolute z-10 shadow-sm pointer-events-none`}>
             <ArrowLeftRight size={isTabletMode ? 22 : 14} className="text-gray-600" />
           </div>
         </div>
@@ -463,7 +463,11 @@ export function StudentWriting({
         >
           <div className="flex-1 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
             <div className="relative flex-1 w-full">
-              <div className="flex flex-col gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between">
+              <div
+                className={`flex flex-col gap-2 border-b border-gray-200 bg-gray-50 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between ${
+                  isTabletMode ? 'pl-10 pr-3' : 'px-3'
+                }`}
+              >
                 <span>Writing Response</span>
                 <div className="flex items-center gap-2" aria-label="Current word count">
                   <span className="text-[length:var(--student-meta-font-size)] font-bold text-gray-400 uppercase tracking-widest">
@@ -480,7 +484,11 @@ export function StudentWriting({
                 </div>
               </div>
               {showEditorPlaceholder && (
-                  <div className="pointer-events-none absolute left-4 top-14 md:left-6 md:top-16 lg:left-8 lg:top-20 text-base md:text-lg leading-relaxed text-gray-400 font-serif select-none">
+                  <div
+                    className={`pointer-events-none absolute top-14 md:top-16 lg:top-20 text-base md:text-lg leading-relaxed text-gray-400 font-serif select-none ${
+                      isTabletMode ? 'left-10 md:left-10 lg:left-10' : 'left-4 md:left-6 lg:left-8'
+                    }`}
+                  >
                     Write your answer here…
                   </div>
               )}
