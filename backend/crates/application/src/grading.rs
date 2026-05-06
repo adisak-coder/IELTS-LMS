@@ -105,8 +105,10 @@ impl GradingService {
     pub async fn list_sessions(
         &self,
         ctx: &ActorContext,
+        limit: u64,
     ) -> Result<Vec<GradingSession>, GradingError> {
         self.maybe_sync_on_read().await?;
+        let capped_limit = limit.clamp(1, 500) as i64;
 
         // Admins and AdminObservers can see all grading sessions
         // Other roles can only see grading sessions for their schedules
@@ -115,21 +117,23 @@ impl GradingService {
             ielts_backend_infrastructure::actor_context::ActorRole::Admin
                 | ielts_backend_infrastructure::actor_context::ActorRole::AdminObserver
         ) {
-            "SELECT * FROM grading_sessions ORDER BY updated_at DESC, start_time DESC"
+            "SELECT * FROM grading_sessions ORDER BY updated_at DESC, start_time DESC, id DESC LIMIT ?"
         } else if let Some(ref schedule_id) = ctx.schedule_scope_id {
-            "SELECT * FROM grading_sessions WHERE schedule_id = ? ORDER BY updated_at DESC, start_time DESC"
+            "SELECT * FROM grading_sessions WHERE schedule_id = ? ORDER BY updated_at DESC, start_time DESC, id DESC LIMIT ?"
         } else {
-            "SELECT * FROM grading_sessions WHERE 1=0 ORDER BY updated_at DESC, start_time DESC"
+            "SELECT * FROM grading_sessions WHERE 1=0 ORDER BY updated_at DESC, start_time DESC, id DESC LIMIT ?"
             // No access
         };
 
         let sessions = if let Some(schedule_id) = ctx.schedule_scope_id.clone() {
             sqlx::query_as::<_, GradingSession>(query)
                 .bind(schedule_id.to_string())
+                .bind(capped_limit)
                 .fetch_all(&self.pool)
                 .await?
         } else {
             sqlx::query_as::<_, GradingSession>(query)
+                .bind(capped_limit)
                 .fetch_all(&self.pool)
                 .await?
         };

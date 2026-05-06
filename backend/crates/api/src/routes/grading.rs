@@ -32,6 +32,12 @@ pub struct SessionDetailQuery {
     pub page_size: Option<u64>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionListQuery {
+    pub limit: Option<u64>,
+}
+
 fn grading_service(state: &AppState) -> GradingService {
     GradingService::with_sync_on_read_fallback(
         state.db_pool(),
@@ -43,12 +49,19 @@ pub async fn list_sessions(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     principal: AuthenticatedUser,
+    Query(query): Query<SessionListQuery>,
 ) -> Result<ApiResponse<Vec<GradingSession>>, ApiError> {
     principal.require_one_of(&[UserRole::Admin, UserRole::Grader])?;
     let ctx = crate::http::auth::actor_context_from_principal(&principal);
     let service = grading_service(&state);
     let started = Instant::now();
-    let sessions = service.list_sessions(&ctx).await?;
+    let limit = query.limit.unwrap_or(200).clamp(1, 500);
+    let db_limit = if principal.user.role == UserRole::Admin {
+        limit
+    } else {
+        500
+    };
+    let sessions = service.list_sessions(&ctx, db_limit).await?;
     let sessions = if principal.user.role == UserRole::Admin {
         sessions
     } else {
@@ -56,6 +69,7 @@ pub async fn list_sessions(
         sessions
             .into_iter()
             .filter(|session| allowed.contains(&session.schedule_id))
+            .take(limit as usize)
             .collect()
     };
     state
