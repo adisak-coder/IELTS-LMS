@@ -28,6 +28,8 @@ pub enum DeliveryConflictReason {
     SectionMismatch,
     AttemptProctorBlocked,
     AttemptSubmitted,
+    FinalFlushRequired,
+    FinalPayloadHashMismatch,
 }
 
 impl DeliveryConflictReason {
@@ -37,8 +39,16 @@ impl DeliveryConflictReason {
             DeliveryConflictReason::SectionMismatch => "SECTION_MISMATCH",
             DeliveryConflictReason::AttemptProctorBlocked => "ATTEMPT_PROCTOR_BLOCKED",
             DeliveryConflictReason::AttemptSubmitted => "ATTEMPT_SUBMITTED",
+            DeliveryConflictReason::FinalFlushRequired => "FINAL_FLUSH_REQUIRED",
+            DeliveryConflictReason::FinalPayloadHashMismatch => "FINAL_PAYLOAD_HASH_MISMATCH",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MutationBatchResponseMode {
+    Full,
+    Ack,
 }
 
 #[derive(Error, Debug)]
@@ -49,6 +59,9 @@ pub enum DeliveryError {
     Conflict {
         message: String,
         reason: Option<DeliveryConflictReason>,
+        latest_revision: Option<i32>,
+        server_accepted_through_seq: Option<i64>,
+        active_session_id: Option<String>,
     },
     #[error("Not found")]
     NotFound,
@@ -63,6 +76,9 @@ impl DeliveryError {
         DeliveryError::Conflict {
             message: message.into(),
             reason: None,
+            latest_revision: None,
+            server_accepted_through_seq: None,
+            active_session_id: None,
         }
     }
 
@@ -73,6 +89,9 @@ impl DeliveryError {
         DeliveryError::Conflict {
             message: message.into(),
             reason: Some(reason),
+            latest_revision: None,
+            server_accepted_through_seq: None,
+            active_session_id: None,
         }
     }
 
@@ -94,6 +113,16 @@ pub struct DeliveryService {
 impl DeliveryService {
     pub fn new(pool: MySqlPool) -> Self {
         Self { pool }
+    }
+
+    pub fn with_runtime_tuning(
+        pool: MySqlPool,
+        _idempotency_usable_hours: i64,
+        _submit_idempotency_usable_hours: i64,
+        _violation_idempotency_usable_hours: i64,
+        _heartbeat_min_write_interval_secs: u64,
+    ) -> Self {
+        Self::new(pool)
     }
 
     pub async fn get_session_context(
@@ -130,6 +159,37 @@ impl DeliveryService {
             attempt,
             attempt_credential: None,
             degraded_live_mode: false,
+        })
+    }
+
+    pub async fn get_static_session_context(
+        &self,
+        schedule_id: Uuid,
+    ) -> Result<ielts_backend_domain::attempt::StudentStaticSessionContext, DeliveryError> {
+        let session = self
+            .get_session_context(schedule_id, None, None, None)
+            .await?;
+        Ok(ielts_backend_domain::attempt::StudentStaticSessionContext {
+            schedule: session.schedule,
+            version: session.version,
+            degraded_live_mode: session.degraded_live_mode,
+        })
+    }
+
+    pub async fn get_live_session_context(
+        &self,
+        schedule_id: Uuid,
+        wcode: Option<String>,
+        student_key: Option<String>,
+        candidate_id: Option<String>,
+    ) -> Result<ielts_backend_domain::attempt::StudentLiveSessionContext, DeliveryError> {
+        let session = self
+            .get_session_context(schedule_id, wcode, student_key, candidate_id)
+            .await?;
+        Ok(ielts_backend_domain::attempt::StudentLiveSessionContext {
+            runtime: session.runtime,
+            attempt: session.attempt,
+            degraded_live_mode: session.degraded_live_mode,
         })
     }
 
@@ -333,6 +393,7 @@ impl DeliveryService {
         &self,
         schedule_id: Uuid,
         req: StudentMutationBatchRequest,
+        _response_mode: MutationBatchResponseMode,
         idempotency_key: Option<String>,
     ) -> Result<StudentMutationBatchResponse, DeliveryError> {
         if req.mutations.is_empty() {
@@ -587,9 +648,10 @@ impl DeliveryService {
         .await?;
 
         let response = StudentMutationBatchResponse {
-            attempt,
+            attempt: Some(attempt.clone()),
             applied_mutation_count: req.mutations.len(),
             server_accepted_through_seq,
+            revision: attempt.revision,
             refreshed_attempt_credential: None,
         };
 
@@ -1425,6 +1487,83 @@ pub(crate) async fn auto_submit_schedule_attempts_in_tx(
         .await?;
     }
 
+    Ok(())
+}
+
+pub async fn finalize_pending_schedule_attempts(
+    pool: &MySqlPool,
+    schedule_id: Uuid,
+    completion_reason: &str,
+    _batch_size: i64,
+) -> Result<(), DeliveryError> {
+    let mut tx = pool.begin().await?;
+    auto_submit_schedule_attempts_in_tx(tx.as_mut(), schedule_id, completion_reason).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub(crate) async fn force_finalize_attempt_if_pending(
+    pool: &MySqlPool,
+    schedule_id: Uuid,
+    attempt_id: Uuid,
+    completion_reason: &str,
+) -> Result<(), DeliveryError> {
+    let mut tx = pool.begin().await?;
+    let pending_attempt = sqlx::query_as::<_, StudentAttempt>(
+        "SELECT * FROM student_attempts WHERE id = ? AND schedule_id = ? AND submitted_at IS NULL FOR UPDATE",
+    )
+    .bind(attempt_id.to_string())
+    .bind(schedule_id.to_string())
+    .fetch_optional(tx.as_mut())
+    .await?;
+
+    let Some(attempt) = pending_attempt else {
+        tx.commit().await?;
+        return Ok(());
+    };
+
+    let now = Utc::now();
+    let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+    let final_submission = json!({
+        "submissionId": submission_id,
+        "submittedAt": now,
+        "answers": attempt.answers,
+        "writingAnswers": attempt.writing_answers,
+        "flags": attempt.flags,
+        "completionReason": completion_reason,
+        "autoSubmission": true
+    });
+    let recovery = merge_recovery(
+        attempt.recovery.clone(),
+        json!({
+            "lastPersistedAt": now,
+            "pendingMutationCount": 0,
+            "syncState": "saved"
+        }),
+    );
+
+    sqlx::query(
+        r#"
+        UPDATE student_attempts
+        SET
+            phase = ?,
+            recovery = ?,
+            final_submission = ?,
+            submitted_at = ?,
+            updated_at = NOW(),
+            revision = revision + 1
+        WHERE id = ?
+        "#,
+    )
+    .bind("post-exam")
+    .bind(recovery)
+    .bind(&final_submission)
+    .bind(now)
+    .bind(attempt_id.to_string())
+    .execute(tx.as_mut())
+    .await?;
+
+    tx.commit().await?;
     Ok(())
 }
 
