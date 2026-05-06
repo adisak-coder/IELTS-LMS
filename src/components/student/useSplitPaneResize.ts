@@ -6,8 +6,8 @@ const TABLET_DIVIDER_WIDTH = 32;
 const DESKTOP_DIVIDER_WIDTH = 16;
 const TABLET_MIN_MATERIAL_WIDTH = 48;
 const TABLET_MIN_ANSWER_WIDTH = 48;
-const DESKTOP_MIN_MATERIAL_WIDTH = 300;
-const DESKTOP_MIN_ANSWER_WIDTH = 320;
+const DESKTOP_MIN_MATERIAL_WIDTH = 48;
+const DESKTOP_MIN_ANSWER_WIDTH = 48;
 const COMPACT_MATERIAL_WIDTH = 220;
 const COMPACT_ANSWER_WIDTH = 300;
 
@@ -77,8 +77,8 @@ export function useSplitPaneResize({
       const currentWorkspaceWidth = workspaceRef.current?.getBoundingClientRect().width || workspaceWidth || window.innerWidth;
       const minMaterialWidth = isTabletMode ? TABLET_MIN_MATERIAL_WIDTH : DESKTOP_MIN_MATERIAL_WIDTH;
       const minAnswerWidth = isTabletMode ? TABLET_MIN_ANSWER_WIDTH : DESKTOP_MIN_ANSWER_WIDTH;
-      const minPercent = isTabletMode ? 0 : 20;
-      const maxPercent = isTabletMode ? 100 : 80;
+      const minPercent = 0;
+      const maxPercent = 100;
       const dividerReservation = dividerConsumesSpace ? dividerWidth : 0;
       const minByPixels = (minMaterialWidth / currentWorkspaceWidth) * 100;
       const maxByPixels = 100 - ((minAnswerWidth + dividerReservation) / currentWorkspaceWidth) * 100;

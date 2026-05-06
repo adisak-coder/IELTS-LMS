@@ -86,20 +86,36 @@ describe('StudentWriting a11y', () => {
       bottom: 600,
       height: 600,
       left: 100,
-      right: 1100,
+      right: 900,
       top: 0,
-      width: 1000,
+      width: 800,
       x: 100,
       y: 0,
       toJSON: () => ({}),
     });
     fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 600 });
-    fireEvent.mouseMove(document, { clientX: 700 });
+    fireEvent.mouseMove(document, { clientX: 580 });
     fireEvent.mouseUp(document);
 
     expect(workspace).toHaveStyle({
       '--writing-prompt-pane-width': '60%',
       '--writing-editor-pane-width': 'calc(40% - var(--split-divider-width))',
+    });
+
+    fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 580 });
+    fireEvent.mouseMove(document, { clientX: 0 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--writing-prompt-pane-width': '6%',
+      '--writing-editor-pane-width': 'calc(94% - var(--split-divider-width))',
+    });
+
+    fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 200 });
+    fireEvent.mouseMove(document, { clientX: 1800 });
+    fireEvent.mouseUp(document);
+    expect(workspace).toHaveStyle({
+      '--writing-prompt-pane-width': '92%',
+      '--writing-editor-pane-width': 'calc(8% - var(--split-divider-width))',
     });
   });
 

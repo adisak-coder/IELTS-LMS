@@ -282,7 +282,7 @@ export function StudentReading({
           className={`h-full overflow-y-auto font-sans text-gray-900 ${
             materialCompact ? 'p-2 pr-2 md:p-3 md:pr-3' : 'p-4 pr-4 md:p-6 md:pr-6'
           } ${
-            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[48px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[300px] lg:p-8 lg:pr-12'
+            isTabletMode ? 'w-[var(--reading-pane-width)] min-w-[48px] border-r border-gray-200' : 'lg:w-[var(--reading-pane-width)] lg:min-w-[48px] lg:p-8 lg:pr-12'
           }`}
           style={{
             ...(tabletContentZoomStyle ?? {}),
@@ -338,7 +338,7 @@ export function StudentReading({
           </div>
         </div>
 
-        <div className={`relative flex h-full min-w-0 flex-col min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)] min-w-[48px]' : 'w-full md:min-w-[320px] lg:w-[var(--question-pane-width)]'}`}>
+        <div className={`relative flex h-full min-w-0 flex-col min-h-0 ${isTabletMode ? 'w-[var(--question-pane-width)] min-w-[48px]' : 'w-full md:min-w-[320px] lg:w-[var(--question-pane-width)] lg:min-w-[48px]'}`}>
           <div
             className={`flex-1 overflow-y-auto break-words [overflow-wrap:anywhere] student-reading-question-typography ${
               answerCompact ? 'p-2.5 md:p-3 space-y-4 md:space-y-5' : 'p-4 md:p-5 lg:p-8 space-y-6 md:space-y-8'
@@ -373,9 +373,11 @@ export function StudentReading({
               return (
                 <div key={block.id} className={`${answerCompact ? 'space-y-3 mb-3 md:mb-4' : 'space-y-4 md:space-y-6 mb-4 md:mb-6'}`}>
                   <div className={answerCompact ? 'mb-2' : 'mb-3 md:mb-4'}>
-                    <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
-                      Questions {formatQuestionRange(numberedBlockStart, numberedBlockEnd)}
-                    </h3>
+                    {numberedBlockStart !== numberedBlockEnd ? (
+                      <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
+                        Questions {formatQuestionRange(numberedBlockStart, numberedBlockEnd)}
+                      </h3>
+                    ) : null}
                     {renderBlockInstruction(block.instruction)}
                     {renderBlockInsertedImages(block)}
                     {renderInstructionLevelReferenceImage(block)}

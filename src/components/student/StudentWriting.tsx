@@ -365,7 +365,7 @@ export function StudentWriting({
           className={`h-full flex flex-col relative ${
             isTabletMode
               ? 'w-[var(--writing-prompt-pane-width)] min-w-[48px] border-r border-gray-200'
-              : 'min-w-[260px] md:min-w-[280px] lg:w-[var(--writing-prompt-pane-width)] lg:min-w-[300px]'
+              : 'min-w-[260px] md:min-w-[280px] lg:w-[var(--writing-prompt-pane-width)] lg:min-w-[48px]'
           }`}
         >
           {/* Timer Bar */}
@@ -449,7 +449,7 @@ export function StudentWriting({
           className={`h-full flex flex-col relative ${
             isTabletMode
               ? 'w-[var(--writing-editor-pane-width)] min-w-[48px]'
-              : 'min-w-[280px] md:min-w-[320px] lg:w-[var(--writing-editor-pane-width)]'
+              : 'min-w-[280px] md:min-w-[320px] lg:w-[var(--writing-editor-pane-width)] lg:min-w-[48px]'
           }`}
         >
           <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
