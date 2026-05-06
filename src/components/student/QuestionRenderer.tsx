@@ -773,7 +773,7 @@ export function QuestionRenderer({
               <tr key={`row-${rowIndex}`}>
                 {row.map((cellValue, cellIndex) => {
                   const slots = cellMap.get(`${rowIndex}:${cellIndex}`) ?? [];
-                  const displayCellValue = trimSuspiciousTableCellContent(cellValue);
+                  const displayCellValue = trimSuspiciousTableCellContent(cellValue, 80);
                   const parts = displayCellValue.split(/_{2,}/);
                   const hasInlinePlaceholders = parts.length > 1;
 

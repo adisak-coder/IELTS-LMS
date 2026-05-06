@@ -169,4 +169,13 @@ describe('tableCompletion utils', () => {
     expect(trimmed).toContain('____');
     expect(trimmed.match(/_{2,}/g)?.length).toBe(2);
   });
+
+  it('detects and trims suspicious long table cell content without placeholders', () => {
+    const polluted = `${'This is a copied passage sentence. '.repeat(30)}\n${'Another line. '.repeat(20)}`.trim();
+    expect(isSuspiciousTableCellContent(polluted)).toBe(true);
+
+    const trimmed = trimSuspiciousTableCellContent(polluted, 80);
+    expect(trimmed.length).toBeLessThan(polluted.length);
+    expect(trimmed).toContain('…');
+  });
 });

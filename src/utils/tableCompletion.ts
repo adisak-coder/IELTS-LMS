@@ -19,18 +19,20 @@ const PLACEHOLDER_TOKEN = '____';
 const SUSPICIOUS_CELL_MIN_LENGTH = 260;
 const SUSPICIOUS_CELL_NEWLINE_THRESHOLD = 3;
 const SUSPICIOUS_CELL_SENTENCE_THRESHOLD = 3;
+const SUSPICIOUS_CELL_WORD_THRESHOLD = 45;
 
 export function isSuspiciousTableCellContent(value: string): boolean {
   const text = (value ?? '').trim();
   if (text.length < SUSPICIOUS_CELL_MIN_LENGTH) return false;
-  if (countBlankPlaceholders(text) === 0) return false;
 
   const newlineCount = text.match(/\n/g)?.length ?? 0;
   const sentencePunctuationCount = text.match(/[.!?]/g)?.length ?? 0;
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
 
   return (
     newlineCount >= SUSPICIOUS_CELL_NEWLINE_THRESHOLD
     || sentencePunctuationCount >= SUSPICIOUS_CELL_SENTENCE_THRESHOLD
+    || wordCount >= SUSPICIOUS_CELL_WORD_THRESHOLD
   );
 }
 
@@ -41,7 +43,7 @@ export function trimSuspiciousTableCellContent(value: string, segmentLength = 14
 
   const tokens = value.split(/(_{2,})/g);
   if (tokens.length === 1) {
-    return `${value.slice(0, Math.max(segmentLength * 2, 200)).trimEnd()}…`;
+    return `${value.slice(0, Math.max(segmentLength, 120)).trimEnd()}…`;
   }
 
   return tokens
