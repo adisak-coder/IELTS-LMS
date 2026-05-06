@@ -24,6 +24,12 @@ import {
   isTreeCapableBlockType,
 } from './subAnswerTreeSlots';
 
+const NATIVE_LAYOUT_BLOCK_TYPES = new Set<QuestionBlock['type']>([
+  'SENTENCE_COMPLETION',
+  'TABLE_COMPLETION',
+  'NOTE_COMPLETION',
+]);
+
 type GroupedSlot = {
   id: string;
   scoreGroupId?: string;
@@ -51,7 +57,7 @@ function countScoringRoots(slots: GroupedSlot[], prefixBySlotId: (slot: GroupedS
 
 export const getBlockQuestionCount = (block: QuestionBlock): number => {
   const treeModeEnabled = Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled);
-  if (treeModeEnabled && isTreeCapableBlockType(block.type)) {
+  if (treeModeEnabled && isTreeCapableBlockType(block.type) && !NATIVE_LAYOUT_BLOCK_TYPES.has(block.type)) {
     const roots = normalizeSubAnswerTree(
       (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
     );

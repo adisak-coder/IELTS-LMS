@@ -45,6 +45,12 @@ const INLINE_ADD_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
   'SENTENCE_COMPLETION',
 ]);
 
+const NATIVE_LAYOUT_BLOCK_TYPES = new Set<QuestionType>([
+  'SENTENCE_COMPLETION',
+  'TABLE_COMPLETION',
+  'NOTE_COMPLETION',
+]);
+
 export function QuestionBuilderPane({
   blocks,
   title,
@@ -423,7 +429,10 @@ export function QuestionBuilderPane({
     const { block, startNum, endNum } = item;
     const blockErrors = getBlockErrors(block.id);
     const isSelected = selectedBlockId === block.id;
+    const supportsSubAnswerTreeEditor =
+      isTreeCapableBlockType(block.type) && !NATIVE_LAYOUT_BLOCK_TYPES.has(block.type);
     const addSubAnswerToSlot = (slotIndex: number) => {
+      if (!supportsSubAnswerTreeEditor) return;
       updateBlock({
         ...(block as QuestionBlock & {
           subAnswerModeEnabled?: boolean;
@@ -466,7 +475,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -495,7 +504,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -538,7 +547,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -553,7 +562,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -568,7 +577,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -583,7 +592,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -598,7 +607,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -613,7 +622,7 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
+            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -657,7 +666,7 @@ export function QuestionBuilderPane({
         className={`cursor-pointer transition-all ${isSelected ? 'ring-2 ring-green-500 ring-offset-2' : 'hover:ring-2 hover:ring-gray-300 hover:ring-offset-1'}`}
       >
         {blockContent}
-        {isTreeCapableBlockType(block.type) &&
+        {supportsSubAnswerTreeEditor &&
         Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled) ? (
           <SubAnswerTreeEditor
             block={block}

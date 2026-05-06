@@ -113,6 +113,41 @@ describe('student question descriptors (student exam core logic)', () => {
     expect(getQuestionNumberLabel(questions, questions[1].id)).toBe('2');
   });
 
+  it('keeps TABLE_COMPLETION in native table slot numbering even when legacy tree mode is enabled', () => {
+    const state = createInitialExamState('Exam', 'Academic');
+
+    state.reading.passages[0].blocks = [
+      {
+        id: 'table-tree-1',
+        type: 'TABLE_COMPLETION',
+        instruction: 'Complete the table.',
+        answerRule: 'ONE_WORD',
+        subAnswerModeEnabled: true,
+        answerTree: [
+          {
+            id: 'root-1',
+            label: '',
+            children: [
+              { id: 'leaf-1', label: 'Leaf 1', acceptedAnswers: ['Anu'], required: true },
+              { id: 'leaf-2', label: 'Leaf 2', acceptedAnswers: ['Alias'], required: true },
+            ],
+          },
+        ],
+        headers: ['Key', 'Value'],
+        rows: [['Name', '____'], ['Country', '____']],
+        cells: [
+          { id: 'cell-1', row: 0, col: 1, correctAnswer: 'Anu' },
+          { id: 'cell-2', row: 1, col: 1, correctAnswer: 'India' },
+        ],
+      },
+    ] as any;
+
+    const questions = getStudentQuestionsForModule(state, 'reading');
+    expect(questions).toHaveLength(2);
+    expect(questions.every((question) => question.isSubAnswerTreeLeaf !== true)).toBe(true);
+    expect(questions.map((question) => question.numberLabel)).toEqual(['1', '2']);
+  });
+
   it('numbers grouped sentence blanks as one logical question root', () => {
     const state = createInitialExamState('Exam', 'Academic');
 

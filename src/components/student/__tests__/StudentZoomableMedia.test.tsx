@@ -79,4 +79,33 @@ describe('StudentZoomableMedia', () => {
 
     expect(screen.getByRole('dialog', { name: /listening diagram zoomed view/i })).toBeInTheDocument();
   });
+
+  it('keeps fallback source after rerender when source values are unchanged', () => {
+    const { rerender } = render(
+      <StudentZoomableMedia
+        sources={['/missing-image.png', '/working-image.png']}
+        alt="Stable fallback diagram"
+        label="Stable fallback diagram"
+        hint="Tap to zoom"
+      />,
+    );
+
+    const thumbnail = screen.getByAltText('Stable fallback diagram');
+    fireEvent.error(thumbnail);
+    expect(thumbnail).toHaveAttribute('src', expect.stringContaining('/working-image.png'));
+
+    rerender(
+      <StudentZoomableMedia
+        sources={['/missing-image.png', '/working-image.png']}
+        alt="Stable fallback diagram"
+        label="Stable fallback diagram"
+        hint="Tap to zoom"
+      />,
+    );
+
+    expect(screen.getByAltText('Stable fallback diagram')).toHaveAttribute(
+      'src',
+      expect.stringContaining('/working-image.png'),
+    );
+  });
 });

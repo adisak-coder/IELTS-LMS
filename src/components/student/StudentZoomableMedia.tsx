@@ -49,8 +49,13 @@ export function StudentZoomableMedia({
     () => sources.map((source) => source.trim()).filter(Boolean),
     [sources],
   );
+  const normalizedSourcesSignature = useMemo(
+    () => normalizedSources.join('\n'),
+    [normalizedSources],
+  );
   const [sourceIndex, setSourceIndex] = useState(0);
   const [isCurrentSourceLoaded, setIsCurrentSourceLoaded] = useState(false);
+  const [hasExhaustedSources, setHasExhaustedSources] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -63,7 +68,9 @@ export function StudentZoomableMedia({
 
   useEffect(() => {
     setSourceIndex(0);
-  }, [normalizedSources]);
+    setIsCurrentSourceLoaded(false);
+    setHasExhaustedSources(false);
+  }, [normalizedSourcesSignature]);
 
   useEffect(() => {
     setIsCurrentSourceLoaded(false);
@@ -99,7 +106,7 @@ export function StudentZoomableMedia({
   };
 
   const handleOpen = useCallback((reason: 'tap' | 'gesture' = 'tap') => {
-    if (!currentSource) {
+    if (!currentSource || hasExhaustedSources) {
       return;
     }
 
@@ -110,7 +117,7 @@ export function StudentZoomableMedia({
     setZoom(DEFAULT_ZOOM);
     pinchStateRef.current = INITIAL_PINCH_STATE;
     setIsOpen(true);
-  }, [currentSource]);
+  }, [currentSource, hasExhaustedSources]);
 
   const handleClose = useCallback(() => {
     pinchStateRef.current = INITIAL_PINCH_STATE;
@@ -122,10 +129,18 @@ export function StudentZoomableMedia({
     setIsCurrentSourceLoaded(false);
 
     if (!hasMultipleSources) {
+      setHasExhaustedSources(true);
       return;
     }
 
-    setSourceIndex((currentIndex) => Math.min(currentIndex + 1, normalizedSources.length - 1));
+    setSourceIndex((currentIndex) => {
+      const nextIndex = currentIndex + 1;
+      if (nextIndex < normalizedSources.length) {
+        return nextIndex;
+      }
+      setHasExhaustedSources(true);
+      return currentIndex;
+    });
   };
 
   const clampZoom = useCallback(
@@ -170,29 +185,40 @@ export function StudentZoomableMedia({
 
   const imageContent = (
     <div className="relative">
-      <img
-        src={currentSource}
-        alt={alt}
-        className={`h-auto w-full object-contain select-none transition-opacity duration-150 ${
-          isCurrentSourceLoaded ? 'opacity-100' : 'opacity-0'
-        } ${imageClassName ?? ''}`}
-        loading="lazy"
-        draggable={false}
-        referrerPolicy="no-referrer"
-        onLoad={() => setIsCurrentSourceLoaded(true)}
-        onError={handleImageError}
-        onContextMenu={handleContextMenu}
-        onDragStart={handleContextMenu}
-        style={{
-          WebkitTouchCallout: 'none',
-          WebkitUserSelect: 'none',
-          userSelect: 'none',
-          touchAction: 'manipulation',
-        }}
-      />
-      {!isCurrentSourceLoaded ? (
-        <div className="absolute inset-0 animate-pulse bg-gray-100" aria-hidden="true" />
-      ) : null}
+      {!hasExhaustedSources ? (
+        <>
+          <img
+            src={currentSource}
+            alt={alt}
+            className={`h-auto w-full object-contain select-none transition-opacity duration-150 ${
+              isCurrentSourceLoaded ? 'opacity-100' : 'opacity-0'
+            } ${imageClassName ?? ''}`}
+            loading="lazy"
+            draggable={false}
+            referrerPolicy="no-referrer"
+            onLoad={() => {
+              setIsCurrentSourceLoaded(true);
+              setHasExhaustedSources(false);
+            }}
+            onError={handleImageError}
+            onContextMenu={handleContextMenu}
+            onDragStart={handleContextMenu}
+            style={{
+              WebkitTouchCallout: 'none',
+              WebkitUserSelect: 'none',
+              userSelect: 'none',
+              touchAction: 'manipulation',
+            }}
+          />
+          {!isCurrentSourceLoaded ? (
+            <div className="absolute inset-0 animate-pulse bg-gray-100" aria-hidden="true" />
+          ) : null}
+        </>
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-[length:var(--student-meta-font-size)] font-semibold text-gray-500">
+          Image is unavailable
+        </div>
+      )}
       {renderOverlay ? (
         <div className="pointer-events-none absolute inset-0">
           {renderOverlay(1)}
@@ -203,12 +229,12 @@ export function StudentZoomableMedia({
           {renderInteractiveOverlay()}
         </div>
       ) : null}
-      {showZoomUi && !renderInteractiveOverlay ? (
+      {showZoomUi && !renderInteractiveOverlay && !hasExhaustedSources ? (
         <div className="absolute left-3 top-3 rounded-full bg-gray-950/75 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-white shadow-lg">
           Zoom
         </div>
       ) : null}
-      {showZoomUi && !renderInteractiveOverlay ? (
+      {showZoomUi && !renderInteractiveOverlay && !hasExhaustedSources ? (
         <div className="absolute inset-x-0 bottom-0 px-3 py-2">
           <div className="inline-flex items-center rounded-full bg-white/95 px-3 py-1 text-[length:var(--student-meta-font-size)] font-bold text-gray-900">
             {hint}
@@ -232,6 +258,7 @@ export function StudentZoomableMedia({
             <button
               type="button"
               onClick={() => handleOpen('tap')}
+              disabled={hasExhaustedSources}
               className="rounded-full border border-gray-200 bg-white px-3 py-1.5 text-[length:var(--student-meta-font-size)] font-bold text-gray-700 shadow-sm hover:border-gray-300 hover:bg-gray-50"
               aria-label={`${label}. ${hint}`}
               title={hint}
@@ -248,8 +275,9 @@ export function StudentZoomableMedia({
           onTouchStart={handleThumbnailTouchStart}
           onTouchMove={handleThumbnailTouchMove}
           className={`group relative block w-full overflow-hidden rounded-2xl border border-gray-200 bg-gray-50 text-left ${className ?? ''}`}
-          aria-label={`${label}. ${showZoomUi ? hint : 'Open zoom view'}`}
-          title={showZoomUi ? hint : 'Open zoom view'}
+          aria-label={`${label}. ${showZoomUi && !hasExhaustedSources ? hint : 'Open zoom view'}`}
+          title={showZoomUi && !hasExhaustedSources ? hint : 'Open zoom view'}
+          disabled={hasExhaustedSources}
         >
           {imageContent}
         </button>

@@ -39,6 +39,11 @@ import { flattenSubAnswerTree, hasSubAnswerTreeMode } from '../utils/subAnswerTr
 import { healSubAnswerTreeForBlock } from '../utils/subAnswerTreeSlots';
 
 const MODULE_ORDER: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'];
+const NATIVE_LAYOUT_BLOCK_TYPES = new Set<QuestionBlock['type']>([
+  'SENTENCE_COMPLETION',
+  'TABLE_COMPLETION',
+  'NOTE_COMPLETION',
+]);
 
 const LEGACY_STATUS_MAP: Record<ExamStatus, Exam['status']> = {
   draft: 'Draft',
@@ -691,7 +696,7 @@ function buildStudentQuestionDescriptors(
     subAnswerModeEnabled?: boolean;
   };
 
-  if (hasSubAnswerTreeMode(treeBlock)) {
+  if (hasSubAnswerTreeMode(treeBlock) && !NATIVE_LAYOUT_BLOCK_TYPES.has(block.type)) {
     const normalizedTree = healSubAnswerTreeForBlock(block, startRootNumber, treeBlock.answerTree);
     const flattened = flattenSubAnswerTree(block.id, normalizedTree, startRootNumber);
     const rootLookup = new Map(flattened.roots.map((root) => [root.rootId, root] as const));
