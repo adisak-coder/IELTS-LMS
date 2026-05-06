@@ -110,7 +110,7 @@ export function RichTextHighlighter({
     },
     [enabled, highlightClassName, highlightColor, setHtml],
   );
-  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
+  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession } =
     useDeferredSelectionHighlight({
     enabled,
     containerRef,
@@ -171,7 +171,6 @@ export function RichTextHighlighter({
         onClick={removeTappedHighlight}
         onMouseUp={enabled && !showHighlightButton ? handleSelection : undefined}
         onTouchStart={enabled && !showHighlightButton ? startTouchSelectionSession : undefined}
-        onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionHighlight : undefined}
         onKeyUp={enabled ? handleSelection : undefined}
         dangerouslySetInnerHTML={{ __html: html }}
       />

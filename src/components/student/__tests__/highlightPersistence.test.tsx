@@ -6,6 +6,8 @@ import { StudentHighlightPersistenceProvider, clearStudentHighlights } from '../
 import { RichTextHighlighter } from '../RichTextHighlighter';
 
 describe('student highlight persistence', () => {
+  const TOUCH_FINALIZE_SETTLE_MS = 180;
+
   beforeEach(() => {
     localStorage.clear();
     vi.restoreAllMocks();
@@ -89,6 +91,7 @@ describe('student highlight persistence', () => {
   });
 
   it('highlights on touch end after touch selection settles on iPad', async () => {
+    vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     const selectionMock = createSelectionMock(() => currentTextNode, {
       start: 6,
@@ -109,7 +112,16 @@ describe('student highlight persistence', () => {
     fireEvent.touchEnd(textElement);
 
     expect(screen.queryByRole('button', { name: /highlight selected text/i })).not.toBeInTheDocument();
+    expect(container.querySelector('mark')).toBeNull();
 
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS - 1);
+    });
+    expect(container.querySelector('mark')).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
     expect(container.querySelector('mark')).not.toBeNull();
     expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
 
@@ -117,6 +129,7 @@ describe('student highlight persistence', () => {
   });
 
   it('auto-highlights from snapshot even if live touch selection collapses before touch end', async () => {
+    vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     const activeSelection = createSelectionMock(() => currentTextNode, {
       start: 6,
@@ -147,6 +160,10 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockReturnValue(collapsedSelection);
     fireEvent.touchEnd(textElement);
 
+    expect(container.querySelector('mark')).toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS);
+    });
     expect(container.querySelector('mark')).not.toBeNull();
     expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
 
@@ -186,6 +203,10 @@ describe('student highlight persistence', () => {
     expect(container.querySelector('mark')).toBeNull();
 
     fireEvent.touchEnd(textElement);
+    expect(container.querySelector('mark')).toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS);
+    });
 
     expect(container.querySelector('mark')).not.toBeNull();
     expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
@@ -264,10 +285,91 @@ describe('student highlight persistence', () => {
     expect(container.querySelector('mark')).toBeNull();
 
     fireEvent.touchEnd(textElement);
+    expect(container.querySelector('mark')).toBeNull();
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS);
+    });
 
     expect(container.querySelector('mark')).not.toBeNull();
     expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta epsilon zeta eta');
 
+    getSelectionSpy.mockRestore();
+  });
+
+  it('uses the latest narrowed selection when selection updates after touch end', async () => {
+    vi.useFakeTimers();
+    let currentTextNode: ChildNode | null = null;
+    let end = 30;
+    let text = 'beta gamma delta epsilon zeta';
+    const selectionMock = {
+      rangeCount: 1,
+      getRangeAt: () => {
+        const textNode = currentTextNode;
+        if (!textNode) {
+          throw new Error('Expected a text node');
+        }
+
+        const range = document.createRange();
+        range.setStart(textNode, 6);
+        range.setEnd(textNode, end);
+        return range;
+      },
+      toString: () => text,
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const getSelectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selectionMock);
+    const { container } = render(
+      <RichTextHighlighter content="Alpha beta gamma delta epsilon zeta eta theta" enabled />,
+    );
+    const textElement = container.querySelector('[data-student-highlightable="true"]');
+    if (!textElement) {
+      throw new Error('Expected a rendered highlight container');
+    }
+
+    currentTextNode = textElement.firstChild;
+    fireEvent.touchStart(textElement);
+    fireEvent.touchEnd(textElement);
+
+    end = 16;
+    text = 'beta gamma';
+    fireEvent(document, new Event('selectionchange'));
+
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS);
+    });
+
+    expect(container.querySelector('mark')).not.toBeNull();
+    expect(container.querySelector('mark')).toHaveTextContent('beta gamma');
+    getSelectionSpy.mockRestore();
+  });
+
+  it('keeps intentional full-paragraph touch selection when it remains final', async () => {
+    vi.useFakeTimers();
+    let currentTextNode: ChildNode | null = null;
+    const selectionMock = createSelectionMock(() => currentTextNode, {
+      start: 0,
+      end: 22,
+      text: 'Alpha beta gamma delta',
+    });
+
+    const getSelectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selectionMock);
+    const { container } = render(<FormattedText text="Alpha beta gamma delta" highlightEnabled />);
+    const textElement = container.querySelector('span');
+    if (!textElement) {
+      throw new Error('Expected a rendered text span');
+    }
+
+    currentTextNode = textElement.firstChild;
+    fireEvent.touchStart(textElement);
+    fireEvent.touchEnd(textElement);
+
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS);
+    });
+
+    expect(container.querySelector('mark')).not.toBeNull();
+    expect(container.querySelector('mark')).toHaveTextContent('Alpha beta gamma delta');
     getSelectionSpy.mockRestore();
   });
 
@@ -290,6 +392,10 @@ describe('student highlight persistence', () => {
     currentTextNode = textElement.firstChild;
     fireEvent.touchStart(textElement);
     fireEvent.touchEnd(textElement);
+
+    await act(async () => {
+      vi.advanceTimersByTime(TOUCH_FINALIZE_SETTLE_MS);
+    });
 
     const highlight = container.querySelector('mark[data-highlighted="true"]');
     expect(highlight).not.toBeNull();

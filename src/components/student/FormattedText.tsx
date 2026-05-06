@@ -109,7 +109,7 @@ export function FormattedText({
     },
     [highlightClassName, highlightColor, highlightEnabled, setHtml],
   );
-  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
+  const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession } =
     useDeferredSelectionHighlight({
     enabled: highlightEnabled,
     containerRef,
@@ -171,7 +171,6 @@ export function FormattedText({
           onClick={removeTappedHighlight}
           onMouseUp={highlightEnabled ? handleSelection : undefined}
           onTouchStart={highlightEnabled ? startTouchSelectionSession : undefined}
-          onTouchEnd={highlightEnabled ? scheduleSelectionHighlight : undefined}
           onKeyUp={highlightEnabled ? handleSelection : undefined}
           dangerouslySetInnerHTML={{ __html: html }}
         />

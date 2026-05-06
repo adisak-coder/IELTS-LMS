@@ -10,6 +10,8 @@ interface UseDeferredSelectionHighlightOptions {
 }
 
 const TOUCH_AUTO_APPLY_REMOVE_GUARD_MS = 700;
+const TOUCH_FINALIZE_SETTLE_MS = 180;
+const TOUCH_FINALIZE_MAX_WAIT_MS = 900;
 
 export function useDeferredSelectionHighlight({
   enabled,
@@ -18,27 +20,47 @@ export function useDeferredSelectionHighlight({
   applySelectionFromSnapshot,
 }: UseDeferredSelectionHighlightOptions) {
   const touchSessionActiveRef = useRef(false);
+  const touchFinalizePendingRef = useRef(false);
+  const settleFinalizeTimerRef = useRef<number | null>(null);
+  const maxFinalizeTimerRef = useRef<number | null>(null);
   const pendingSnapshotRef = useRef<HighlightSelectionSnapshot | null>(null);
   const pendingSignatureRef = useRef<string | null>(null);
   const lastTouchAutoApplyAtRef = useRef<number | null>(null);
 
+  const clearFinalizeTimers = useCallback(() => {
+    if (settleFinalizeTimerRef.current !== null) {
+      window.clearTimeout(settleFinalizeTimerRef.current);
+      settleFinalizeTimerRef.current = null;
+    }
+    if (maxFinalizeTimerRef.current !== null) {
+      window.clearTimeout(maxFinalizeTimerRef.current);
+      maxFinalizeTimerRef.current = null;
+    }
+    touchFinalizePendingRef.current = false;
+  }, []);
+
   const clearPending = useCallback(() => {
+    clearFinalizeTimers();
     pendingSnapshotRef.current = null;
     pendingSignatureRef.current = null;
     touchSessionActiveRef.current = false;
-  }, []);
+  }, [clearFinalizeTimers]);
 
   const applyPending = useCallback(() => {
     const pendingSnapshot = pendingSnapshotRef.current;
     clearPending();
 
-    let applied = false;
-    if (pendingSnapshot && applySelectionFromSnapshot?.(pendingSnapshot)) {
-      applied = true;
-    } else {
-      applied = applySelection();
+    if (pendingSnapshot) {
+      const appliedFromSnapshot = applySelectionFromSnapshot
+        ? applySelectionFromSnapshot(pendingSnapshot)
+        : false;
+      if (appliedFromSnapshot) {
+        lastTouchAutoApplyAtRef.current = Date.now();
+      }
+      return;
     }
 
+    const applied = applySelection();
     if (applied) {
       lastTouchAutoApplyAtRef.current = Date.now();
     }
@@ -76,26 +98,46 @@ export function useDeferredSelectionHighlight({
       return;
     }
 
-    if (pendingSnapshotRef.current) {
-      clearPending();
-    }
-
+    clearPending();
     touchSessionActiveRef.current = true;
     queueCurrentSelection();
   }, [clearPending, enabled, queueCurrentSelection]);
 
-  const scheduleSelectionHighlight = useCallback(() => {
-    if (!enabled) {
-      return;
-    }
-
+  const finalizeTouchSelection = useCallback(() => {
     if (!touchSessionActiveRef.current) {
       return;
     }
 
     queueCurrentSelection();
     applyPending();
-  }, [applyPending, enabled, queueCurrentSelection]);
+  }, [applyPending, queueCurrentSelection]);
+
+  const scheduleSettleFinalize = useCallback(() => {
+    if (settleFinalizeTimerRef.current !== null) {
+      window.clearTimeout(settleFinalizeTimerRef.current);
+    }
+    settleFinalizeTimerRef.current = window.setTimeout(() => {
+      finalizeTouchSelection();
+    }, TOUCH_FINALIZE_SETTLE_MS);
+  }, [finalizeTouchSelection]);
+
+  const beginTouchFinalize = useCallback(() => {
+    if (!enabled) {
+      return;
+    }
+    if (!touchSessionActiveRef.current) {
+      return;
+    }
+
+    touchFinalizePendingRef.current = true;
+    queueCurrentSelection();
+    scheduleSettleFinalize();
+    if (maxFinalizeTimerRef.current === null) {
+      maxFinalizeTimerRef.current = window.setTimeout(() => {
+        finalizeTouchSelection();
+      }, TOUCH_FINALIZE_MAX_WAIT_MS);
+    }
+  }, [enabled, finalizeTouchSelection, queueCurrentSelection, scheduleSettleFinalize]);
 
   const isWithinRecentTouchAutoApplyGuard = useCallback(() => {
     const lastTouchAutoApplyAt = lastTouchAutoApplyAtRef.current;
@@ -124,6 +166,9 @@ export function useDeferredSelectionHighlight({
       }
 
       queueCurrentSelection();
+      if (touchFinalizePendingRef.current) {
+        scheduleSettleFinalize();
+      }
     };
 
     document.addEventListener('selectionchange', handleSelectionChange);
@@ -131,7 +176,7 @@ export function useDeferredSelectionHighlight({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
     };
-  }, [clearPending, enabled, queueCurrentSelection]);
+  }, [clearPending, enabled, queueCurrentSelection, scheduleSettleFinalize]);
 
   useEffect(() => {
     if (!enabled) {
@@ -139,7 +184,7 @@ export function useDeferredSelectionHighlight({
     }
 
     const handleTouchEnd = () => {
-      scheduleSelectionHighlight();
+      beginTouchFinalize();
     };
 
     document.addEventListener('touchend', handleTouchEnd);
@@ -149,11 +194,10 @@ export function useDeferredSelectionHighlight({
       document.removeEventListener('touchend', handleTouchEnd);
       document.removeEventListener('touchcancel', handleTouchEnd);
     };
-  }, [enabled, scheduleSelectionHighlight]);
+  }, [beginTouchFinalize, enabled]);
 
   return {
     isWithinRecentTouchAutoApplyGuard,
     startTouchSelectionSession,
-    scheduleSelectionHighlight,
   };
 }
