@@ -205,23 +205,39 @@ function renderBlockPreview(item: QuestionBankItem) {
         </div>
       );
 
-    case 'SINGLE_MCQ':
+    case 'SINGLE_MCQ': {
+      const questions =
+        Array.isArray(block.questions) && block.questions.length > 0
+          ? block.questions
+          : [{ id: block.id, stem: block.stem, options: block.options }];
+
       return (
         <div>
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Question Stem</h3>
-          <p className="text-gray-900 bg-gray-50 p-3 rounded mb-3">{block.stem}</p>
-          <h3 className="text-sm font-semibold text-gray-700 mb-2">Options ({block.options.length})</h3>
-          <div className="space-y-2">
-            {block.options.map((opt, i) => (
-              <div key={opt.id} className={`bg-gray-50 p-3 rounded flex items-center gap-2 ${opt.isCorrect ? 'border-2 border-green-500' : ''}`}>
-                <span className="font-bold text-gray-700">{String.fromCharCode(65 + i)}.</span>
-                <span className="text-sm text-gray-900">{opt.text}</span>
-                {opt.isCorrect && <span className="text-xs text-green-700 ml-auto">✓ Correct</span>}
+          <h3 className="text-sm font-semibold text-gray-700 mb-2">Questions ({questions.length})</h3>
+          <div className="space-y-3">
+            {questions.slice(0, 3).map((question, questionIndex) => (
+              <div key={question.id} className="rounded border border-gray-200 p-3">
+                <p className="text-sm font-medium text-gray-900 mb-2">
+                  {questionIndex + 1}. {question.stem}
+                </p>
+                <div className="space-y-2">
+                  {question.options.map((opt, i) => (
+                    <div key={opt.id} className={`bg-gray-50 p-3 rounded flex items-center gap-2 ${opt.isCorrect ? 'border-2 border-green-500' : ''}`}>
+                      <span className="font-bold text-gray-700">{String.fromCharCode(65 + i)}.</span>
+                      <span className="text-sm text-gray-900">{opt.text}</span>
+                      {opt.isCorrect ? <span className="text-xs text-green-700 ml-auto">✓ Correct</span> : null}
+                    </div>
+                  ))}
+                </div>
               </div>
             ))}
+            {questions.length > 3 ? (
+              <p className="text-xs text-gray-500">+{questions.length - 3} more questions</p>
+            ) : null}
           </div>
         </div>
       );
+    }
 
     case 'SHORT_ANSWER':
       return (

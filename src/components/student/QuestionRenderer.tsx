@@ -19,19 +19,15 @@ import {
   ShortAnswerBlock,
   ShortAnswerQuestion,
   SingleMCQBlock,
+  SingleMCQQuestion,
   TableCompletionBlock,
   TFNGBlock,
   TFNGQuestion,
 } from '../../types';
-import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { ProtectedInput } from './ProtectedInput';
-import { ProtectedChoiceInput } from './ProtectedChoiceInput';
-import { ProtectedSelect } from './ProtectedSelect';
 import { FormattedText } from './FormattedText';
 import { stripBoldMarkdown } from '../../utils/boldMarkdown';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
-import { getCanonicalTableCells, trimSuspiciousTableCellContent } from '../../utils/tableCompletion';
-import { trimSuspiciousCompletionPromptText } from '../../utils/completionPromptText';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 
@@ -43,16 +39,16 @@ interface QuestionRendererProps {
     | MatchingQuestion
     | ShortAnswerQuestion
     | SentenceCompletionQuestion
+    | SingleMCQQuestion
     | NoteCompletionQuestion
     | null;
   block: QuestionBlock;
   number: number;
   answer: QuestionAnswer;
-  onChange: (val: QuestionAnswer, meta?: StudentAnswerMutationMeta) => void;
+  onChange: (val: QuestionAnswer) => void;
   isFlagged?: boolean | undefined;
   isActive?: boolean | undefined;
   slotIds?: string[] | undefined;
-  slotNumbers?: number[] | undefined;
   currentQuestionId?: string | null | undefined;
   flags?: Record<string, boolean> | undefined;
   onToggleFlag?: ((id: string) => void) | undefined;
@@ -67,55 +63,6 @@ interface QuestionRendererProps {
   sessionId?: string | undefined;
   studentId?: string | undefined;
   hideDiagramReference?: boolean | undefined;
-  hideMapReference?: boolean | undefined;
-  registerLiveAnswer?: ((payload: { key: string; value: QuestionAnswer }) => void) | undefined;
-}
-
-type GroupedSlot = {
-  scoreGroupId?: string;
-  groupRule?: 'all_required' | 'at_least_n';
-  requiredCorrect?: number;
-  scoreWeight?: number;
-};
-
-function normalizeScoreGroupId(value: string | undefined): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function describeGroupedScoring(slots: GroupedSlot[]): string[] {
-  const groups = new Map<string, GroupedSlot[]>();
-  slots.forEach((slot) => {
-    const groupId = normalizeScoreGroupId(slot.scoreGroupId);
-    if (!groupId) return;
-    const bucket = groups.get(groupId);
-    if (bucket) {
-      bucket.push(slot);
-    } else {
-      groups.set(groupId, [slot]);
-    }
-  });
-
-  const labels: string[] = [];
-  groups.forEach((groupSlots) => {
-    if (groupSlots.length <= 1) return;
-    const rule = groupSlots.find((slot) => slot.groupRule === 'all_required' || slot.groupRule === 'at_least_n')?.groupRule ?? 'all_required';
-    const weight = groupSlots
-      .map((slot) => (Number.isFinite(slot.scoreWeight) ? Math.max(0, Number(slot.scoreWeight)) : null))
-      .find((value): value is number => value !== null) ?? 1;
-    if (rule === 'at_least_n') {
-      const required =
-        groupSlots
-          .map((slot) => (Number.isInteger(slot.requiredCorrect) ? Number(slot.requiredCorrect) : null))
-          .find((value): value is number => value !== null && value > 0) ?? 1;
-      labels.push(`Scoring: ${required} answers required for ${weight} point`);
-      return;
-    }
-    labels.push(`Scoring: all ${groupSlots.length} answers required for ${weight} point`);
-  });
-
-  return labels;
 }
 
 export function QuestionRenderer({
@@ -126,7 +73,6 @@ export function QuestionRenderer({
   onChange,
   isActive = false,
   slotIds = [],
-  slotNumbers = [],
   currentQuestionId = null,
   flags = {},
   onToggleFlag,
@@ -138,41 +84,13 @@ export function QuestionRenderer({
   sessionId,
   studentId,
   hideDiagramReference = false,
-  hideMapReference = false,
-  registerLiveAnswer,
 }: QuestionRendererProps) {
   const stringArrayAnswer = Array.isArray(answer) ? answer : [];
-  const latestStringArrayAnswerRef = React.useRef<string[]>(stringArrayAnswer);
   const isCompactPane = tabletMode && compactPane;
   const fieldIndentClass = tabletMode ? 'ml-0' : 'ml-9';
   const inputWidthClass = isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-md';
-  const inlineAnswerInputClass =
-    'min-w-[8rem] w-fit max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
-  const tableAnswerInputClass =
-    'min-w-[8rem] w-fit max-w-full rounded-md border border-gray-300 px-3 py-1.5 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100';
-  const matchingSelectClass = isCompactPane
-    ? 'w-full min-w-0 max-w-full'
-    : tabletMode
-      ? 'min-w-[12rem] max-w-full'
-      : 'min-w-[12rem] max-w-full';
-
-  const getAutoWidthStyle = (
-    value: string,
-    fallback: string,
-    minCh: number,
-    maxCh: number,
-  ): React.CSSProperties => {
-    const text = (value || fallback).trim() || fallback;
-    const widthCh = Math.max(minCh, Math.min(maxCh, text.length + 2));
-    return {
-      width: `${widthCh}ch`,
-      minWidth: '8rem',
-      maxWidth: '100%',
-    };
-  };
 
   const getSlotId = (index: number, fallback: string) => slotIds[index] ?? fallback;
-  const getSlotNumber = (index: number) => slotNumbers[index] ?? (number + index);
   const getSlotClassName = (slotId: string) => {
     const activeClass = currentQuestionId === slotId ? 'ring-2 ring-blue-500 ring-offset-2' : '';
     const flaggedClass = flags[slotId] ? 'border-amber-300 bg-amber-50' : 'border-transparent';
@@ -203,31 +121,12 @@ export function QuestionRenderer({
     );
   };
 
-  const updateIndexedAnswer = (
-    index: number,
-    value: string,
-    total: number,
-    interactionType: StudentAnswerMutationMeta['interactionType'] = 'typing',
-  ) => {
-    const sourceSlots = latestStringArrayAnswerRef.current;
+  const updateIndexedAnswer = (index: number, value: string, total: number) => {
     const next = Array.from({ length: total }, (_, candidateIndex) =>
-      candidateIndex === index ? value : (sourceSlots[candidateIndex] ?? ''),
+      candidateIndex === index ? value : (stringArrayAnswer[candidateIndex] ?? ''),
     );
-    latestStringArrayAnswerRef.current = next;
-    registerLiveAnswer?.({ key: block.id, value: next });
-    onChange(next, {
-      interactionType,
-      slotIndex: index,
-      slotId: getSlotId(index, `${block.id}:${index}`),
-      slotCount: total,
-      slotValue: value,
-    });
+    onChange(next);
   };
-
-  React.useEffect(() => {
-    latestStringArrayAnswerRef.current = stringArrayAnswer;
-    registerLiveAnswer?.({ key: block.id, value: stringArrayAnswer });
-  }, [block.id, registerLiveAnswer, stringArrayAnswer]);
 
   const renderTextField = (
     slotId: string,
@@ -299,11 +198,11 @@ export function QuestionRenderer({
         <div className={`${fieldIndentClass} flex flex-col gap-3`}>
           {options.map((option) => (
             <label key={option} className="flex items-center gap-3 cursor-pointer">
-              <ProtectedChoiceInput
+              <input
                 type="radio"
                 name={`q-${q.id}`}
                 checked={answer === option}
-                onChange={() => onChange(option, { interactionType: 'discrete' })}
+                onChange={() => onChange(option)}
                 className="h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
               />
               <span className="text-sm uppercase text-gray-900">{labels[option as keyof typeof labels]}</span>
@@ -333,7 +232,7 @@ export function QuestionRenderer({
             type="text"
             name={q.id}
             value={typeof answer === 'string' ? answer : ''}
-            onChange={(event) => onChange(event.target.value, { interactionType: 'typing' })}
+            onChange={(event) => onChange(event.target.value)}
             className={`w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${inputWidthClass}`}
             placeholder="Enter answer..."
             security={security}
@@ -348,29 +247,16 @@ export function QuestionRenderer({
 
   const renderMatching = (matchingBlock: MatchingBlock, q: MatchingQuestion) => (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-4 flex-wrap">
+      <div className="flex items-center gap-4">
           <span className="min-w-[1.75rem] font-bold text-gray-900">{number}.</span>
         <span className="font-medium text-gray-800 text-[length:var(--student-control-font-size)]">
           Paragraph {q.paragraphLabel}
         </span>
 
-        {(() => {
-          const selectedValue = typeof answer === 'string' ? answer : '';
-          const selectedIndex = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'].indexOf(selectedValue);
-          const selectedHeading = selectedIndex >= 0 ? matchingBlock.headings?.[selectedIndex] : undefined;
-          const selectedLabel = selectedHeading
-            ? `${selectedValue}. ${stripBoldMarkdown(selectedHeading.text)}`
-            : 'Choose heading…';
-          const autoWidthStyle = isCompactPane
-            ? undefined
-            : getAutoWidthStyle(selectedLabel, 'Choose heading…', 16, 56);
-
-          return (
-        <ProtectedSelect
-          value={selectedValue}
-          onChange={(event) => onChange(event.target.value, { interactionType: 'discrete' })}
-          className={`rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${matchingSelectClass}`}
-          style={autoWidthStyle}
+        <select
+          value={typeof answer === 'string' ? answer : ''}
+          onChange={(event) => onChange(event.target.value)}
+          className={`flex-1 rounded-md border-2 border-gray-300 px-3 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0 max-w-full' : tabletMode ? 'max-w-full' : 'max-w-xs'}`}
           aria-label={`Heading selection for question ${number}`}
         >
           <option value="">Choose heading…</option>
@@ -382,9 +268,7 @@ export function QuestionRenderer({
               </option>
             );
           })}
-        </ProtectedSelect>
-          );
-        })()}
+        </select>
       </div>
     </div>
   );
@@ -394,16 +278,12 @@ export function QuestionRenderer({
 
     const toggleOption = (optionId: string) => {
       if (selectedOptions.includes(optionId)) {
-        onChange(selectedOptions.filter((candidate) => candidate !== optionId), {
-          interactionType: 'discrete',
-        });
+        onChange(selectedOptions.filter((candidate) => candidate !== optionId));
         return;
       }
 
       if (selectedOptions.length < mcqBlock.requiredSelections) {
-        onChange([...selectedOptions, optionId], {
-          interactionType: 'discrete',
-        });
+        onChange([...selectedOptions, optionId]);
       }
     };
 
@@ -436,7 +316,7 @@ export function QuestionRenderer({
                       : 'border-gray-200 hover:border-blue-300'
                 }`}
               >
-                <ProtectedChoiceInput
+                <input
                   type="checkbox"
                   checked={isSelected}
                   disabled={isDisabled}
@@ -468,14 +348,12 @@ export function QuestionRenderer({
 
   const renderMap = (mapBlock: MapBlock, q: MapQuestion, num: number) => (
     <div className="flex flex-col gap-4">
-      {!hideMapReference ? (
-        <StudentZoomableMedia
-          sources={getImageUrlCandidates(mapBlock.assetUrl ?? '')}
-          alt="Map reference"
-          label="Map reference image"
-          hint="Tap to zoom the map"
-        />
-      ) : null}
+      <StudentZoomableMedia
+        sources={getImageUrlCandidates(mapBlock.assetUrl ?? '')}
+        alt="Map reference"
+        label="Map reference image"
+        hint="Tap to zoom the map"
+      />
       <div className="flex flex-col gap-3">
         <div className="flex gap-3">
           <span className="min-w-[1.75rem] font-bold text-gray-900">{num}.</span>
@@ -488,7 +366,7 @@ export function QuestionRenderer({
             type="text"
             name={q.id}
             value={typeof answer === 'string' ? answer : ''}
-            onChange={(event) => onChange(event.target.value, { interactionType: 'typing' })}
+            onChange={(event) => onChange(event.target.value)}
             className={`w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${inputWidthClass}`}
             placeholder="Enter label..."
             security={security}
@@ -501,40 +379,58 @@ export function QuestionRenderer({
     </div>
   );
 
-  const renderSingleMCQ = (mcqBlock: SingleMCQBlock, blockNum: number) => (
-    <fieldset className="flex flex-col gap-4">
-      <legend className="flex gap-3">
-        <span className="min-w-[1.75rem] font-bold text-gray-900">{blockNum}.</span>
-        <FormattedText
-          as="span"
-          className="text-gray-800"
-          text={mcqBlock.stem || 'Select the correct option:'}
-          highlightEnabled={highlightEnabled}
-          highlightColor={highlightColor}
-        />
-      </legend>
-      <div className={`${fieldIndentClass} space-y-3`}>
-        {mcqBlock.options?.map((option, index) => {
-          const letter = String.fromCharCode(65 + index);
-          return (
-            <label key={option.id} className="flex cursor-pointer items-start gap-3">
-              <ProtectedChoiceInput
-                type="radio"
-                name={`q-${mcqBlock.id}`}
-                checked={answer === option.id}
-                onChange={() => onChange(option.id, { interactionType: 'discrete' })}
-                className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              <div className="flex gap-2">
-                <span className="font-bold text-gray-700">{letter}.</span>
-                  <FormattedText as="span" className="text-gray-800" text={option.text} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
-              </div>
-            </label>
-          );
-        })}
-      </div>
-    </fieldset>
-  );
+  const renderSingleMCQ = (
+    mcqBlock: SingleMCQBlock,
+    blockNum: number,
+    questionLevel: SingleMCQQuestion | null,
+  ) => {
+    const stem = questionLevel?.stem || mcqBlock.stem || 'Select the correct option:';
+    const options = Array.isArray(questionLevel?.options) && questionLevel.options.length > 0
+      ? questionLevel.options
+      : mcqBlock.options ?? [];
+    const inputGroupName = questionLevel ? `q-${questionLevel.id}` : `q-${mcqBlock.id}`;
+
+    return (
+      <fieldset className="flex flex-col gap-4">
+        <legend className="flex gap-3">
+          <span className="min-w-[1.75rem] font-bold text-gray-900">{blockNum}.</span>
+          <FormattedText
+            as="span"
+            className="text-gray-800"
+            text={stem}
+            highlightEnabled={highlightEnabled}
+            highlightColor={highlightColor}
+          />
+        </legend>
+        <div className={`${fieldIndentClass} space-y-3`}>
+          {options.map((option, index) => {
+            const letter = String.fromCharCode(65 + index);
+            return (
+              <label key={option.id} className="flex cursor-pointer items-start gap-3">
+                <input
+                  type="radio"
+                  name={inputGroupName}
+                  checked={answer === option.id}
+                  onChange={() => onChange(option.id)}
+                  className="mt-1 h-4 w-4 border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <div className="flex gap-2">
+                  <span className="font-bold text-gray-700">{letter}.</span>
+                  <FormattedText
+                    as="span"
+                    className="text-gray-800"
+                    text={option.text}
+                    highlightEnabled={highlightEnabled}
+                    highlightColor={highlightColor}
+                  />
+                </div>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+    );
+  };
 
   const renderShortAnswer = (shortBlock: ShortAnswerBlock, q: ShortAnswerQuestion, num: number) => {
     void shortBlock;
@@ -549,7 +445,7 @@ export function QuestionRenderer({
             type="text"
             name={q.id}
             value={typeof answer === 'string' ? answer : ''}
-            onChange={(event) => onChange(event.target.value, { interactionType: 'typing' })}
+            onChange={(event) => onChange(event.target.value)}
             className={`w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${inputWidthClass}`}
             placeholder="Enter answer..."
             security={security}
@@ -564,18 +460,11 @@ export function QuestionRenderer({
 
   const renderSentenceCompletion = (sentenceBlock: SentenceCompletionBlock, q: SentenceCompletionQuestion) => {
     void sentenceBlock;
-    const displaySentence = trimSuspiciousCompletionPromptText(q.sentence, 80);
-    const parts = displaySentence.split(/_{2,}/);
+    const parts = q.sentence.split(/_{2,}/);
     const blanks = q.blanks.length;
-    const scoringLabels = describeGroupedScoring(q.blanks);
 
     return (
       <div className="flex flex-col gap-4">
-        {scoringLabels.map((label) => (
-          <p key={`${q.id}:${label}`} className="inline-flex w-fit rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-            {label}
-          </p>
-        ))}
         <div className="leading-8 text-gray-900 [white-space:pre-wrap]">
           {parts.map((part, index) => (
             <React.Fragment key={`${q.id}-${index}`}>
@@ -588,24 +477,19 @@ export function QuestionRenderer({
                   )}`}
                 >
                   <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                    {getSlotNumber(index)}
+                    {number + index}
                   </span>
                   <ProtectedInput
                     type="text"
                     name={getSlotId(index, `${q.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-0' : ''} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
-                    style={
-                      isCompactPane
-                        ? undefined
-                        : getAutoWidthStyle(stringArrayAnswer[index] ?? '', 'Answer...', 14, 48)
-                    }
+                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
                     studentId={studentId}
-                    aria-label={`Answer for question ${getSlotNumber(index)}`}
+                    aria-label={`Answer for question ${number + index}`}
                   />
                   {renderFlagButton(getSlotId(index, `${q.id}:${index}`))}
                 </span>
@@ -635,24 +519,19 @@ export function QuestionRenderer({
                   )}`}
                 >
                   <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                    {getSlotNumber(index)}
+                    {number + index}
                   </span>
                   <ProtectedInput
                     type="text"
                     name={getSlotId(index, `${noteQuestion.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
                     onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
-                    className={`${inlineAnswerInputClass} ${isCompactPane ? 'w-full min-w-0' : ''} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
-                    style={
-                      isCompactPane
-                        ? undefined
-                        : getAutoWidthStyle(stringArrayAnswer[index] ?? '', 'Answer...', 14, 48)
-                    }
+                    className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
                     sessionId={sessionId}
                     studentId={studentId}
-                    aria-label={`Answer for question ${getSlotNumber(index)}`}
+                    aria-label={`Answer for question ${number + index}`}
                   />
                   {renderFlagButton(getSlotId(index, `${noteQuestion.id}:${index}`))}
                 </span>
@@ -740,29 +619,16 @@ export function QuestionRenderer({
       slotId: string;
     };
 
-    const canonicalCells = getCanonicalTableCells(tableBlock);
-    const scoringLabels = describeGroupedScoring(canonicalCells);
-    const cellMap = new Map<string, TableSlot[]>();
-    canonicalCells.forEach((cell, index) => {
-      const key = `${cell.row}:${cell.col}`;
-      const slot: TableSlot = { cell, index, slotId: getSlotId(index, `${tableBlock.id}:${cell.id}`) };
-      const bucket = cellMap.get(key);
-      if (bucket) {
-        bucket.push(slot);
-      } else {
-        cellMap.set(key, [slot]);
-      }
-    });
+    const cellMap = new Map<string, TableSlot>(
+      tableBlock.cells.map((cell, index): [string, TableSlot] => [
+        `${cell.row}:${cell.col}`,
+        { cell, index, slotId: getSlotId(index, `${tableBlock.id}:${cell.id}`) },
+      ]),
+    );
 
     return (
-      <div className="space-y-2">
-        {scoringLabels.map((label) => (
-          <p key={`${tableBlock.id}:${label}`} className="inline-flex w-fit rounded-full bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-            {label}
-          </p>
-        ))}
-        <div className="overflow-x-auto rounded-2xl border border-gray-200">
-          <table className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
+      <div className="overflow-x-auto rounded-2xl border border-gray-200">
+        <table className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
           <thead className="bg-gray-50">
             <tr>
               {tableBlock.headers.map((header, index) => (
@@ -776,107 +642,45 @@ export function QuestionRenderer({
             {tableBlock.rows.map((row, rowIndex) => (
               <tr key={`row-${rowIndex}`}>
                 {row.map((cellValue, cellIndex) => {
-                  const slots = cellMap.get(`${rowIndex}:${cellIndex}`) ?? [];
-                  const displayCellValue = trimSuspiciousTableCellContent(cellValue, 80);
-                  const parts = displayCellValue.split(/_{2,}/);
-                  const hasInlinePlaceholders = parts.length > 1;
+                  const slot = cellMap.get(`${rowIndex}:${cellIndex}`);
 
-                  if (slots.length === 0) {
+                  if (!slot) {
                     return (
-                      <td key={`cell-${rowIndex}-${cellIndex}`} className="border border-gray-200 px-3 py-2 align-middle text-gray-800">
-                        <FormattedText as="span" className="text-gray-800" text={displayCellValue} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
+                      <td key={`cell-${rowIndex}-${cellIndex}`} className="border border-gray-200 px-3 py-2 text-gray-800">
+                        <FormattedText as="span" className="text-gray-800" text={cellValue} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
                       </td>
                     );
                   }
 
                   return (
                     <td
-                      key={`${rowIndex}-${cellIndex}`}
-                      id={`question-${slots[0]?.slotId ?? `${tableBlock.id}:${rowIndex}:${cellIndex}`}`}
-                      className="border border-gray-200 px-3 py-2 align-middle"
+                      key={slot.cell.id}
+                      id={`question-${slot.slotId}`}
+                      className={`border border-gray-200 px-3 py-2 align-top ${getSlotClassName(slot.slotId)}`}
                     >
-                      {hasInlinePlaceholders ? (
-                        <div className={`text-gray-800 ${isCompactPane ? 'space-y-2' : 'flex flex-wrap items-center gap-2'}`}>
-                          {parts.map((part, partIndex) => {
-                            const slot = slots[partIndex];
-                            return (
-                              <React.Fragment key={`${rowIndex}-${cellIndex}-part-${partIndex}`}>
-                                <FormattedText
-                                  as="span"
-                                  className="text-gray-800"
-                                  text={part}
-                                  highlightEnabled={highlightEnabled}
-                                  highlightColor={highlightColor}
-                                />
-                                {partIndex < parts.length - 1 ? (
-                                  slot ? (
-                                    <span className={`inline-flex max-w-full items-center gap-2 ${getSlotClassName(slot.slotId)}`}>
-                                      <span className="min-w-[1.75rem] text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                                        {getSlotNumber(slot.index)}
-                                      </span>
-                                      <ProtectedInput
-                                        type="text"
-                                        name={slot.slotId}
-                                        value={stringArrayAnswer[slot.index] ?? ''}
-                                        onChange={(event) =>
-                                          updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
-                                        }
-                                        className={`${tableAnswerInputClass} ${isCompactPane ? 'w-full min-w-[9rem]' : ''}`}
-                                        style={
-                                          isCompactPane
-                                            ? undefined
-                                            : getAutoWidthStyle(stringArrayAnswer[slot.index] ?? '', 'Answer...', 14, 48)
-                                        }
-                                        placeholder="Answer..."
-                                        security={security}
-                                        sessionId={sessionId}
-                                        studentId={studentId}
-                                        aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
-                                      />
-                                      {renderFlagButton(slot.slotId)}
-                                    </span>
-                                  ) : (
-                                    <span className="font-mono">____</span>
-                                  )
-                                ) : null}
-                              </React.Fragment>
-                            );
-                          })}
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          {slots.map((slot) => (
-                            <div key={slot.slotId} className={isCompactPane ? 'space-y-2' : 'flex items-center gap-3'}>
-                              <div className="text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                                {getSlotNumber(slot.index)}
-                              </div>
-                              <ProtectedInput
-                                type="text"
-                                name={slot.slotId}
-                                value={stringArrayAnswer[slot.index] ?? ''}
-                                onChange={(event) =>
-                                  updateIndexedAnswer(slot.index, event.target.value, canonicalCells.length)
-                                }
-                                className={`${isCompactPane ? 'w-full' : 'min-w-[10rem]'} rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100`}
-                                placeholder="Enter answer..."
-                                security={security}
-                                sessionId={sessionId}
-                                studentId={studentId}
-                                aria-label={`Answer for question ${getSlotNumber(slot.index)}`}
-                              />
-                              <div className={isCompactPane ? 'flex justify-end' : 'flex-shrink-0'}>{renderFlagButton(slot.slotId)}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      <div className="mb-2 text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
+                        {number + slot.index}
+                      </div>
+                      <ProtectedInput
+                        type="text"
+                        name={slot.slotId}
+                        value={stringArrayAnswer[slot.index] ?? ''}
+                        onChange={(event) => updateIndexedAnswer(slot.index, event.target.value, tableBlock.cells.length)}
+                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                        placeholder="Enter answer..."
+                        security={security}
+                        sessionId={sessionId}
+                        studentId={studentId}
+                        aria-label={`Answer for question ${number + slot.index}`}
+                      />
+                      <div className="mt-2 flex justify-end">{renderFlagButton(slot.slotId)}</div>
                     </td>
                   );
                 })}
               </tr>
             ))}
           </tbody>
-          </table>
-        </div>
+        </table>
       </div>
     );
   };
@@ -894,15 +698,9 @@ export function QuestionRenderer({
                   <FormattedText as="span" className="text-gray-800" text={item.text} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
                 </div>
                 <div className={isCompactPane ? 'flex w-full flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
-                  <ProtectedSelect
+                  <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
-                    onChange={(event) =>
-                      updateIndexedAnswer(
-                        index,
-                        event.target.value,
-                        classificationBlock.items.length,
-                        'discrete',
-                      )}
+                    onChange={(event) => updateIndexedAnswer(index, event.target.value, classificationBlock.items.length)}
                     className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Category selection for question ${number + index}`}
                   >
@@ -912,7 +710,7 @@ export function QuestionRenderer({
                         {stripBoldMarkdown(category)}
                       </option>
                     ))}
-                  </ProtectedSelect>
+                  </select>
                   {renderFlagButton(slotId)}
                 </div>
               </div>
@@ -936,15 +734,9 @@ export function QuestionRenderer({
                   <FormattedText as="span" className="text-gray-800" text={feature.text} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
                 </div>
                 <div className={isCompactPane ? 'flex w-full flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
-                  <ProtectedSelect
+                  <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
-                    onChange={(event) =>
-                      updateIndexedAnswer(
-                        index,
-                        event.target.value,
-                        matchingFeaturesBlock.features.length,
-                        'discrete',
-                      )}
+                    onChange={(event) => updateIndexedAnswer(index, event.target.value, matchingFeaturesBlock.features.length)}
                     className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Matching selection for question ${number + index}`}
                   >
@@ -954,7 +746,7 @@ export function QuestionRenderer({
                         {stripBoldMarkdown(option)}
                       </option>
                     ))}
-                  </ProtectedSelect>
+                  </select>
                   {renderFlagButton(slotId)}
                 </div>
               </div>
@@ -972,7 +764,9 @@ export function QuestionRenderer({
       {block.type === 'MATCHING' && question ? renderMatching(block as MatchingBlock, question as MatchingQuestion) : null}
       {block.type === 'MULTI_MCQ' ? renderMultiMCQ(block as MultiMCQBlock, number) : null}
       {block.type === 'MAP' && question ? renderMap(block as MapBlock, question as MapQuestion, number) : null}
-      {block.type === 'SINGLE_MCQ' ? renderSingleMCQ(block as SingleMCQBlock, number) : null}
+      {block.type === 'SINGLE_MCQ'
+        ? renderSingleMCQ(block as SingleMCQBlock, number, question as SingleMCQQuestion | null)
+        : null}
       {block.type === 'SHORT_ANSWER' && question
         ? renderShortAnswer(block as ShortAnswerBlock, question as ShortAnswerQuestion, number)
         : null}

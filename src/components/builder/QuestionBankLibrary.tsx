@@ -355,8 +355,9 @@ function getQuestionPreview(block: QuestionBlock): string {
     case 'MAP':
       return block.questions[0]?.label || 'Map labeling question';
     case 'MULTI_MCQ':
-    case 'SINGLE_MCQ':
       return block.stem || 'Multiple choice question';
+    case 'SINGLE_MCQ':
+      return block.questions?.[0]?.stem || block.stem || 'Single choice question';
     case 'SHORT_ANSWER':
       return block.questions[0]?.prompt || 'Short answer question';
     case 'SENTENCE_COMPLETION':

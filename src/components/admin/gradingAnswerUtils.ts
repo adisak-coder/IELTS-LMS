@@ -3,53 +3,8 @@ import type {
 } from '../../services/examAdapterService';
 import { getQuestionAnswer } from '../../services/examAdapterService';
 import { normalizeAnswerForMatching, resolveAcceptedAnswers } from '../../utils/acceptedAnswers';
-import { getCanonicalTableCells } from '../../utils/tableCompletion';
 
 type UnknownRecord = Record<string, unknown>;
-
-/**
- * Raw Fidelity Invariant (Submit -> Grading):
- * - null | undefined -> ''
- * - non-empty strings are preserved exactly (no trim/collapse/normalization)
- * - multi-slot arrays preserve order and empty intermediate slots
- *
- * Objective grading views/exports must never "helpfully" normalize student answers via:
- * filter(Boolean), join(', '), trim(), whitespace collapsing, dedupe/sort, or compacting.
- */
-export function rawSlotValue(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  return String(value);
-}
-
-export function renderRawMultiSlotAnswer(slots: unknown[]): string[] {
-  return slots.map((slot) => rawSlotValue(slot));
-}
-
-export interface RawObjectiveAnswerProjection {
-  scalar: string;
-  slots: string[] | null;
-  canonical: string;
-}
-
-export function projectRawObjectiveAnswer(value: unknown): RawObjectiveAnswerProjection {
-  if (Array.isArray(value)) {
-    const slots = renderRawMultiSlotAnswer(value);
-    return {
-      scalar: '',
-      slots,
-      // Canonical CSV-safe representation for multi-slot answers.
-      canonical: JSON.stringify(slots),
-    };
-  }
-
-  const scalar = rawSlotValue(value);
-  return {
-    scalar,
-    slots: null,
-    canonical: scalar,
-  };
-}
 
 export function extractObjectiveAnswerMap(sectionAnswers: unknown): Record<string, unknown> {
   if (!sectionAnswers || typeof sectionAnswers !== 'object') {
@@ -82,7 +37,10 @@ export function formatAnswerValue(value: unknown): string {
   if (typeof value === 'string') return value;
   if (typeof value === 'number' || typeof value === 'boolean') return String(value);
   if (Array.isArray(value)) {
-    return JSON.stringify(renderRawMultiSlotAnswer(value));
+    return value
+      .map((entry) => formatAnswerValue(entry))
+      .filter((entry) => entry.trim() !== '')
+      .join(', ');
   }
 
   return stringifyFallback(value);
@@ -102,12 +60,34 @@ function lookupHeadingText(
   return headings?.find((h) => h.id === id)?.text ?? id;
 }
 
-export function getQuestionPrompt(descriptor: StudentQuestionDescriptor): string {
-  if (descriptor.isSubAnswerTreeLeaf) {
-    const prompt = typeof descriptor.treePrompt === 'string' ? descriptor.treePrompt.trim() : '';
-    return prompt || descriptor.numberLabel || '';
+function getSingleMcqOptions(
+  descriptor: StudentQuestionDescriptor,
+): Array<{ id: string; text: string; isCorrect?: boolean }> {
+  const questionLevel =
+    descriptor.question && 'options' in descriptor.question && Array.isArray(descriptor.question.options)
+      ? descriptor.question
+      : null;
+
+  if (questionLevel) {
+    return questionLevel.options;
   }
 
+  const blockWithQuestions = descriptor.block as { questions?: Array<{ id: string; options?: Array<{ id: string; text: string; isCorrect?: boolean }> }> };
+  if (Array.isArray(blockWithQuestions.questions) && blockWithQuestions.questions.length > 0) {
+    const matchedQuestion = blockWithQuestions.questions.find((question) => question.id === descriptor.answerKey);
+    if (matchedQuestion && Array.isArray(matchedQuestion.options)) {
+      return matchedQuestion.options;
+    }
+    if (Array.isArray(blockWithQuestions.questions[0]?.options)) {
+      return blockWithQuestions.questions[0].options;
+    }
+  }
+
+  const blockOptions = (descriptor.block as { options?: Array<{ id: string; text: string; isCorrect?: boolean }> }).options;
+  return Array.isArray(blockOptions) ? blockOptions : [];
+}
+
+export function getQuestionPrompt(descriptor: StudentQuestionDescriptor): string {
   const { block, question, answerIndex } = descriptor;
   switch (block.type) {
     case 'TFNG':
@@ -135,20 +115,25 @@ export function getQuestionPrompt(descriptor: StudentQuestionDescriptor): string
       return block.instruction || '';
     }
     case 'MULTI_MCQ':
-    case 'SINGLE_MCQ':
       return block.stem || block.instruction || '';
+    case 'SINGLE_MCQ': {
+      if (question && 'stem' in question) {
+        return question.stem || block.stem || block.instruction || '';
+      }
+      const blockWithQuestions = block as { questions?: Array<{ id: string; stem?: string }> };
+      if (Array.isArray(blockWithQuestions.questions) && blockWithQuestions.questions.length > 0) {
+        const matchedQuestion = blockWithQuestions.questions.find((candidate) => candidate.id === descriptor.answerKey);
+        const fallbackQuestion = matchedQuestion ?? blockWithQuestions.questions[0];
+        return fallbackQuestion?.stem || block.stem || block.instruction || '';
+      }
+      return block.stem || block.instruction || '';
+    }
     case 'DIAGRAM_LABELING':
       return typeof answerIndex === 'number' ? `Diagram label ${answerIndex + 1}` : block.instruction || '';
     case 'FLOW_CHART':
       return typeof answerIndex === 'number' ? `Flow step ${answerIndex + 1}` : block.instruction || '';
-    case 'TABLE_COMPLETION': {
-      if (typeof answerIndex !== 'number') return block.instruction || '';
-      const canonicalCell = getCanonicalTableCells(block)[answerIndex];
-      if (!canonicalCell) {
-        return `Table cell ${answerIndex + 1}`;
-      }
-      return `Table cell row ${canonicalCell.row + 1}, col ${canonicalCell.col + 1}`;
-    }
+    case 'TABLE_COMPLETION':
+      return typeof answerIndex === 'number' ? `Table cell ${answerIndex + 1}` : block.instruction || '';
     case 'CLASSIFICATION':
       return typeof answerIndex === 'number' ? `Classification item ${answerIndex + 1}` : block.instruction || '';
     case 'MATCHING_FEATURES':
@@ -157,10 +142,6 @@ export function getQuestionPrompt(descriptor: StudentQuestionDescriptor): string
 }
 
 export function getCorrectAnswerValue(descriptor: StudentQuestionDescriptor): unknown {
-  if (descriptor.isSubAnswerTreeLeaf) {
-    return descriptor.treeAcceptedAnswers?.[0] ?? null;
-  }
-
   const { block, question, answerIndex } = descriptor;
 
   switch (block.type) {
@@ -189,7 +170,7 @@ export function getCorrectAnswerValue(descriptor: StudentQuestionDescriptor): un
       return options.filter((opt) => opt.isCorrect).map((opt) => opt.id);
     }
     case 'SINGLE_MCQ': {
-      const options = 'options' in block && Array.isArray(block.options) ? block.options : [];
+      const options = getSingleMcqOptions(descriptor);
       return options.find((opt) => opt.isCorrect)?.id ?? null;
     }
     case 'DIAGRAM_LABELING': {
@@ -203,8 +184,9 @@ export function getCorrectAnswerValue(descriptor: StudentQuestionDescriptor): un
       return block.steps[answerIndex]?.correctAnswer ?? null;
     }
     case 'TABLE_COMPLETION': {
+      if (!('cells' in block) || !Array.isArray(block.cells)) return null;
       if (typeof answerIndex !== 'number') return null;
-      return getCanonicalTableCells(block)[answerIndex]?.correctAnswer ?? null;
+      return block.cells[answerIndex]?.correctAnswer ?? null;
     }
     case 'CLASSIFICATION': {
       if (!('items' in block) || !Array.isArray(block.items)) return null;
@@ -235,7 +217,7 @@ export function getCorrectAnswerDisplay(descriptor: StudentQuestionDescriptor): 
   }
 
   if (block.type === 'SINGLE_MCQ') {
-    const options = Array.isArray(block.options) ? block.options : [];
+    const options = getSingleMcqOptions(descriptor);
     return typeof correct === 'string' ? lookupOptionText(options, correct) : '';
   }
 
@@ -248,10 +230,6 @@ export function getCorrectAnswerDisplay(descriptor: StudentQuestionDescriptor): 
 }
 
 function getAcceptedAnswersForDescriptor(descriptor: StudentQuestionDescriptor): string[] | null {
-  if (descriptor.isSubAnswerTreeLeaf) {
-    return descriptor.treeAcceptedAnswers ?? null;
-  }
-
   const { block, question, answerIndex } = descriptor;
 
   switch (block.type) {
@@ -270,11 +248,6 @@ function getAcceptedAnswersForDescriptor(descriptor: StudentQuestionDescriptor):
       const blank = question.blanks[answerIndex];
       return blank ? resolveAcceptedAnswers(blank) : null;
     }
-    case 'TABLE_COMPLETION': {
-      if (typeof answerIndex !== 'number') return null;
-      const cell = getCanonicalTableCells(block)[answerIndex];
-      return cell ? resolveAcceptedAnswers(cell) : null;
-    }
     default:
       return null;
   }
@@ -284,50 +257,26 @@ export function getStudentAnswerDisplay(
   descriptor: StudentQuestionDescriptor,
   answerMap: Record<string, unknown>,
 ): string {
-  if (descriptor.block.type === 'SINGLE_MCQ') {
-    const options = Array.isArray(descriptor.block.options) ? descriptor.block.options : [];
-    const value = getQuestionAnswer(descriptor, answerMap);
-    return typeof value === 'string' ? lookupOptionText(options, value) : formatAnswerValue(value);
-  }
+  const value = getQuestionAnswer(descriptor, answerMap);
+  const { block } = descriptor;
 
-  if (descriptor.block.type === 'MULTI_MCQ') {
-    const options = Array.isArray(descriptor.block.options) ? descriptor.block.options : [];
-    const validOptionIds = new Set(options.map((option) => option.id));
-    const rawValue = answerMap[descriptor.answerKey];
-    const ids = Array.isArray(rawValue)
-      ? rawValue.filter((entry): entry is string => typeof entry === 'string')
-      : typeof rawValue === 'string'
-        ? [rawValue]
-        : [];
-
-    if (ids.length === 0) {
-      return formatAnswerValue(rawValue);
-    }
-
-    const canMapAllIds = ids.every((id) => id.trim() !== '' && validOptionIds.has(id));
-    if (!canMapAllIds) {
-      return projectRawObjectiveAnswer(rawValue).canonical;
-    }
-
+  if (block.type === 'MULTI_MCQ') {
+    const options = Array.isArray(block.options) ? block.options : [];
+    const ids = Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : [];
     return ids.map((id) => lookupOptionText(options, id)).join(', ');
   }
 
-  const value =
-    descriptor.block.type === 'MULTI_MCQ' && typeof descriptor.answerIndex === 'number'
-      ? answerMap[descriptor.answerKey]
-      : getQuestionAnswer(descriptor, answerMap);
-  return projectRawObjectiveAnswer(value).canonical;
-}
+  if (block.type === 'SINGLE_MCQ') {
+    const options = getSingleMcqOptions(descriptor);
+    return typeof value === 'string' ? lookupOptionText(options, value) : '';
+  }
 
-export function getStudentAnswerRawProjection(
-  descriptor: StudentQuestionDescriptor,
-  answerMap: Record<string, unknown>,
-): RawObjectiveAnswerProjection {
-  const value =
-    descriptor.block.type === 'MULTI_MCQ' && typeof descriptor.answerIndex === 'number'
-      ? answerMap[descriptor.answerKey]
-      : getQuestionAnswer(descriptor, answerMap);
-  return projectRawObjectiveAnswer(value);
+  if (block.type === 'MATCHING') {
+    const headings = Array.isArray(block.headings) ? block.headings : [];
+    return typeof value === 'string' ? lookupHeadingText(headings, value) : '';
+  }
+
+  return formatAnswerValue(value);
 }
 
 function normalizedSetFromUnknown(value: unknown): Set<string> {
@@ -341,16 +290,6 @@ function normalizedSetFromUnknown(value: unknown): Set<string> {
     .filter((entry) => entry !== '');
 
   return new Set(items);
-}
-
-function countIntersection(left: Set<string>, right: Set<string>): number {
-  let count = 0;
-  for (const value of left) {
-    if (right.has(value)) {
-      count += 1;
-    }
-  }
-  return count;
 }
 
 export function isStudentAnswerCorrect(
@@ -367,13 +306,7 @@ export function isStudentAnswerCorrect(
 
   if (descriptor.block.type === 'MULTI_MCQ') {
     const correctSet = normalizedSetFromUnknown(correct);
-    const studentSet = normalizedSetFromUnknown(
-      typeof descriptor.answerIndex === 'number' ? answerMap[descriptor.answerKey] : student,
-    );
-    if (typeof descriptor.answerIndex === 'number') {
-      const correctSelections = countIntersection(correctSet, studentSet);
-      return correctSelections > descriptor.answerIndex;
-    }
+    const studentSet = normalizedSetFromUnknown(student);
     if (correctSet.size === 0 && studentSet.size === 0) return true;
     if (correctSet.size !== studentSet.size) return false;
     for (const value of correctSet) {

@@ -16,14 +16,12 @@ import type {
   NoteCompletionQuestion,
   QuestionAnswer,
   QuestionBlock,
-  SentenceBlank,
   SentenceCompletionQuestion,
   ShortAnswerQuestion,
+  SingleMCQQuestion,
   SingleMCQBlock,
-  SlotGroupRule,
-  SubAnswerTreeNode,
-  TableCell,
   TFNGQuestion,
+  MCQOption,
 } from '../types';
 import type { ExamEntity, ExamStatus } from '../types/domain';
 import type { IExamRepository } from './examRepository';
@@ -33,17 +31,9 @@ import {
   OFFICIAL_SPEAKING_RUBRIC,
   OFFICIAL_WRITING_RUBRIC,
 } from '../utils/builderEnhancements';
-import { getCanonicalTableCells, normalizeExamStateTableCompletionBlocks } from '../utils/tableCompletion';
 import { replaceWritingTaskContents } from '../utils/writingTaskUtils';
-import { flattenSubAnswerTree, hasSubAnswerTreeMode } from '../utils/subAnswerTree';
-import { healSubAnswerTreeForBlock } from '../utils/subAnswerTreeSlots';
 
 const MODULE_ORDER: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'];
-const NATIVE_LAYOUT_BLOCK_TYPES = new Set<QuestionBlock['type']>([
-  'SENTENCE_COMPLETION',
-  'TABLE_COMPLETION',
-  'NOTE_COMPLETION',
-]);
 
 const LEGACY_STATUS_MAP: Record<ExamStatus, Exam['status']> = {
   draft: 'Draft',
@@ -86,12 +76,76 @@ function normalizeDiagramImageUrl(block: DiagramLabelingBlock): DiagramLabelingB
   };
 }
 
-function normalizeQuestionBlockDiagram(block: QuestionBlock): QuestionBlock {
-  if (block.type !== 'DIAGRAM_LABELING') {
-    return block;
+function normalizeMcqOptions(options: unknown, idPrefix: string): MCQOption[] {
+  if (!Array.isArray(options)) {
+    return [];
   }
 
-  return normalizeDiagramImageUrl(block);
+  return options.map((option, optionIndex) => {
+    const optionValue = option as Partial<MCQOption> | undefined;
+    return {
+      id: readNonEmptyString(optionValue?.id) ?? `${idPrefix}:opt${optionIndex + 1}`,
+      text: typeof optionValue?.text === 'string' ? optionValue.text : '',
+      isCorrect: Boolean(optionValue?.isCorrect),
+    };
+  });
+}
+
+function normalizeSingleMcqBlock(block: SingleMCQBlock): SingleMCQBlock {
+  const legacyStem = readNonEmptyString(block.stem) ?? '';
+  const legacyOptions = normalizeMcqOptions(block.options, block.id);
+  const blockWithQuestions = block as SingleMCQBlock & { questions?: unknown };
+  const rawQuestions = Array.isArray(blockWithQuestions.questions) ? blockWithQuestions.questions : [];
+
+  const normalizedQuestions = rawQuestions.map((question, questionIndex) => {
+    const questionValue = question as Partial<SingleMCQQuestion> | undefined;
+    const questionId =
+      readNonEmptyString(questionValue?.id) ??
+      (questionIndex === 0 ? block.id : `${block.id}:q${questionIndex + 1}`);
+    const questionStem = readNonEmptyString(questionValue?.stem) ?? '';
+    const questionOptions = normalizeMcqOptions(questionValue?.options, questionId);
+
+    return {
+      id: questionId,
+      stem: questionStem,
+      options: questionOptions,
+    } satisfies SingleMCQQuestion;
+  });
+
+  if (normalizedQuestions.length === 0) {
+    return {
+      ...block,
+      stem: legacyStem,
+      options: legacyOptions,
+      questions: [
+        {
+          id: block.id,
+          stem: legacyStem,
+          options: legacyOptions,
+        },
+      ],
+    };
+  }
+
+  const firstQuestion = normalizedQuestions[0];
+  return {
+    ...block,
+    stem: legacyStem || firstQuestion?.stem || '',
+    options: legacyOptions.length > 0 ? legacyOptions : firstQuestion?.options ?? [],
+    questions: normalizedQuestions,
+  };
+}
+
+function normalizeQuestionBlock(block: QuestionBlock): QuestionBlock {
+  if (block.type === 'DIAGRAM_LABELING') {
+    return normalizeDiagramImageUrl(block);
+  }
+
+  if (block.type === 'SINGLE_MCQ') {
+    return normalizeSingleMcqBlock(block);
+  }
+
+  return block;
 }
 
 function normalizeQuestionBlocks(blocks: QuestionBlock[] | undefined): QuestionBlock[] {
@@ -99,65 +153,7 @@ function normalizeQuestionBlocks(blocks: QuestionBlock[] | undefined): QuestionB
     return [];
   }
 
-  return blocks.map((block) => normalizeQuestionBlockDiagram(block));
-}
-
-type GroupedSlot = {
-  id: string;
-  scoreGroupId?: string;
-  scoreWeight?: number;
-  groupRule?: SlotGroupRule;
-  requiredCorrect?: number;
-};
-
-function normalizeScoreGroupId(scoreGroupId: string | undefined): string | null {
-  const normalized = readNonEmptyString(scoreGroupId);
-  return normalized ?? null;
-}
-
-function toNonNegativeNumber(value: number | undefined): number | null {
-  if (!Number.isFinite(value)) return null;
-  if ((value ?? 0) < 0) return null;
-  return value as number;
-}
-
-function toPositiveInteger(value: number | undefined): number | null {
-  if (!Number.isInteger(value)) return null;
-  if ((value ?? 0) < 1) return null;
-  return value as number;
-}
-
-function resolveRootScoreRule(slots: GroupedSlot[]): SlotGroupRule {
-  const explicitRule = slots.find(
-    (slot): slot is GroupedSlot & { groupRule: SlotGroupRule } =>
-      slot.groupRule === 'all_required' || slot.groupRule === 'at_least_n',
-  )?.groupRule;
-  return explicitRule ?? 'all_required';
-}
-
-function resolveRootRequiredCorrect(slots: GroupedSlot[], slotCount: number): number {
-  const explicitRequired = slots
-    .map((slot) => toPositiveInteger(slot.requiredCorrect))
-    .find((value): value is number => value !== null);
-  const fallback = 1;
-  if (explicitRequired === undefined) return fallback;
-  return Math.min(explicitRequired, Math.max(slotCount, 1));
-}
-
-function resolveRootScoreWeight(slots: GroupedSlot[]): number {
-  const weights = slots
-    .map((slot) => toNonNegativeNumber(slot.scoreWeight))
-    .filter((weight): weight is number => weight !== null);
-  if (weights.length === 0) return 1;
-  return weights.reduce((total, weight) => total + weight, 0);
-}
-
-function resolveSlotRootKey(prefix: string, slot: GroupedSlot): string {
-  const scoreGroupId = normalizeScoreGroupId(slot.scoreGroupId);
-  if (!scoreGroupId) {
-    return `${prefix}:slot:${slot.id}`;
-  }
-  return `${prefix}:group:${scoreGroupId}`;
+  return blocks.map((block) => normalizeQuestionBlock(block));
 }
 
 export interface StudentQuestionDescriptor {
@@ -165,23 +161,10 @@ export interface StudentQuestionDescriptor {
   blockId: string;
   groupId: string;
   groupLabel: string;
-  rootId: string;
-  rootNumber: number;
-  numberLabel: string;
   isMulti: boolean;
   correctCount: number;
   answerKey: string;
   answerIndex?: number;
-  isSubAnswerTreeLeaf?: boolean;
-  treeRequired?: boolean;
-  rootLeafQuestionIds?: string[];
-  rootLabel?: string;
-  treePrompt?: string;
-  treeAcceptedAnswers?: string[];
-  rootScoreRule?: SlotGroupRule;
-  rootRequiredCorrect?: number;
-  rootScoreWeight?: number;
-  rootSlotCount?: number;
   block: QuestionBlock;
   question:
     | TFNGQuestion
@@ -190,6 +173,7 @@ export interface StudentQuestionDescriptor {
     | MatchingQuestion
     | ShortAnswerQuestion
     | SentenceCompletionQuestion
+    | SingleMCQQuestion
     | NoteCompletionQuestion
     | null;
 }
@@ -448,7 +432,7 @@ export function hydrateExamState(state: ExamState): ExamState {
     mergedState.writing.tasks ?? [],
   );
 
-  const hydrated: ExamState = {
+  return {
     ...mergedState,
     config,
     reading: {
@@ -493,32 +477,18 @@ export function hydrateExamState(state: ExamState): ExamState {
       gradeHistory: Array.isArray(mergedState.speaking.gradeHistory) ? mergedState.speaking.gradeHistory : [],
     },
   };
-
-  return normalizeExamStateTableCompletionBlocks(hydrated);
 }
 
 export function getStudentQuestionsForModule(
   state: ExamState,
   moduleType: ModuleType,
 ): StudentQuestionDescriptor[] {
-  let nextRootNumber = 1;
-  const append = (
-    questions: StudentQuestionDescriptor[],
-    block: QuestionBlock,
-    groupId: string,
-    groupLabel: string,
-  ) => {
-    const built = buildStudentQuestionDescriptors(block, groupId, groupLabel, nextRootNumber);
-    questions.push(...built.descriptors);
-    nextRootNumber = built.nextRootNumber;
-  };
-
   if (moduleType === 'reading') {
     const questions: StudentQuestionDescriptor[] = [];
 
     state.reading.passages.forEach((passage) => {
       passage.blocks.forEach((block) => {
-        append(questions, block, passage.id, passage.title);
+        questions.push(...buildStudentQuestionDescriptors(block, passage.id, passage.title));
       });
     });
 
@@ -530,7 +500,7 @@ export function getStudentQuestionsForModule(
 
     state.listening.parts.forEach((part) => {
       part.blocks.forEach((block) => {
-        append(questions, block, part.id, part.title);
+        questions.push(...buildStudentQuestionDescriptors(block, part.id, part.title));
       });
     });
 
@@ -551,86 +521,54 @@ export function countAnsweredQuestions(
   questions: StudentQuestionDescriptor[],
   answers: Record<string, unknown>,
 ): number {
-  const byRoot = new Map<string, StudentQuestionDescriptor[]>();
-  questions.forEach((question) => {
-    const bucket = byRoot.get(question.rootId);
-    if (bucket) {
-      bucket.push(question);
-    } else {
-      byRoot.set(question.rootId, [question]);
-    }
-  });
-
-  let answeredRoots = 0;
-  byRoot.forEach((rootQuestions) => {
-    if (!shouldCountRoot(rootQuestions)) {
-      return;
-    }
-    const treeLeaves = rootQuestions.filter((question) => question.isSubAnswerTreeLeaf);
-    if (treeLeaves.length > 0) {
-      const requiredLeaves = treeLeaves.filter((question) => question.treeRequired !== false);
-      const allRequiredAnswered = requiredLeaves.every(
-        (leaf) => getAnsweredSlotCount(leaf, answers) > 0,
-      );
-      if (allRequiredAnswered) {
-        answeredRoots += 1;
-      }
-      return;
-    }
-
-    const anyAnswered = rootQuestions.some(
-      (question) => getAnsweredSlotCount(question, answers) > 0,
-    );
-    if (anyAnswered) {
-      answeredRoots += 1;
-    }
-  });
-
-  return answeredRoots;
+  return questions.reduce((count, question) => {
+    return count + getAnsweredSlotCount(question, answers);
+  }, 0);
 }
 
 export function countQuestionSlots(questions: StudentQuestionDescriptor[]): number {
-  const byRoot = new Map<string, StudentQuestionDescriptor[]>();
-  questions.forEach((question) => {
-    const bucket = byRoot.get(question.rootId);
-    if (bucket) {
-      bucket.push(question);
-    } else {
-      byRoot.set(question.rootId, [question]);
-    }
-  });
-
-  let total = 0;
-  byRoot.forEach((rootQuestions) => {
-    if (shouldCountRoot(rootQuestions)) {
-      total += 1;
-    }
-  });
-  return total;
-}
-
-function shouldCountRoot(rootQuestions: StudentQuestionDescriptor[]): boolean {
-  const treeLeaves = rootQuestions.filter((question) => question.isSubAnswerTreeLeaf);
-  if (treeLeaves.length === 0) {
-    return true;
-  }
-  return treeLeaves.some((leaf) => leaf.treeRequired !== false);
+  return questions.reduce(
+    (count, question) => count + (question.isMulti ? question.correctCount : 1),
+    0,
+  );
 }
 
 export function getQuestionStartNumber(
   questions: StudentQuestionDescriptor[],
   questionId: string,
 ): number | null {
-  const question = questions.find((candidate) => candidate.id === questionId);
-  return question?.rootNumber ?? null;
+  let current = 1;
+
+  for (const question of questions) {
+    if (question.id === questionId) {
+      return current;
+    }
+    current += question.isMulti ? question.correctCount : 1;
+  }
+
+  return null;
 }
 
 export function getQuestionNumberLabel(
   questions: StudentQuestionDescriptor[],
   questionId: string,
 ): string {
+  const start = getQuestionStartNumber(questions, questionId);
+  if (start === null) {
+    return '';
+  }
+
   const question = questions.find((candidate) => candidate.id === questionId);
-  return question?.numberLabel ?? '';
+  if (!question) {
+    return '';
+  }
+
+  if (question.isMulti) {
+    const end = start + question.correctCount - 1;
+    return end === start ? `${start}` : `${start}-${end}`;
+  }
+
+  return `${start}`;
 }
 
 export function getQuestionAnswer(
@@ -689,365 +627,170 @@ function buildStudentQuestionDescriptors(
   block: QuestionBlock,
   groupId: string,
   groupLabel: string,
-  startRootNumber: number,
-): { descriptors: StudentQuestionDescriptor[]; nextRootNumber: number } {
-  const treeBlock = block as QuestionBlock & {
-    answerTree?: SubAnswerTreeNode[];
-    subAnswerModeEnabled?: boolean;
-  };
-
-  if (hasSubAnswerTreeMode(treeBlock) && !NATIVE_LAYOUT_BLOCK_TYPES.has(block.type)) {
-    const normalizedTree = healSubAnswerTreeForBlock(block, startRootNumber, treeBlock.answerTree);
-    const flattened = flattenSubAnswerTree(block.id, normalizedTree, startRootNumber);
-    const rootLookup = new Map(flattened.roots.map((root) => [root.rootId, root] as const));
-    return {
-      descriptors: flattened.leaves.map((leaf) => ({
-        id: leaf.id,
-        blockId: block.id,
-        groupId,
-        groupLabel,
-        rootId: leaf.rootId,
-        rootNumber: leaf.rootNumber,
-        numberLabel: leaf.numberLabel,
-        isMulti: false,
-        correctCount: 1,
-        answerKey: leaf.id,
-        isSubAnswerTreeLeaf: true,
-        treeRequired: leaf.required,
-        rootLeafQuestionIds: rootLookup.get(leaf.rootId)?.leafQuestionIds ?? [],
-        rootLabel: rootLookup.get(leaf.rootId)?.rootLabel ?? leaf.rootLabel,
-        treePrompt: leaf.prompt,
-        treeAcceptedAnswers: leaf.acceptedAnswers,
-        block,
-        question: null,
-      })),
-      nextRootNumber: flattened.nextRootNumber,
-    };
-  }
-
-  const descriptors: StudentQuestionDescriptor[] = [];
+): StudentQuestionDescriptor[] {
   switch (block.type) {
     case 'TFNG':
     case 'CLOZE':
     case 'MATCHING':
     case 'MAP':
     case 'SHORT_ANSWER':
-      block.questions.forEach((question) => {
-        descriptors.push({
+      return block.questions.map((question) => ({
+        id: question.id,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: question.id,
+        block,
+        question,
+      }));
+
+    case 'SENTENCE_COMPLETION':
+      return block.questions.flatMap((question) =>
+        question.blanks.map((blank, blankIndex) => ({
+          id: `${question.id}:${blank.id}`,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          isMulti: false,
+          correctCount: 1,
+          answerKey: question.id,
+          answerIndex: blankIndex,
+          block,
+          question,
+        })),
+      );
+
+    case 'NOTE_COMPLETION':
+      return block.questions.flatMap((question) =>
+        question.blanks.map((blank, blankIndex) => ({
+          id: `${question.id}:${blank.id}`,
+          blockId: block.id,
+          groupId,
+          groupLabel,
+          isMulti: false,
+          correctCount: 1,
+          answerKey: question.id,
+          answerIndex: blankIndex,
+          block,
+          question,
+        })),
+      );
+
+    case 'MULTI_MCQ':
+      return [buildMultiQuestionDescriptor(block, groupId, groupLabel)];
+
+    case 'SINGLE_MCQ': {
+      if (Array.isArray(block.questions) && block.questions.length > 0) {
+        return block.questions.map((question) => ({
           id: question.id,
           blockId: block.id,
           groupId,
           groupLabel,
-          rootId: question.id,
-          rootNumber: 0,
-          numberLabel: '',
           isMulti: false,
           correctCount: 1,
           answerKey: question.id,
           block,
           question,
-        });
-      });
-      break;
+        }));
+      }
 
-    case 'SENTENCE_COMPLETION':
-      block.questions.forEach((question) => {
-        const slots = question.blanks as GroupedSlot[];
-        const slotsByRoot = new Map<string, GroupedSlot[]>();
-        slots.forEach((slot) => {
-          const rootKey = resolveSlotRootKey(question.id, slot);
-          const bucket = slotsByRoot.get(rootKey);
-          if (bucket) {
-            bucket.push(slot);
-          } else {
-            slotsByRoot.set(rootKey, [slot]);
-          }
-        });
-
-        const rootConfigByKey = new Map<
-          string,
-          {
-            rootScoreRule: SlotGroupRule;
-            rootRequiredCorrect: number;
-            rootScoreWeight: number;
-            rootSlotCount: number;
-          }
-        >();
-        slotsByRoot.forEach((rootSlots, rootKey) => {
-          const rootSlotCount = rootSlots.length;
-          const rootScoreRule = resolveRootScoreRule(rootSlots);
-          const rootRequiredCorrect =
-            rootScoreRule === 'at_least_n'
-              ? resolveRootRequiredCorrect(rootSlots, rootSlotCount)
-              : rootSlotCount;
-          rootConfigByKey.set(rootKey, {
-            rootScoreRule,
-            rootRequiredCorrect,
-            rootScoreWeight: resolveRootScoreWeight(rootSlots),
-            rootSlotCount,
-          });
-        });
-
-        question.blanks.forEach((blank: SentenceBlank, blankIndex) => {
-          const id = `${question.id}:${blank.id}`;
-          const rootId = resolveSlotRootKey(question.id, blank);
-          const rootConfig = rootConfigByKey.get(rootId);
-          const rootScoringProps =
-            rootConfig
-              ? {
-                  rootScoreRule: rootConfig.rootScoreRule,
-                  rootRequiredCorrect: rootConfig.rootRequiredCorrect,
-                  rootScoreWeight: rootConfig.rootScoreWeight,
-                  rootSlotCount: rootConfig.rootSlotCount,
-                }
-              : {};
-          descriptors.push({
-            id,
-            blockId: block.id,
-            groupId,
-            groupLabel,
-            rootId,
-            rootNumber: 0,
-            numberLabel: '',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: question.id,
-            answerIndex: blankIndex,
-            ...rootScoringProps,
-            block,
-            question,
-          });
-        });
-      });
-      break;
-
-    case 'NOTE_COMPLETION':
-      block.questions.forEach((question) => {
-        question.blanks.forEach((blank, blankIndex) => {
-          const id = `${question.id}:${blank.id}`;
-          descriptors.push({
-            id,
-            blockId: block.id,
-            groupId,
-            groupLabel,
-            rootId: id,
-            rootNumber: 0,
-            numberLabel: '',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: question.id,
-            answerIndex: blankIndex,
-            block,
-            question,
-          });
-        });
-      });
-      break;
-
-    case 'MULTI_MCQ':
-      descriptors.push(...buildMultiQuestionDescriptors(block, groupId, groupLabel));
-      break;
-
-    case 'SINGLE_MCQ':
-      descriptors.push(buildSingleQuestionDescriptor(block, groupId, groupLabel));
-      break;
+      return [buildSingleQuestionDescriptor(block, groupId, groupLabel)];
+    }
 
     case 'DIAGRAM_LABELING':
-      block.labels.forEach((label, labelIndex) => {
-        const id = `${block.id}:${label.id}`;
-        descriptors.push({
-          id,
-          blockId: block.id,
-          groupId,
-          groupLabel,
-          rootId: id,
-          rootNumber: 0,
-          numberLabel: '',
-          isMulti: false,
-          correctCount: 1,
-          answerKey: block.id,
-          answerIndex: labelIndex,
-          block,
-          question: null,
-        });
-      });
-      break;
+      return block.labels.map((label, labelIndex) => ({
+        id: `${block.id}:${label.id}`,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: block.id,
+        answerIndex: labelIndex,
+        block,
+        question: null,
+      }));
 
     case 'FLOW_CHART':
-      block.steps.forEach((step, stepIndex) => {
-        const id = `${block.id}:${step.id}`;
-        descriptors.push({
-          id,
-          blockId: block.id,
-          groupId,
-          groupLabel,
-          rootId: id,
-          rootNumber: 0,
-          numberLabel: '',
-          isMulti: false,
-          correctCount: 1,
-          answerKey: block.id,
-          answerIndex: stepIndex,
-          block,
-          question: null,
-        });
-      });
-      break;
+      return block.steps.map((step, stepIndex) => ({
+        id: `${block.id}:${step.id}`,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: block.id,
+        answerIndex: stepIndex,
+        block,
+        question: null,
+      }));
 
     case 'TABLE_COMPLETION':
-      const canonicalCells = getCanonicalTableCells(block);
-      const slotsByRoot = new Map<string, GroupedSlot[]>();
-      canonicalCells.forEach((cell) => {
-        const rootKey = resolveSlotRootKey(block.id, cell);
-        const bucket = slotsByRoot.get(rootKey);
-        if (bucket) {
-          bucket.push(cell);
-        } else {
-          slotsByRoot.set(rootKey, [cell]);
-        }
-      });
-      const rootConfigByKey = new Map<
-        string,
-        {
-          rootScoreRule: SlotGroupRule;
-          rootRequiredCorrect: number;
-          rootScoreWeight: number;
-          rootSlotCount: number;
-        }
-      >();
-      slotsByRoot.forEach((rootSlots, rootKey) => {
-        const rootSlotCount = rootSlots.length;
-        const rootScoreRule = resolveRootScoreRule(rootSlots);
-        const rootRequiredCorrect =
-          rootScoreRule === 'at_least_n'
-            ? resolveRootRequiredCorrect(rootSlots, rootSlotCount)
-            : rootSlotCount;
-        rootConfigByKey.set(rootKey, {
-          rootScoreRule,
-          rootRequiredCorrect,
-          rootScoreWeight: resolveRootScoreWeight(rootSlots),
-          rootSlotCount,
-        });
-      });
-
-      canonicalCells.forEach((cell: TableCell, cellIndex) => {
-        const id = `${block.id}:${cell.id}`;
-        const rootId = resolveSlotRootKey(block.id, cell);
-        const rootConfig = rootConfigByKey.get(rootId);
-        const rootScoringProps =
-          rootConfig
-            ? {
-                rootScoreRule: rootConfig.rootScoreRule,
-                rootRequiredCorrect: rootConfig.rootRequiredCorrect,
-                rootScoreWeight: rootConfig.rootScoreWeight,
-                rootSlotCount: rootConfig.rootSlotCount,
-              }
-            : {};
-        descriptors.push({
-          id,
-          blockId: block.id,
-          groupId,
-          groupLabel,
-          rootId,
-          rootNumber: 0,
-          numberLabel: '',
-          isMulti: false,
-          correctCount: 1,
-          answerKey: block.id,
-          answerIndex: cellIndex,
-          ...rootScoringProps,
-          block,
-          question: null,
-        });
-      });
-      break;
+      return block.cells.map((cell, cellIndex) => ({
+        id: `${block.id}:${cell.id}`,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: block.id,
+        answerIndex: cellIndex,
+        block,
+        question: null,
+      }));
 
     case 'CLASSIFICATION':
-      block.items.forEach((item, itemIndex) => {
-        const id = `${block.id}:${item.id}`;
-        descriptors.push({
-          id,
-          blockId: block.id,
-          groupId,
-          groupLabel,
-          rootId: id,
-          rootNumber: 0,
-          numberLabel: '',
-          isMulti: false,
-          correctCount: 1,
-          answerKey: block.id,
-          answerIndex: itemIndex,
-          block,
-          question: null,
-        });
-      });
-      break;
+      return block.items.map((item, itemIndex) => ({
+        id: `${block.id}:${item.id}`,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: block.id,
+        answerIndex: itemIndex,
+        block,
+        question: null,
+      }));
 
     case 'MATCHING_FEATURES':
-      block.features.forEach((feature, featureIndex) => {
-        const id = `${block.id}:${feature.id}`;
-        descriptors.push({
-          id,
-          blockId: block.id,
-          groupId,
-          groupLabel,
-          rootId: id,
-          rootNumber: 0,
-          numberLabel: '',
-          isMulti: false,
-          correctCount: 1,
-          answerKey: block.id,
-          answerIndex: featureIndex,
-          block,
-          question: null,
-        });
-      });
-      break;
+      return block.features.map((feature, featureIndex) => ({
+        id: `${block.id}:${feature.id}`,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: block.id,
+        answerIndex: featureIndex,
+        block,
+        question: null,
+      }));
   }
-
-  let nextRootNumber = startRootNumber;
-  const rootNumbers = new Map<string, number>();
-  descriptors.forEach((descriptor) => {
-    const existing = rootNumbers.get(descriptor.rootId);
-    if (existing !== undefined) {
-      descriptor.rootNumber = existing;
-      descriptor.numberLabel = String(existing);
-      return;
-    }
-    rootNumbers.set(descriptor.rootId, nextRootNumber);
-    descriptor.rootNumber = nextRootNumber;
-    descriptor.numberLabel = String(nextRootNumber);
-    nextRootNumber += 1;
-  });
-
-  return { descriptors, nextRootNumber };
 }
 
-function buildMultiQuestionDescriptors(
+function buildMultiQuestionDescriptor(
   block: MultiMCQBlock,
   groupId: string,
   groupLabel: string,
-): StudentQuestionDescriptor[] {
+): StudentQuestionDescriptor {
   const requiredSelections = Number.isFinite(block.requiredSelections)
     ? Math.floor(block.requiredSelections)
     : 0;
-  const slotCount = Math.max(1, requiredSelections);
 
-  return Array.from({ length: slotCount }, (_, slotIndex) => ({
-    id: `${block.id}:slot:${slotIndex + 1}`,
+  return {
+    id: block.id,
     blockId: block.id,
     groupId,
     groupLabel,
-    rootId: `${block.id}:slot:${slotIndex + 1}`,
-    rootNumber: 0,
-    numberLabel: '',
-    isMulti: false,
-    correctCount: 1,
+    isMulti: true,
+    correctCount: Math.max(1, requiredSelections),
     answerKey: block.id,
-    answerIndex: slotIndex,
     block,
     question: null,
-  }));
+  };
 }
 
 function buildSingleQuestionDescriptor(
@@ -1060,9 +803,6 @@ function buildSingleQuestionDescriptor(
     blockId: block.id,
     groupId,
     groupLabel,
-    rootId: block.id,
-    rootNumber: 0,
-    numberLabel: '',
     isMulti: false,
     correctCount: 1,
     answerKey: block.id,

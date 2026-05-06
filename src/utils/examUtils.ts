@@ -6,65 +6,13 @@ import {
   SingleMCQBlock, ShortAnswerBlock, SentenceCompletionBlock, DiagramLabelingBlock,
   FlowChartBlock, TableCompletionBlock, NoteCompletionBlock, ClassificationBlock,
   MatchingFeaturesBlock, ShortAnswerQuestion, SentenceCompletionQuestion,
-  NoteCompletionQuestion, ClassificationItem, MatchingFeature, SubAnswerTreeNode
+  NoteCompletionQuestion, ClassificationItem, MatchingFeature, SingleMCQQuestion
 } from '../types';
 import { createDefaultConfig, normalizeExamConfig } from '../constants/examDefaults';
 import { hydrateExamState } from '../services/examAdapterService';
 import { resolveAcceptedAnswers } from './acceptedAnswers';
-import { analyzeTablePlaceholders, getCanonicalTableCells } from './tableCompletion';
-import {
-  coerceInsertedImages,
-  getInsertedImages,
-  supportsInsertedImages,
-} from './insertedImages';
-import { hasSubAnswerTreeMode, normalizeSubAnswerTree, validateSubAnswerTree } from './subAnswerTree';
-import {
-  buildSubAnswerSlotSeeds,
-  healSubAnswerTreeForBlock,
-  isTreeCapableBlockType,
-} from './subAnswerTreeSlots';
-
-const NATIVE_LAYOUT_BLOCK_TYPES = new Set<QuestionBlock['type']>([
-  'SENTENCE_COMPLETION',
-  'TABLE_COMPLETION',
-  'NOTE_COMPLETION',
-]);
-
-type GroupedSlot = {
-  id: string;
-  scoreGroupId?: string;
-};
-
-function normalizeScoreGroupId(value: string | undefined): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function countScoringRoots(slots: GroupedSlot[], prefixBySlotId: (slot: GroupedSlot) => string): number {
-  if (slots.length === 0) return 0;
-  const roots = new Set<string>();
-  slots.forEach((slot) => {
-    const groupId = normalizeScoreGroupId(slot.scoreGroupId);
-    if (groupId) {
-      roots.add(`${prefixBySlotId(slot)}:group:${groupId}`);
-      return;
-    }
-    roots.add(`${prefixBySlotId(slot)}:slot:${slot.id}`);
-  });
-  return roots.size;
-}
 
 export const getBlockQuestionCount = (block: QuestionBlock): number => {
-  const treeModeEnabled = Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled);
-  if (treeModeEnabled && isTreeCapableBlockType(block.type) && !NATIVE_LAYOUT_BLOCK_TYPES.has(block.type)) {
-    const roots = normalizeSubAnswerTree(
-      (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
-    );
-    const canonicalSlots = buildSubAnswerSlotSeeds(block, 1).length;
-    return Math.max(roots.length, canonicalSlots);
-  }
-
   switch (block.type) {
     case 'TFNG':
       return block.questions.length;
@@ -77,22 +25,17 @@ export const getBlockQuestionCount = (block: QuestionBlock): number => {
     case 'MULTI_MCQ':
       return block.requiredSelections;
     case 'SINGLE_MCQ':
-      return 1;
+      return Array.isArray(block.questions) && block.questions.length > 0 ? block.questions.length : 1;
     case 'SHORT_ANSWER':
       return block.questions.length;
     case 'SENTENCE_COMPLETION':
-      return block.questions.reduce(
-        (total, question) =>
-          total
-          + countScoringRoots(question.blanks, () => question.id),
-        0,
-      );
+      return block.questions.reduce((acc, q) => acc + q.blanks.length, 0);
     case 'DIAGRAM_LABELING':
       return block.labels.length;
     case 'FLOW_CHART':
       return block.steps.length;
     case 'TABLE_COMPLETION':
-      return countScoringRoots(getCanonicalTableCells(block), () => block.id);
+      return block.cells.length;
     case 'NOTE_COMPLETION':
       return block.questions.reduce((acc, q) => acc + q.blanks.length, 0);
     case 'CLASSIFICATION':
@@ -131,14 +74,24 @@ export const getListeningTotalQuestions = (parts: ListeningPart[]): number => {
   return parts.reduce((acc, p) => acc + getPartQuestionCount(p), 0);
 };
 
-export const flattenReadingQuestions = (passages: Passage[]): Array<{ passageId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | NoteCompletionQuestion | null; index: number }> => {
-  const result: Array<{ passageId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | NoteCompletionQuestion | null; index: number }> = [];
+export const flattenReadingQuestions = (passages: Passage[]): Array<{ passageId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | SingleMCQQuestion | NoteCompletionQuestion | null; index: number }> => {
+  const result: Array<{ passageId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | SingleMCQQuestion | NoteCompletionQuestion | null; index: number }> = [];
   let globalIndex = 0;
 
   for (const passage of passages) {
     for (const block of passage.blocks) {
+      if (block.type === 'SINGLE_MCQ') {
+        if (Array.isArray(block.questions) && block.questions.length > 0) {
+          for (const q of block.questions) {
+            result.push({ passageId: passage.id, block, question: q, index: globalIndex++ });
+          }
+        } else {
+          result.push({ passageId: passage.id, block, question: null, index: globalIndex++ });
+        }
+        continue;
+      }
       // Blocks without questions array - treat as single question
-      if (block.type === 'MULTI_MCQ' || block.type === 'SINGLE_MCQ' ||
+      if (block.type === 'MULTI_MCQ' ||
           block.type === 'DIAGRAM_LABELING' || block.type === 'FLOW_CHART' ||
           block.type === 'TABLE_COMPLETION' || block.type === 'CLASSIFICATION' ||
           block.type === 'MATCHING_FEATURES') {
@@ -155,14 +108,24 @@ export const flattenReadingQuestions = (passages: Passage[]): Array<{ passageId:
   return result;
 };
 
-export const flattenListeningQuestions = (parts: ListeningPart[]): Array<{ partId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | NoteCompletionQuestion | null; index: number }> => {
-  const result: Array<{ partId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | NoteCompletionQuestion | null; index: number }> = [];
+export const flattenListeningQuestions = (parts: ListeningPart[]): Array<{ partId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | SingleMCQQuestion | NoteCompletionQuestion | null; index: number }> => {
+  const result: Array<{ partId: string; block: QuestionBlock; question: TFNGQuestion | ClozeQuestion | MatchingQuestion | MapQuestion | ShortAnswerQuestion | SentenceCompletionQuestion | SingleMCQQuestion | NoteCompletionQuestion | null; index: number }> = [];
   let globalIndex = 0;
 
   for (const part of parts) {
     for (const block of part.blocks) {
+      if (block.type === 'SINGLE_MCQ') {
+        if (Array.isArray(block.questions) && block.questions.length > 0) {
+          for (const q of block.questions) {
+            result.push({ partId: part.id, block, question: q, index: globalIndex++ });
+          }
+        } else {
+          result.push({ partId: part.id, block, question: null, index: globalIndex++ });
+        }
+        continue;
+      }
       // Blocks without questions array - treat as single question
-      if (block.type === 'MULTI_MCQ' || block.type === 'SINGLE_MCQ' ||
+      if (block.type === 'MULTI_MCQ' ||
           block.type === 'DIAGRAM_LABELING' || block.type === 'FLOW_CHART' ||
           block.type === 'TABLE_COMPLETION' || block.type === 'CLASSIFICATION' ||
           block.type === 'MATCHING_FEATURES') {
@@ -338,29 +301,50 @@ const validateMultiMCQBlock = (block: MultiMCQBlock): ValidationError[] => {
 
 const validateSingleMCQBlock = (block: SingleMCQBlock): ValidationError[] => {
   const errors: ValidationError[] = [];
-  
-  if (!block.stem.trim()) {
-    errors.push({ blockId: block.id, field: 'stem', message: 'Question stem is required', type: 'error' });
+
+  const questions =
+    Array.isArray(block.questions) && block.questions.length > 0
+      ? block.questions
+      : [{ id: block.id, stem: block.stem, options: block.options }];
+
+  if (questions.length === 0) {
+    errors.push({ blockId: block.id, field: 'questions', message: 'At least one question is required', type: 'error' });
+    return errors;
   }
-  
-  if (block.options.length < 2) {
-    errors.push({ blockId: block.id, field: 'options', message: 'At least 2 options are required', type: 'error' });
-  }
-  
-  const correctCount = block.options.filter(o => o.isCorrect).length;
-  if (correctCount !== 1) {
-    errors.push({
-      blockId: block.id,
-      field: 'options',
-      message: `Must have exactly 1 correct option, currently has ${correctCount}`,
-      type: 'error'
-    });
-  }
-  
-  block.options.forEach((o, i) => {
-    if (!o.text.trim()) {
-      errors.push({ blockId: block.id, field: `options[${i}].text`, message: `Option ${i + 1} is empty`, type: 'error' });
+
+  questions.forEach((question, questionIndex) => {
+    const stemField = questions.length > 1 || Array.isArray(block.questions) ? `questions[${questionIndex}].stem` : 'stem';
+    const optionsField = questions.length > 1 || Array.isArray(block.questions) ? `questions[${questionIndex}].options` : 'options';
+
+    if (!question.stem.trim()) {
+      errors.push({ blockId: block.id, field: stemField, message: `Question ${questionIndex + 1} stem is required`, type: 'error' });
     }
+
+    if (!Array.isArray(question.options) || question.options.length < 2) {
+      errors.push({ blockId: block.id, field: optionsField, message: `Question ${questionIndex + 1} must have at least 2 options`, type: 'error' });
+      return;
+    }
+
+    const correctCount = question.options.filter((option) => option.isCorrect).length;
+    if (correctCount !== 1) {
+      errors.push({
+        blockId: block.id,
+        field: optionsField,
+        message: `Question ${questionIndex + 1} must have exactly 1 correct option, currently has ${correctCount}`,
+        type: 'error',
+      });
+    }
+
+    question.options.forEach((option, optionIndex) => {
+      if (!option.text.trim()) {
+        errors.push({
+          blockId: block.id,
+          field: `${optionsField}[${optionIndex}].text`,
+          message: `Option ${optionIndex + 1} in question ${questionIndex + 1} is empty`,
+          type: 'error',
+        });
+      }
+    });
   });
   
   return errors;
@@ -461,41 +445,12 @@ const validateTableCompletionBlock = (block: TableCompletionBlock): ValidationEr
     errors.push({ blockId: block.id, field: 'rows', message: 'At least one row is required', type: 'error' });
   }
   
-  const placeholderAnalysis = analyzeTablePlaceholders(block.rows, block.headers.length);
-  if (placeholderAnalysis.slots.length === 0) {
-    errors.push({
-      blockId: block.id,
-      field: 'rows',
-      message: 'At least one blank placeholder (____) is required',
-      type: 'error',
-    });
-  }
-
-  placeholderAnalysis.multiPlaceholderSlots.forEach((slot) => {
-    errors.push({
-      blockId: block.id,
-      field: `rows[${slot.row}][${slot.col}]`,
-      message: 'Each answer cell must contain only one blank placeholder',
-      type: 'error',
-    });
-  });
-
-  const canonicalCells = getCanonicalTableCells(block);
-  if (canonicalCells.length === 0) {
+  if (block.cells.length === 0) {
     errors.push({ blockId: block.id, field: 'cells', message: 'At least one cell to complete is required', type: 'error' });
   }
-
-  if (canonicalCells.length !== placeholderAnalysis.slots.length) {
-    errors.push({
-      blockId: block.id,
-      field: 'cells',
-      message: 'Table answer cells must match the blank placeholders',
-      type: 'error',
-    });
-  }
-
-  canonicalCells.forEach((cell, i) => {
-    if (resolveAcceptedAnswers(cell).length === 0) {
+  
+  block.cells.forEach((cell, i) => {
+    if (!cell.correctAnswer.trim()) {
       errors.push({ blockId: block.id, field: `cells[${i}].correctAnswer`, message: `Cell ${i + 1} has no answer`, type: 'error' });
     }
   });
@@ -573,50 +528,8 @@ const validateMatchingFeaturesBlock = (block: MatchingFeaturesBlock): Validation
   return errors;
 };
 
-const validateInsertedImages = (block: QuestionBlock): ValidationError[] => {
-  if (!supportsInsertedImages(block)) {
-    return [];
-  }
-
-  const errors: ValidationError[] = [];
-  const insertedImages = getInsertedImages(block);
-
-  insertedImages.forEach((image, index) => {
-    if (!image.url.trim()) {
-      errors.push({
-        blockId: block.id,
-        field: `insertedImages[${index}].url`,
-        message: `Inserted image ${index + 1} URL is required`,
-        type: 'error',
-      });
-    }
-  });
-
-  return errors;
-};
-
 export const validateBlock = (block: QuestionBlock): BlockValidation => {
   let errors: ValidationError[] = [];
-
-  if (hasSubAnswerTreeMode(block)) {
-    const tree = healSubAnswerTreeForBlock(
-      block,
-      1,
-      (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
-    );
-    errors = validateSubAnswerTree(tree).map((issue) => ({
-      blockId: block.id,
-      field: issue.field,
-      message: issue.message,
-      type: 'error',
-    }));
-    errors.push(...validateInsertedImages(block));
-    return {
-      blockId: block.id,
-      isValid: errors.filter((error) => error.type === 'error').length === 0,
-      errors,
-    };
-  }
   
   switch (block.type) {
     case 'TFNG':
@@ -662,8 +575,6 @@ export const validateBlock = (block: QuestionBlock): BlockValidation => {
       errors = validateMatchingFeaturesBlock(block);
       break;
   }
-
-  errors.push(...validateInsertedImages(block));
   
   return {
     blockId: block.id,
@@ -794,7 +705,6 @@ interface LegacyBlock {
   id: string;
   type: string;
   instruction?: string;
-  insertedImages?: unknown;
   stem?: string;
   assetUrl?: string;
   correctCount?: number;
@@ -824,21 +734,10 @@ interface LegacyBlock {
 }
 
 const migrateLegacyBlock = (block: LegacyBlock): QuestionBlock => {
-  const shouldIncludeInsertedImages = supportsInsertedImages(
-    block.type as QuestionBlock['type'],
-  );
   const baseBlock = {
     id: block.id,
     type: block.type,
-    instruction: block.instruction || '',
-    ...(shouldIncludeInsertedImages
-      ? {
-          insertedImages: coerceInsertedImages(
-            block.insertedImages,
-            `${block.id}-img`,
-          ),
-        }
-      : {}),
+    instruction: block.instruction || ''
   };
   
   switch (block.type) {

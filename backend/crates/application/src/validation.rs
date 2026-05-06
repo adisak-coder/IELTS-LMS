@@ -419,12 +419,6 @@ fn validate_question_block(
         .and_then(|t| t.as_str())
         .unwrap_or("unknown");
 
-    if block_type != "TABLE_COMPLETION" {
-        if let Some(root_count) = validate_sub_answer_tree_block(block_obj, &field_prefix, result) {
-            return root_count;
-        }
-    }
-
     match block_type {
         "SINGLE_MCQ" => validate_single_mcq(block_obj, &field_prefix, result),
         "SHORT_ANSWER" => validate_short_answer(block_obj, &field_prefix, result),
@@ -446,123 +440,102 @@ fn validate_question_block(
     }
 }
 
-fn validate_sub_answer_tree_block(
-    block: &serde_json::Map<String, serde_json::Value>,
-    field_prefix: &str,
-    result: &mut ValidationResult,
-) -> Option<i32> {
-    let enabled = block
-        .get("subAnswerModeEnabled")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    if !enabled {
-        return None;
-    }
-
-    let roots = block.get("answerTree").and_then(|value| value.as_array());
-    let Some(roots) = roots else {
-        result.add_error(
-            format!("{}.answerTree", field_prefix),
-            "Sub-answer mode requires answerTree.",
-        );
-        return Some(0);
-    };
-    if roots.is_empty() {
-        result.add_error(
-            format!("{}.answerTree", field_prefix),
-            "Sub-answer tree requires at least one root node.",
-        );
-        return Some(0);
-    }
-
-    let mut seen_ids = std::collections::HashSet::new();
-    let mut leaf_count = 0i32;
-    for (root_index, root) in roots.iter().enumerate() {
-        let mut stack: Vec<(&serde_json::Value, usize)> = vec![(root, 1)];
-        while let Some((node, depth)) = stack.pop() {
-            let Some(node_obj) = node.as_object() else {
-                continue;
-            };
-            let node_id = node_obj
-                .get("id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("")
-                .trim()
-                .to_owned();
-            if node_id.is_empty() {
-                result.add_error(
-                    format!("{}.answerTree[{}].id", field_prefix, root_index),
-                    "Every sub-answer node must have an id.",
-                );
-            } else if !seen_ids.insert(node_id.clone()) {
-                result.add_error(
-                    format!("{}.answerTree[{}].id", field_prefix, root_index),
-                    "Sub-answer node ids must be unique within the block.",
-                );
-            }
-
-            if depth > 10 {
-                result.add_error(
-                    format!("{}.answerTree[{}]", field_prefix, root_index),
-                    "Sub-answer tree depth cannot exceed 10.",
-                );
-            }
-
-            let children = node_obj.get("children").and_then(|value| value.as_array());
-            let is_leaf = children.map(|value| value.is_empty()).unwrap_or(true);
-            if is_leaf {
-                leaf_count += 1;
-                let required = node_obj
-                    .get("required")
-                    .and_then(|value| value.as_bool())
-                    .unwrap_or(true);
-                if required {
-                    let has_accepted = node_obj
-                        .get("acceptedAnswers")
-                        .and_then(|value| value.as_array())
-                        .is_some_and(|values| {
-                            values.iter().any(|item| {
-                                item.as_str()
-                                    .map(|answer| !answer.trim().is_empty())
-                                    .unwrap_or(false)
-                            })
-                        });
-                    if !has_accepted {
-                        result.add_error(
-                            format!(
-                                "{}.answerTree[{}].acceptedAnswers",
-                                field_prefix, root_index
-                            ),
-                            "Required leaf nodes must define at least one accepted answer.",
-                        );
-                    }
-                }
-                continue;
-            }
-
-            if let Some(children) = children {
-                for child in children {
-                    stack.push((child, depth + 1));
-                }
-            }
-        }
-    }
-
-    if leaf_count == 0 {
-        result.add_error(
-            format!("{}.answerTree", field_prefix),
-            "Sub-answer tree must contain at least one leaf node.",
-        );
-    }
-
-    Some(roots.len() as i32)
-}
-
 fn validate_single_mcq(
     block: &serde_json::Map<String, serde_json::Value>,
     field_prefix: &str,
     result: &mut ValidationResult,
 ) -> i32 {
+    let questions = block.get("questions").and_then(|q| q.as_array());
+    if let Some(questions) = questions {
+        if questions.is_empty() {
+            result.add_error(
+                format!("{}.questions", field_prefix),
+                "At least one question is required for SINGLE_MCQ",
+            );
+            return 0;
+        }
+
+        for (question_idx, question) in questions.iter().enumerate() {
+            let Some(question_obj) = question.as_object() else {
+                result.add_error(
+                    format!("{}.questions[{}]", field_prefix, question_idx),
+                    "Invalid SINGLE_MCQ question",
+                );
+                continue;
+            };
+
+            if question_obj
+                .get("stem")
+                .and_then(|s| s.as_str())
+                .map(|s| s.trim().is_empty())
+                .unwrap_or(true)
+            {
+                result.add_error(
+                    format!("{}.questions[{}].stem", field_prefix, question_idx),
+                    "Question stem is required",
+                );
+            }
+
+            let options = question_obj.get("options").and_then(|o| o.as_array());
+            match options {
+                None => {
+                    result.add_error(
+                        format!("{}.questions[{}].options", field_prefix, question_idx),
+                        "Options are required for MCQ",
+                    );
+                }
+                Some(opts) if opts.len() < 2 => {
+                    result.add_error(
+                        format!("{}.questions[{}].options", field_prefix, question_idx),
+                        "At least 2 options are required for MCQ",
+                    );
+                }
+                Some(opts) => {
+                    let correct_count = opts
+                        .iter()
+                        .filter(|opt| {
+                            opt.as_object()
+                                .and_then(|o| o.get("isCorrect"))
+                                .and_then(|c| c.as_bool())
+                                .unwrap_or(false)
+                        })
+                        .count();
+
+                    if correct_count == 0 {
+                        result.add_error(
+                            format!("{}.questions[{}].options", field_prefix, question_idx),
+                            "At least one option must be marked as correct",
+                        );
+                    } else if correct_count > 1 {
+                        result.add_error(
+                            format!("{}.questions[{}].options", field_prefix, question_idx),
+                            "Exactly one option must be marked as correct for SINGLE_MCQ",
+                        );
+                    }
+
+                    for (opt_idx, opt) in opts.iter().enumerate() {
+                        if opt
+                            .as_object()
+                            .and_then(|o| o.get("text"))
+                            .and_then(|t| t.as_str())
+                            .map(|s| s.trim().is_empty())
+                            .unwrap_or(true)
+                        {
+                            result.add_error(
+                                format!(
+                                    "{}.questions[{}].options[{}].text",
+                                    field_prefix, question_idx, opt_idx
+                                ),
+                                "Option text is required",
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        return questions.len() as i32;
+    }
+
     if block
         .get("stem")
         .and_then(|s| s.as_str())
@@ -746,19 +719,9 @@ fn validate_sentence_completion(
                     }
                     Some(bs) => {
                         for (blank_idx, blank) in bs.iter().enumerate() {
-                            let Some(blank_obj) = blank.as_object() else {
-                                result.add_error(
-                                    format!(
-                                        "{}.questions[{}].blanks[{}]",
-                                        field_prefix, q_idx, blank_idx
-                                    ),
-                                    "Blank must be an object",
-                                );
-                                continue;
-                            };
-
-                            if blank_obj
-                                .get("correctAnswer")
+                            if blank
+                                .as_object()
+                                .and_then(|b| b.get("correctAnswer"))
                                 .and_then(|a| a.as_str())
                                 .map(|s| s.trim().is_empty())
                                 .unwrap_or(true)
@@ -771,15 +734,6 @@ fn validate_sentence_completion(
                                     "Blank answer is required",
                                 );
                             }
-
-                            validate_group_scoring_fields(
-                                blank_obj,
-                                &format!(
-                                    "{}.questions[{}].blanks[{}]",
-                                    field_prefix, q_idx, blank_idx
-                                ),
-                                result,
-                            );
                         }
                         blank_count += bs.len() as i32;
                     }
@@ -969,89 +923,9 @@ fn validate_table_completion(
                         "Cell answer is required",
                     );
                 }
-
-                validate_group_scoring_fields(
-                    cell_obj,
-                    &format!("{}.cells[{}]", field_prefix, cell_idx),
-                    result,
-                );
             }
             cs.len() as i32
         }
-    }
-}
-
-fn validate_group_scoring_fields(
-    slot: &serde_json::Map<String, serde_json::Value>,
-    field_prefix: &str,
-    result: &mut ValidationResult,
-) {
-    let score_group_id = slot
-        .get("scoreGroupId")
-        .and_then(|value| value.as_str())
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty());
-    let has_group_rule = slot.get("groupRule").is_some();
-    let has_required_correct = slot.get("requiredCorrect").is_some();
-    let has_score_weight = slot.get("scoreWeight").is_some();
-
-    if score_group_id.is_none() && (has_group_rule || has_required_correct || has_score_weight) {
-        result.add_error(
-            format!("{}.scoreGroupId", field_prefix),
-            "scoreGroupId is required when grouped scoring fields are provided",
-        );
-        return;
-    }
-
-    if let Some(score_weight_value) = slot.get("scoreWeight") {
-        let Some(score_weight) = score_weight_value.as_f64() else {
-            result.add_error(
-                format!("{}.scoreWeight", field_prefix),
-                "scoreWeight must be a number",
-            );
-            return;
-        };
-        if score_weight < 0.0 {
-            result.add_error(
-                format!("{}.scoreWeight", field_prefix),
-                "scoreWeight must be a non-negative number",
-            );
-        }
-    }
-
-    let group_rule = match slot.get("groupRule") {
-        None => "all_required",
-        Some(value) => match value.as_str() {
-            Some(rule) => rule,
-            None => {
-                result.add_error(
-                    format!("{}.groupRule", field_prefix),
-                    "groupRule must be a string",
-                );
-                return;
-            }
-        },
-    };
-
-    if !matches!(group_rule, "all_required" | "at_least_n") {
-        result.add_error(
-            format!("{}.groupRule", field_prefix),
-            "groupRule must be 'all_required' or 'at_least_n'",
-        );
-        return;
-    }
-
-    if group_rule != "at_least_n" {
-        return;
-    }
-
-    let required_correct = slot.get("requiredCorrect").and_then(|value| value.as_i64());
-    match required_correct {
-        Some(value) if value >= 1 => {}
-        _ => result.add_error(
-            format!("{}.requiredCorrect", field_prefix),
-            "requiredCorrect must be an integer >= 1 when groupRule is 'at_least_n'",
-        ),
     }
 }
 
@@ -1335,19 +1209,13 @@ fn count_questions_in_block(block: &serde_json::Map<String, serde_json::Value>) 
     if let Some(cells) = block.get("cells").and_then(|c| c.as_array()) {
         return cells.len() as i32;
     }
-    if let Some(block_type) = block.get("type").and_then(|t| t.as_str()) {
-        if block_type == "MULTI_MCQ" {
-            let required = block
-                .get("requiredSelections")
-                .and_then(|value| value.as_i64())
-                .unwrap_or(1)
-                .max(1)
-                .min(i32::MAX as i64);
-            return required as i32;
-        }
-        if block_type.contains("MCQ") {
-            return 1;
-        }
+    if block
+        .get("type")
+        .and_then(|t| t.as_str())
+        .map(|t| t.contains("MCQ"))
+        .unwrap_or(false)
+    {
+        return 1;
     }
     0
 }
@@ -1576,24 +1444,6 @@ mod tests {
     }
 
     #[test]
-    fn count_questions_in_block_uses_required_selections_for_multi_mcq() {
-        let block = json!({
-            "id": "multi-1",
-            "type": "MULTI_MCQ",
-            "requiredSelections": 3,
-            "options": [
-                { "id": "A", "text": "A", "isCorrect": true },
-                { "id": "B", "text": "B", "isCorrect": true },
-                { "id": "C", "text": "C", "isCorrect": true },
-                { "id": "D", "text": "D", "isCorrect": false }
-            ]
-        });
-
-        let count = count_questions_in_block(block.as_object().expect("block object"));
-        assert_eq!(count, 3);
-    }
-
-    #[test]
     fn listening_question_blocks_empty_instruction_is_allowed() {
         let content = json!({
             "listening": {
@@ -1676,28 +1526,34 @@ mod tests {
     }
 
     #[test]
-    fn table_completion_ignores_sub_answer_tree_validation() {
+    fn reading_single_mcq_question_list_is_valid() {
         let content = json!({
-            "listening": {
-                "parts": [{
-                    "id": "part-1",
-                    "title": "Part 1",
+            "reading": {
+                "passages": [{
+                    "id": "passage-1",
+                    "title": "Passage 1",
                     "blocks": [{
-                        "id": "block-table-1",
-                        "type": "TABLE_COMPLETION",
-                        "subAnswerModeEnabled": true,
-                        "answerTree": [{
-                            "id": "root-a",
-                            "children": [{ "id": "leaf-a", "required": true, "acceptedAnswers": [] }]
-                        }],
-                        "headers": ["Col A", "Col B"],
-                        "rows": ["Row 1"],
-                        "cells": [{
-                            "id": "cell-1",
-                            "row": 0,
-                            "col": 1,
-                            "correctAnswer": "alpha"
-                        }]
+                        "id": "single-block",
+                        "type": "SINGLE_MCQ",
+                        "instruction": "Choose one.",
+                        "questions": [
+                            {
+                                "id": "single-q1",
+                                "stem": "Question one?",
+                                "options": [
+                                    {"id": "opt-1", "text": "A", "isCorrect": true},
+                                    {"id": "opt-2", "text": "B", "isCorrect": false}
+                                ]
+                            },
+                            {
+                                "id": "single-q2",
+                                "stem": "Question two?",
+                                "options": [
+                                    {"id": "opt-3", "text": "C", "isCorrect": false},
+                                    {"id": "opt-4", "text": "D", "isCorrect": true}
+                                ]
+                            }
+                        ]
                     }]
                 }]
             }
@@ -1705,29 +1561,60 @@ mod tests {
 
         let config = json!({
             "sections": {
-                "listening": {
+                "reading": {
                     "enabled": true,
                     "bandScoreTable": {
                         "1": 1.0, "2": 2.0, "3": 3.0, "4": 4.0, "5": 5.0,
                         "6": 6.0, "7": 7.0, "8": 8.0, "9": 9.0, "10": 10.0
                     }
                 },
-                "reading": {"enabled": false},
+                "listening": {"enabled": false},
                 "writing": {"enabled": false},
                 "speaking": {"enabled": false}
             }
         });
 
         let result = validate_exam_content(&content, &config);
+        assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+    }
 
-        assert!(
-            !result
-                .errors
-                .iter()
-                .any(|error| error.field.contains("answerTree")
-                    || error.message.contains("accepted answer")),
-            "expected TABLE_COMPLETION to skip answerTree validation, got errors: {:?}",
-            result.errors
-        );
+    #[test]
+    fn reading_legacy_single_mcq_shape_remains_valid() {
+        let content = json!({
+            "reading": {
+                "passages": [{
+                    "id": "passage-1",
+                    "title": "Passage 1",
+                    "blocks": [{
+                        "id": "single-block",
+                        "type": "SINGLE_MCQ",
+                        "instruction": "Choose one.",
+                        "stem": "Legacy question?",
+                        "options": [
+                            {"id": "opt-1", "text": "A", "isCorrect": true},
+                            {"id": "opt-2", "text": "B", "isCorrect": false}
+                        ]
+                    }]
+                }]
+            }
+        });
+
+        let config = json!({
+            "sections": {
+                "reading": {
+                    "enabled": true,
+                    "bandScoreTable": {
+                        "1": 1.0, "2": 2.0, "3": 3.0, "4": 4.0, "5": 5.0,
+                        "6": 6.0, "7": 7.0, "8": 8.0, "9": 9.0, "10": 10.0
+                    }
+                },
+                "listening": {"enabled": false},
+                "writing": {"enabled": false},
+                "speaking": {"enabled": false}
+            }
+        });
+
+        let result = validate_exam_content(&content, &config);
+        assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
     }
 }

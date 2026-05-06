@@ -1,7 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { getStudentQuestionsForModule } from '../../../services/examAdapterService';
 
 import type {
   ClassificationBlock,
@@ -9,6 +8,7 @@ import type {
   ExamState,
   MatchingFeaturesBlock,
   MultiMCQBlock,
+  SingleMCQBlock,
   SentenceCompletionBlock,
   TableCompletionBlock,
 } from '../../../types';
@@ -32,63 +32,24 @@ describe('student question experience', () => {
             blockId: 'q1',
             groupId: 'group-1',
             groupLabel: 'Section 1',
-            rootId: 'q1',
-            rootNumber: 1,
-            numberLabel: '1',
             isMulti: false,
             correctCount: 1,
-            answerKey: 'q1',
           },
           {
-            id: 'multi-1:slot:1',
+            id: 'multi-1',
             blockId: 'multi-1',
             groupId: 'group-1',
             groupLabel: 'Section 1',
-            rootId: 'multi-1:slot:1',
-            rootNumber: 2,
-            numberLabel: '2',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'multi-1',
-            answerIndex: 0,
-          },
-          {
-            id: 'multi-1:slot:2',
-            blockId: 'multi-1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'multi-1:slot:2',
-            rootNumber: 3,
-            numberLabel: '3',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'multi-1',
-            answerIndex: 1,
-          },
-          {
-            id: 'multi-1:slot:3',
-            blockId: 'multi-1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'multi-1:slot:3',
-            rootNumber: 4,
-            numberLabel: '4',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'multi-1',
-            answerIndex: 2,
+            isMulti: true,
+            correctCount: 3,
           },
           {
             id: 'q5',
             blockId: 'q5',
             groupId: 'group-1',
             groupLabel: 'Section 1',
-            rootId: 'q5',
-            rootNumber: 5,
-            numberLabel: '5',
             isMulti: false,
             correctCount: 1,
-            answerKey: 'q5',
           },
         ]}
         currentQuestionId="q1"
@@ -98,193 +59,9 @@ describe('student question experience', () => {
       />,
     );
 
-    expect(
-      screen.getByRole('contentinfo', { name: /question navigation and progress/i }),
-    ).toHaveClass('student-exam-footer');
     expect(screen.getByRole('button', { name: '1' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '2' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '3' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '4' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '2-4' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '5' })).toBeInTheDocument();
-  });
-
-  it('shows root-only footer numbers when a question has sub-answers', () => {
-    render(
-      <StudentFooter
-        questions={[
-          {
-            id: 'q27',
-            blockId: 'b1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'q27',
-            rootNumber: 27,
-            numberLabel: '27',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'q27',
-          },
-          {
-            id: 'q28::leaf-1',
-            blockId: 'b1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'q28',
-            rootNumber: 28,
-            numberLabel: '28.1',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'q28::leaf-1',
-            isSubAnswerTreeLeaf: true,
-          },
-          {
-            id: 'q28::leaf-2',
-            blockId: 'b1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'q28',
-            rootNumber: 28,
-            numberLabel: '28.2',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'q28::leaf-2',
-            isSubAnswerTreeLeaf: true,
-          },
-          {
-            id: 'q29',
-            blockId: 'b1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'q29',
-            rootNumber: 29,
-            numberLabel: '29',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'q29',
-          },
-          {
-            id: 'q30',
-            blockId: 'b1',
-            groupId: 'group-1',
-            groupLabel: 'Section 1',
-            rootId: 'q30',
-            rootNumber: 30,
-            numberLabel: '30',
-            isMulti: false,
-            correctCount: 1,
-            answerKey: 'q30',
-          },
-        ]}
-        currentQuestionId="q28::leaf-2"
-        onNavigate={() => {}}
-        answers={{}}
-        onSubmit={() => {}}
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: '27' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '28' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '29' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '30' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '28.1' })).toBeNull();
-    expect(screen.queryByRole('button', { name: '28.2' })).toBeNull();
-  });
-
-  it('marks matching-dropdown answer changes as discrete interactions', () => {
-    const onChange = vi.fn();
-    const block = {
-      id: 'match-1',
-      type: 'MATCHING',
-      instruction: 'Match headings',
-      headings: [
-        { id: 'h1', text: 'Heading one' },
-        { id: 'h2', text: 'Heading two' },
-      ],
-      questions: [
-        {
-          id: 'q1',
-          paragraphLabel: 'A',
-          correctHeadingId: 'h1',
-        },
-      ],
-    } as any;
-
-    const question = {
-      id: 'q1',
-      paragraphLabel: 'A',
-      correctHeadingId: 'h1',
-    } as any;
-
-    render(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={1}
-        answer=""
-        onChange={onChange}
-      />,
-    );
-
-    const select = screen.getByRole('combobox', { name: /heading selection for question 1/i });
-    fireEvent.change(select, { target: { value: 'ii' } });
-
-    expect(onChange).toHaveBeenCalledWith('ii', {
-      interactionType: 'discrete',
-    });
-  });
-
-  it('applies responsive auto-width sizing to matching dropdown selections', () => {
-    const block = {
-      id: 'match-1',
-      type: 'MATCHING',
-      instruction: 'Match headings',
-      headings: [
-        { id: 'h1', text: 'Short title' },
-        { id: 'h2', text: 'A much longer heading title that should expand width' },
-      ],
-      questions: [
-        {
-          id: 'q1',
-          paragraphLabel: 'A',
-          correctHeadingId: 'h1',
-        },
-      ],
-    } as any;
-
-    const question = {
-      id: 'q1',
-      paragraphLabel: 'A',
-      correctHeadingId: 'h1',
-    } as any;
-
-    const { rerender } = render(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={1}
-        answer=""
-        onChange={() => {}}
-      />,
-    );
-
-    const select = screen.getByRole('combobox', { name: /heading selection for question 1/i });
-    expect(select).toHaveStyle({ maxWidth: '100%' });
-    expect(select).toHaveClass('min-w-[12rem]');
-    const initialWidth = parseFloat(select.style.width || '0');
-
-    rerender(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={1}
-        answer="ii"
-        onChange={() => {}}
-      />,
-    );
-
-    const resizedSelect = screen.getByRole('combobox', { name: /heading selection for question 1/i });
-    const resizedWidth = parseFloat(resizedSelect.style.width || '0');
-    expect(resizedWidth).toBeGreaterThan(initialWidth);
   });
 
   it('does not show decorative category tags for classification questions', () => {
@@ -339,6 +116,44 @@ describe('student question experience', () => {
     expect(select).toHaveClass('w-full');
     expect(select).toHaveClass('min-w-0');
     expect(select).not.toHaveClass('min-w-[11rem]');
+  });
+
+  it('uses accessibility typography classes for table completion content', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-1',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Metric', 'Value'],
+      rows: [
+        ['Temperature', ''],
+        ['Humidity', 'High'],
+      ],
+      cells: [
+        { id: 'cell-1', row: 0, col: 1, correctAnswer: 'Warm' },
+      ],
+      answerRule: 'ONE_WORD',
+    };
+
+    const { container } = render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={21}
+        answer={['']}
+        onChange={() => {}}
+      />,
+    );
+
+    const table = container.querySelector('table');
+    expect(table).not.toBeNull();
+    expect(table).toHaveClass('text-[length:var(--student-control-font-size)]');
+    expect(table).not.toHaveClass('text-sm');
+    expect(screen.getByRole('columnheader', { name: 'Metric' })).toBeInTheDocument();
+    expect(screen.getByText('Humidity')).toBeInTheDocument();
+
+    const answerInput = screen.getByRole('textbox', { name: 'Answer for question 21' });
+    expect(answerInput).toHaveClass('text-[length:var(--student-control-font-size)]');
+    expect(answerInput).not.toHaveClass('text-sm');
   });
 
   it('does not show decorative option tags for matching feature questions', () => {
@@ -406,86 +221,6 @@ describe('student question experience', () => {
     expect(onNavigate).toHaveBeenCalledWith('q2');
   });
 
-  it('renders separate footer numbers for MULTI_MCQ slots and navigates to the selected slot', () => {
-    const onNavigate = vi.fn();
-    const state = {
-      title: 'Reading Test',
-      type: 'Academic',
-      activeModule: 'reading',
-      activePassageId: 'passage-1',
-      activeListeningPartId: 'part-1',
-      config: {
-        type: 'Academic',
-        delivery: {
-          launchMode: 'proctor_start',
-          transitionMode: 'auto_with_proctor_override',
-          allowedExtensionMinutes: [5],
-        },
-        sections: {
-          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER', 'MULTI_MCQ'] },
-          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-        },
-      },
-      reading: {
-        passages: [
-          {
-            id: 'passage-1',
-            title: 'Passage 1',
-            content: 'Read the passage.',
-            images: [],
-            blocks: [
-              {
-                id: 'reading-pre',
-                type: 'SHORT_ANSWER',
-                instruction: 'Answer question 1.',
-                questions: [{ id: 'reading-q1', prompt: 'Question 1', correctAnswer: 'answer', answerRule: 'ONE_WORD' }],
-              },
-              {
-                id: 'reading-multi',
-                type: 'MULTI_MCQ',
-                instruction: 'Choose two letters.',
-                stem: 'Pick two',
-                requiredSelections: 2,
-                options: [
-                  { id: 'a', text: 'A', isCorrect: true },
-                  { id: 'b', text: 'B', isCorrect: true },
-                  { id: 'c', text: 'C', isCorrect: false },
-                ],
-              },
-              {
-                id: 'reading-post',
-                type: 'SHORT_ANSWER',
-                instruction: 'Answer question 4.',
-                questions: [{ id: 'reading-q4', prompt: 'Question 4', correctAnswer: 'answer', answerRule: 'ONE_WORD' }],
-              },
-            ],
-          },
-        ],
-      },
-      listening: { parts: [] },
-      writing: { task1Prompt: '', task2Prompt: '' },
-      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
-    } as unknown as ExamState;
-
-    const questions = getStudentQuestionsForModule(state, 'reading');
-    render(
-      <StudentFooter
-        questions={questions}
-        currentQuestionId="reading-q1"
-        onNavigate={onNavigate}
-        answers={{}}
-        onSubmit={() => {}}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: '3' }));
-    expect(onNavigate).toHaveBeenCalledWith('reading-multi:slot:2');
-    expect(screen.getByRole('button', { name: '2' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '4' })).toBeInTheDocument();
-  });
-
   it('renders semantic checkbox inputs for multi-select questions', () => {
     const block: MultiMCQBlock = {
       id: 'multi-1',
@@ -511,6 +246,72 @@ describe('student question experience', () => {
     );
 
     expect(screen.getAllByRole('checkbox')).toHaveLength(3);
+  });
+
+  it('renders SINGLE_MCQ using question-level stem/options when questions[] is present', () => {
+    const block: SingleMCQBlock = {
+      id: 'single-block-1',
+      type: 'SINGLE_MCQ',
+      instruction: 'Choose one answer for each question.',
+      stem: 'legacy fallback stem',
+      options: [
+        { id: 'legacy-a', text: 'Legacy A', isCorrect: true },
+        { id: 'legacy-b', text: 'Legacy B', isCorrect: false },
+      ],
+      questions: [
+        {
+          id: 'single-q1',
+          stem: 'First single-choice question?',
+          options: [
+            { id: 'q1-a', text: 'Q1 Option A', isCorrect: true },
+            { id: 'q1-b', text: 'Q1 Option B', isCorrect: false },
+          ],
+        },
+        {
+          id: 'single-q2',
+          stem: 'Second single-choice question?',
+          options: [
+            { id: 'q2-a', text: 'Q2 Option A', isCorrect: false },
+            { id: 'q2-b', text: 'Q2 Option B', isCorrect: true },
+          ],
+        },
+      ],
+    };
+
+    const { rerender } = render(
+      <QuestionRenderer
+        question={block.questions![0]!}
+        block={block}
+        number={8}
+        answer="q1-b"
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('First single-choice question?')).toBeInTheDocument();
+    expect(screen.getByText('Q1 Option A')).toBeInTheDocument();
+    expect(screen.queryByText('Q2 Option A')).not.toBeInTheDocument();
+    const firstNames = screen
+      .getAllByRole('radio')
+      .map((node) => node.getAttribute('name'));
+    expect(firstNames.every((name) => name === 'q-single-q1')).toBe(true);
+
+    rerender(
+      <QuestionRenderer
+        question={block.questions![1]!}
+        block={block}
+        number={9}
+        answer="q2-a"
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Second single-choice question?')).toBeInTheDocument();
+    expect(screen.getByText('Q2 Option B')).toBeInTheDocument();
+    const secondNames = screen
+      .getAllByRole('radio')
+      .map((node) => node.getAttribute('name'));
+    expect(secondNames.every((name) => name === 'q-single-q2')).toBe(true);
   });
 
   it('renders sentence completion blanks instead of an unimplemented placeholder', () => {
@@ -544,304 +345,6 @@ describe('student question experience', () => {
     expect(screen.queryByText(/not yet implemented/i)).not.toBeInTheDocument();
     expect(screen.getAllByRole('textbox')).toHaveLength(2);
     expect(screen.queryByText(/limit:/i)).not.toBeInTheDocument();
-  });
-
-  it('updates only the edited sentence-completion slot and preserves sibling values', () => {
-    const onChange = vi.fn();
-    const question = {
-      id: 'sentence-1',
-      sentence: 'The library is open ____ and ____.',
-      blanks: [
-        { id: 'blank-1', correctAnswer: 'daily', position: 0 },
-        { id: 'blank-2', correctAnswer: 'late', position: 1 },
-      ],
-      answerRule: 'TWO_WORDS' as const,
-    };
-
-    const block: SentenceCompletionBlock = {
-      id: 'sentence-block-1',
-      type: 'SENTENCE_COMPLETION',
-      instruction: 'Complete the sentence.',
-      questions: [question],
-    };
-
-    render(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={7}
-        answer={['cat', 'bird']}
-        onChange={onChange}
-      />,
-    );
-
-    fireEvent.change(screen.getByRole('textbox', { name: 'Answer for question 7' }), {
-      target: { value: 'wolf' },
-    });
-
-    expect(onChange).toHaveBeenCalledWith(
-      ['wolf', 'bird'],
-      expect.objectContaining({
-        slotIndex: 0,
-        slotId: 'sentence-block-1:0',
-        slotCount: 2,
-      }),
-    );
-  });
-
-  it('keeps prior slot edits when two slot changes happen before rerender', () => {
-    const onChange = vi.fn();
-    const question = {
-      id: 'sentence-1',
-      sentence: 'The library is open ____ and ____.',
-      blanks: [
-        { id: 'blank-1', correctAnswer: 'daily', position: 0 },
-        { id: 'blank-2', correctAnswer: 'late', position: 1 },
-      ],
-      answerRule: 'TWO_WORDS' as const,
-    };
-
-    const block: SentenceCompletionBlock = {
-      id: 'sentence-block-1',
-      type: 'SENTENCE_COMPLETION',
-      instruction: 'Complete the sentence.',
-      questions: [question],
-    };
-
-    render(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={7}
-        answer={['', '']}
-        onChange={onChange}
-      />,
-    );
-
-    const first = screen.getByRole('textbox', { name: 'Answer for question 7' });
-    const second = screen.getByRole('textbox', { name: 'Answer for question 8' });
-
-    fireEvent.change(first, { target: { value: 'wolf' } });
-    fireEvent.change(second, { target: { value: 'bird' } });
-
-    expect(onChange).toHaveBeenNthCalledWith(
-      2,
-      ['wolf', 'bird'],
-      expect.objectContaining({
-        slotIndex: 1,
-        slotId: 'sentence-block-1:1',
-        slotCount: 2,
-      }),
-    );
-  });
-
-  it('uses responsive sizing classes for sentence-completion inline blanks', () => {
-    const question = {
-      id: 'sentence-1',
-      sentence: 'The library is open ____ and ____.',
-      blanks: [
-        { id: 'blank-1', correctAnswer: 'daily', position: 0 },
-        { id: 'blank-2', correctAnswer: 'late', position: 1 },
-      ],
-      answerRule: 'TWO_WORDS' as const,
-    };
-
-    const block: SentenceCompletionBlock = {
-      id: 'sentence-block-1',
-      type: 'SENTENCE_COMPLETION',
-      instruction: 'Complete the sentence.',
-      questions: [question],
-    };
-
-    render(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={7}
-        answer={['a very long answer value', '']}
-        onChange={() => {}}
-      />,
-    );
-
-    const firstInput = screen.getByRole('textbox', { name: 'Answer for question 7' });
-    expect(firstInput).toHaveClass('min-w-[8rem]');
-    expect(firstInput).toHaveClass('w-fit');
-    expect(firstInput).toHaveClass('max-w-full');
-    expect(firstInput.style.width).toContain('ch');
-  });
-
-  it('does not render pasted reading passage text inside sentence-completion prompts', () => {
-    const question = {
-      id: 'sentence-1',
-      sentence:
-        'The ____ is important.\n\nREADING PASSAGE 2\nYou should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 below.\n\nA '.repeat(8),
-      blanks: [{ id: 'blank-1', correctAnswer: 'answer', position: 0 }],
-      answerRule: 'TWO_WORDS' as const,
-    };
-
-    const block: SentenceCompletionBlock = {
-      id: 'sentence-block-1',
-      type: 'SENTENCE_COMPLETION',
-      instruction: 'Complete the sentence.',
-      questions: [question],
-    };
-
-    render(
-      <QuestionRenderer
-        question={question}
-        block={block}
-        number={7}
-        answer={['']}
-        onChange={() => {}}
-      />,
-    );
-
-    expect(screen.getByText('The')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Answer for question 7' })).toBeInTheDocument();
-    expect(screen.queryByText(/READING PASSAGE 2/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Questions 14-26/i)).not.toBeInTheDocument();
-  });
-
-  it('renders table blanks inline and keeps row-major numbering stable', () => {
-    const onChange = vi.fn();
-    const block: TableCompletionBlock = {
-      id: 'table-inline-1',
-      type: 'TABLE_COMPLETION',
-      instruction: 'Complete the table.',
-      answerRule: 'ONE_WORD',
-      headers: ['Field', 'Value'],
-      rows: [['Name: ____', 'Country: ____']],
-      cells: [
-        { id: 'cell-country', row: 0, col: 1, correctAnswer: 'India' },
-        { id: 'cell-name', row: 0, col: 0, correctAnswer: 'Anu' },
-      ],
-    };
-
-    render(
-      <QuestionRenderer
-        question={null}
-        block={block}
-        number={10}
-        answer={['anu', 'india']}
-        onChange={onChange}
-      />,
-    );
-
-    const table = screen.getByRole('table');
-    const firstInput = screen.getByRole('textbox', { name: 'Answer for question 10' });
-    const secondInput = screen.getByRole('textbox', { name: 'Answer for question 11' });
-
-    expect(screen.getByText('Name:')).toBeInTheDocument();
-    expect(screen.getByText('Country:')).toBeInTheDocument();
-    expect(table).toHaveClass('text-[length:var(--student-control-font-size)]');
-    expect(table).not.toHaveClass('text-sm');
-    expect(firstInput).toHaveValue('anu');
-    expect(firstInput).toHaveClass('text-[length:var(--student-control-font-size)]');
-    expect(firstInput).not.toHaveClass('text-sm');
-    expect(secondInput).toHaveValue('india');
-
-    fireEvent.change(secondInput, {
-      target: { value: 'thai' },
-    });
-
-    expect(onChange).toHaveBeenCalledWith(
-      ['anu', 'thai'],
-      expect.objectContaining({
-        slotIndex: 1,
-        slotId: 'table-inline-1:1',
-        slotCount: 2,
-      }),
-    );
-  });
-
-  it('does not render pasted reading passage text inside table-completion cells', () => {
-    const block: TableCompletionBlock = {
-      id: 'table-inline-1',
-      type: 'TABLE_COMPLETION',
-      instruction: 'Complete the table.',
-      answerRule: 'ONE_WORD',
-      headers: ['Field', 'Value'],
-      rows: [
-        [
-          'Name: ____\n\nREADING PASSAGE 2\nYou should spend about 20 minutes on Questions 14-26, which are based on Reading Passage 2 below.\n\nA '.repeat(8),
-          'Country: ____',
-        ],
-      ],
-      cells: [
-        { id: 'cell-name', row: 0, col: 0, correctAnswer: 'Anu' },
-        { id: 'cell-country', row: 0, col: 1, correctAnswer: 'India' },
-      ],
-    };
-
-    render(
-      <QuestionRenderer
-        question={null}
-        block={block}
-        number={10}
-        answer={['anu', 'india']}
-        onChange={() => {}}
-      />,
-    );
-
-    expect(screen.getByText('Name:')).toBeInTheDocument();
-    expect(screen.getByRole('textbox', { name: 'Answer for question 10' })).toBeInTheDocument();
-    expect(screen.queryByText(/READING PASSAGE 2/i)).not.toBeInTheDocument();
-    expect(screen.queryByText(/Questions 14-26/i)).not.toBeInTheDocument();
-  });
-
-  it('uses wrapping and responsive sizing classes for table inline blanks', () => {
-    const block: TableCompletionBlock = {
-      id: 'table-inline-1',
-      type: 'TABLE_COMPLETION',
-      instruction: 'Complete the table.',
-      answerRule: 'ONE_WORD',
-      headers: ['Field', 'Value'],
-      rows: [['Name: ____', 'Country: ____']],
-      cells: [
-        { id: 'cell-country', row: 0, col: 1, correctAnswer: 'India' },
-        { id: 'cell-name', row: 0, col: 0, correctAnswer: 'Anu' },
-      ],
-    };
-
-    const { container } = render(
-      <QuestionRenderer
-        question={null}
-        block={block}
-        number={10}
-        answer={['very long inline answer value for test', 'india']}
-        onChange={() => {}}
-      />,
-    );
-
-    const firstInput = screen.getByRole('textbox', { name: 'Answer for question 10' });
-    expect(firstInput).toHaveClass('min-w-[8rem]');
-    expect(firstInput).toHaveClass('w-fit');
-    expect(firstInput).toHaveClass('max-w-full');
-    expect(container.querySelector('.flex.flex-wrap.items-center.gap-2')).not.toBeNull();
-  });
-
-  it('uses responsive sizing classes for note-completion inline blanks', () => {
-    const noteQuestion = {
-      id: 'note-1',
-      noteText: 'Synaptic homeostasis: sleep may reduce ____ connections.',
-      blanks: [{ id: 'blank-1', correctAnswer: 'weaker', position: 0 }],
-      answerRule: 'NO_MORE_THAN_TWO_WORDS' as const,
-    } as any;
-
-    render(
-      <QuestionRenderer
-        question={noteQuestion}
-        block={{ id: 'note-block-1', type: 'NOTE_COMPLETION', instruction: 'Complete notes.' } as any}
-        number={37}
-        answer={['a long answer value']}
-        onChange={() => {}}
-      />,
-    );
-
-    const input = screen.getByRole('textbox', { name: 'Answer for question 37' });
-    expect(input).toHaveClass('min-w-[8rem]');
-    expect(input).toHaveClass('w-fit');
-    expect(input).toHaveClass('max-w-full');
   });
 
   it('renders diagram-labeling answers below a sticky diagram reference', () => {
@@ -882,14 +385,7 @@ describe('student question experience', () => {
       target: { value: 'wheel' },
     });
 
-    expect(onChange).toHaveBeenCalledWith(
-      ['existing', 'wheel'],
-      expect.objectContaining({
-        slotIndex: 1,
-        slotId: 'diagram-1:label-b',
-        slotCount: 2,
-      }),
-    );
+    expect(onChange).toHaveBeenCalledWith(['existing', 'wheel']);
   });
 
   it('shows diagram-labeling fallback fields with top prompts and supports custom label text', () => {
@@ -1021,152 +517,6 @@ describe('student question experience', () => {
     expect(stickyWrapper).not.toBeNull();
   });
 
-  it('renders inserted reading images between instruction and question body with drive URL resolution', () => {
-    const state = {
-      title: 'Reading Test',
-      type: 'Academic',
-      activeModule: 'reading',
-      activePassageId: 'passage-1',
-      activeListeningPartId: 'part-1',
-      config: {
-        type: 'Academic',
-        delivery: {
-          launchMode: 'proctor_start',
-          transitionMode: 'auto_with_proctor_override',
-          allowedExtensionMinutes: [5],
-        },
-        sections: {
-          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-        },
-      },
-      reading: {
-        passages: [
-          {
-            id: 'passage-1',
-            title: 'Passage 1',
-            content: 'Read and answer.',
-            images: [],
-            blocks: [
-              {
-                id: 'q-block',
-                type: 'SHORT_ANSWER',
-                instruction: 'Answer the question.',
-                insertedImages: [
-                  {
-                    id: 'img-1',
-                    url: 'https://drive.google.com/file/d/abc123DEF456/view?usp=sharing',
-                    caption: 'Blueprint caption',
-                  },
-                ],
-                questions: [{ id: 'q1', prompt: 'What is shown?', correctAnswer: 'diagram', answerRule: 'ONE_WORD' }],
-              },
-            ],
-          },
-        ],
-      },
-      listening: { parts: [] },
-      writing: { task1Prompt: '', task2Prompt: '' },
-      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
-    } as ExamState;
-
-    render(
-      <StudentReading
-        state={state}
-        answers={{}}
-        onAnswerChange={() => {}}
-        currentQuestionId="q1"
-        onNavigate={() => {}}
-      />,
-    );
-
-    const instruction = screen.getByText('Answer the question.');
-    const caption = screen.getByText('Blueprint caption');
-    const prompt = screen.getByText('What is shown?');
-    expect(
-      instruction.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      caption.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-
-    const image = screen.getByAltText('Blueprint caption');
-    expect(image).toHaveAttribute(
-      'src',
-      'https://drive.google.com/thumbnail?id=abc123DEF456&sz=w2000',
-    );
-  });
-
-  it('does not render inserted image slot for reading map blocks', () => {
-    const state = {
-      title: 'Reading Test',
-      type: 'Academic',
-      activeModule: 'reading',
-      activePassageId: 'passage-1',
-      activeListeningPartId: 'part-1',
-      config: {
-        type: 'Academic',
-        delivery: {
-          launchMode: 'proctor_start',
-          transitionMode: 'auto_with_proctor_override',
-          allowedExtensionMinutes: [5],
-        },
-        sections: {
-          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-        },
-      },
-      reading: {
-        passages: [
-          {
-            id: 'passage-1',
-            title: 'Passage 1',
-            content: 'Read and answer.',
-            images: [],
-            blocks: [
-              {
-                id: 'map-block',
-                type: 'MAP',
-                instruction: 'Label the map.',
-                insertedImages: [
-                  {
-                    id: 'img-hidden',
-                    url: 'https://example.com/map-context.png',
-                    caption: 'Hidden map caption',
-                  },
-                ],
-                assetUrl: 'https://example.com/map.png',
-                questions: [{ id: 'q-map-1', label: 'Entrance', correctAnswer: 'A', x: 50, y: 50 }],
-              },
-            ],
-          },
-        ],
-      },
-      listening: { parts: [] },
-      writing: { task1Prompt: '', task2Prompt: '' },
-      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
-    } as ExamState;
-
-    render(
-      <StudentReading
-        state={state}
-        answers={{}}
-        onAnswerChange={() => {}}
-        currentQuestionId="q-map-1"
-        onNavigate={() => {}}
-      />,
-    );
-
-    expect(screen.queryByText('Hidden map caption')).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /question reference image/i }),
-    ).not.toBeInTheDocument();
-  });
-
   it('uses accessibility typography variables for the reading passage panel', () => {
     const state = {
       title: 'Reading Test',
@@ -1211,7 +561,7 @@ describe('student question experience', () => {
       speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
     } as ExamState;
 
-    render(
+    const { container } = render(
       <StudentReading
         state={state}
         answers={{}}
@@ -1222,8 +572,7 @@ describe('student question experience', () => {
     );
 
     const passageTitle = screen.getByRole('heading', { name: 'Accessible Passage' });
-    const passagePanel = passageTitle.closest('[data-student-zoom-scroll]');
-    const passageContent = passagePanel?.querySelector('.student-reading-passage-content');
+    const passagePanel = passageTitle.parentElement;
 
     expect(passagePanel).toHaveStyle({
       fontSize: 'var(--student-passage-font-size)',
@@ -1232,8 +581,11 @@ describe('student question experience', () => {
     expect(passagePanel?.className).not.toContain('text-sm');
     expect(passagePanel?.className).not.toContain('md:text-base');
     expect(passageTitle).toHaveStyle({ fontSize: 'var(--student-passage-title-font-size)' });
-    expect(passageContent?.className).toContain('student-reading-passage-content');
-    expect(passageContent?.className).toContain('student-stimulus-content');
+    expect(passageTitle.nextElementSibling?.className).toContain('--student-passage-h1-font-size');
+
+    const readingHighlighter = container.querySelector('[data-student-highlightable="true"]');
+    expect(readingHighlighter).not.toBeNull();
+    expect(readingHighlighter).toHaveClass('student-accessible-table-typography');
   });
 
   it('renders HTML reading passages with normal whitespace handling', () => {
@@ -1354,16 +706,11 @@ describe('student question experience', () => {
 
     const readingHighlighter = container.querySelector('[data-student-highlightable="true"]') as HTMLElement | null;
     expect(readingHighlighter).not.toBeNull();
-    expect(readingHighlighter).toHaveClass('whitespace-normal');
-    expect(readingHighlighter).not.toHaveClass('whitespace-pre-wrap');
-    expect(readingHighlighter?.querySelectorAll('p')).toHaveLength(1);
-    expect(readingHighlighter?.querySelectorAll('h3')).toHaveLength(1);
-    expect(readingHighlighter?.innerHTML).toContain('<p>');
-    expect(readingHighlighter?.innerHTML).toContain('<h3>');
-    expect(readingHighlighter?.textContent).toContain(
-      'You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1 below.',
+    expect(readingHighlighter).toHaveClass('whitespace-pre-wrap');
+    expect(readingHighlighter).not.toHaveClass('whitespace-normal');
+    expect(readingHighlighter?.textContent).toBe(
+      'You should spend about 20 minutes on Questions 1-13, which are based on Reading Passage 1 below.\n\nFrozen Food',
     );
-    expect(readingHighlighter?.textContent).toContain('Frozen Food');
   });
 
   it('keeps reading split-screen side by side in tablet mode with simple highlight guidance', () => {
@@ -1743,84 +1090,6 @@ describe('student question experience', () => {
     expect(screen.queryByText('Questions 11–11')).not.toBeInTheDocument();
     expect(screen.getByText('Questions 12–13')).toBeInTheDocument();
     expect(screen.getByText('Answer question 11.')).toBeInTheDocument();
-  });
-
-  it('renders inserted listening images between instruction and question body', () => {
-    const state = {
-      title: 'Listening Test',
-      type: 'Academic',
-      activeModule: 'listening',
-      activePassageId: 'passage-1',
-      activeListeningPartId: 'part-1',
-      config: {
-        type: 'Academic',
-        delivery: {
-          launchMode: 'proctor_start',
-          transitionMode: 'auto_with_proctor_override',
-          allowedExtensionMinutes: [5],
-        },
-        sections: {
-          listening: { enabled: true, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['SHORT_ANSWER'] },
-        },
-      },
-      reading: { passages: [] },
-      listening: {
-        parts: [
-          {
-            id: 'part-1',
-            title: 'Part 1',
-            audioUrl: '/audio/test.mp3',
-            transcript: 'Listen and answer.',
-            pins: [],
-            blocks: [
-              {
-                id: 'listening-block-1',
-                type: 'SHORT_ANSWER',
-                instruction: 'Answer this question.',
-                insertedImages: [
-                  {
-                    id: 'img-1',
-                    url: 'https://example.com/listening-context.png',
-                    caption: 'Listening context image',
-                  },
-                ],
-                questions: [{ id: 'listening-q1', prompt: 'What did you hear?', correctAnswer: 'rain', answerRule: 'ONE_WORD' }],
-              },
-            ],
-          },
-        ],
-      },
-      writing: { task1Prompt: '', task2Prompt: '' },
-      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
-    } as ExamState;
-
-    render(
-      <StudentListening
-        state={state}
-        answers={{}}
-        onAnswerChange={() => {}}
-        currentQuestionId="listening-q1"
-        onNavigate={() => {}}
-      />,
-    );
-
-    const instruction = screen.getByText('Answer this question.');
-    const caption = screen.getByText('Listening context image');
-    const prompt = screen.getByText('What did you hear?');
-    expect(
-      instruction.compareDocumentPosition(caption) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      caption.compareDocumentPosition(prompt) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-
-    expect(screen.getByAltText('Listening context image')).toHaveAttribute(
-      'src',
-      'https://example.com/listening-context.png',
-    );
   });
 
   it('opens the question navigator from the header when the control is available', () => {
@@ -2435,6 +1704,11 @@ describe('student question experience', () => {
       />,
     );
 
+    const transcriptReference = screen.getByText('Reference transcript text.');
+    const transcriptHighlighter = transcriptReference.closest('[data-student-highlightable="true"]');
+    expect(transcriptHighlighter).not.toBeNull();
+    expect(transcriptHighlighter).toHaveClass('student-accessible-table-typography');
+
     const workspace = screen.getByTestId('listening-split-workspace');
     expect(workspace).toHaveClass('flex-row');
     expect(workspace).toHaveStyle({
@@ -2738,11 +2012,6 @@ describe('student question experience', () => {
       />,
     );
 
-    const transcriptReference = screen.getByText('Reference transcript text.');
-    const transcriptHighlighter = transcriptReference.closest('[data-student-highlightable="true"]');
-    expect(transcriptHighlighter).not.toBeNull();
-    expect(transcriptHighlighter).toHaveClass('student-stimulus-content');
-
     const listeningZoomedPanes = screen
       .getByTestId('listening-split-workspace')
       .querySelectorAll<HTMLElement>('[data-student-zoom-scroll]');
@@ -2960,126 +2229,5 @@ describe('student question experience', () => {
     expect(screen.getByTestId('listening-material-pane')).toBeInTheDocument();
     expect(screen.getByAltText('Diagram reference')).toHaveAttribute('src', '/diagram-part-two.jpg');
     expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
-  });
-
-  it('shows map reference between instruction and questions when map placement is set to instruction', () => {
-    const state = {
-      title: 'Reading Test',
-      type: 'Academic',
-      activeModule: 'reading',
-      activePassageId: 'passage-1',
-      activeListeningPartId: 'part-1',
-      config: {
-        type: 'Academic',
-        delivery: {
-          launchMode: 'proctor_start',
-          transitionMode: 'auto_with_proctor_override',
-          allowedExtensionMinutes: [5],
-        },
-        sections: {
-          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['MAP'] },
-        },
-      },
-      reading: {
-        passages: [
-          {
-            id: 'passage-1',
-            title: 'Passage 1',
-            content: 'Read the map.',
-            images: [],
-            blocks: [
-              {
-                id: 'map-block',
-                type: 'MAP',
-                instruction: 'Label the map.',
-                referenceImagePlacement: 'instruction',
-                assetUrl: '/map-reference.jpg',
-                questions: [{ id: 'q-map-1', label: 'Entrance', correctAnswer: 'A', x: 50, y: 50 }],
-              },
-            ],
-          },
-        ],
-      },
-      listening: { parts: [] },
-      writing: { task1Prompt: '', task2Prompt: '' },
-      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
-    } as ExamState;
-
-    render(
-      <StudentReading
-        state={state}
-        answers={{}}
-        onAnswerChange={() => {}}
-        currentQuestionId="q-map-1"
-        onNavigate={() => {}}
-      />,
-    );
-
-    expect(screen.getByText('Label the map.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /map reference image/i })).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: /map reference image/i })).toHaveLength(1);
-  });
-
-  it('moves listening diagram reference into question pane when placement is set to instruction', () => {
-    const state = {
-      title: 'Listening Test',
-      type: 'Academic',
-      activeModule: 'listening',
-      activePassageId: 'passage-1',
-      activeListeningPartId: 'part-1',
-      config: {
-        type: 'Academic',
-        delivery: {
-          launchMode: 'proctor_start',
-          transitionMode: 'auto_with_proctor_override',
-          allowedExtensionMinutes: [5],
-        },
-        sections: {
-          listening: { enabled: true, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
-          reading: { enabled: false, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
-          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
-          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['DIAGRAM_LABELING'] },
-        },
-      },
-      reading: { passages: [] },
-      listening: {
-        parts: [
-          {
-            id: 'part-1',
-            title: 'Part 1',
-            audioUrl: '/audio/test.mp3',
-            pins: [],
-            blocks: [
-              {
-                id: 'diagram-1',
-                type: 'DIAGRAM_LABELING',
-                instruction: 'Label the diagram.',
-                referenceImagePlacement: 'instruction',
-                imageUrl: '/diagram.jpg',
-                labels: [{ id: 'label-a', x: 40, y: 40, correctAnswer: 'Valve' }],
-              },
-            ],
-          },
-        ],
-      },
-      writing: { task1Prompt: '', task2Prompt: '' },
-      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
-    } as ExamState;
-
-    render(
-      <StudentListening
-        state={state}
-        answers={{}}
-        onAnswerChange={() => {}}
-        currentQuestionId="diagram-1:label-a"
-        onNavigate={() => {}}
-      />,
-    );
-
-    expect(screen.queryByTestId('listening-material-pane')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /diagram reference image/i })).toBeInTheDocument();
   });
 });

@@ -272,7 +272,6 @@ function QuestionContentRenderer({ block }: { block: QuestionBlock }) {
       );
 
     case 'MULTI_MCQ':
-    case 'SINGLE_MCQ':
       return (
         <div>
           <p className="text-sm text-gray-700 mb-2">{block.instruction}</p>
@@ -288,6 +287,39 @@ function QuestionContentRenderer({ block }: { block: QuestionBlock }) {
           </div>
         </div>
       );
+
+    case 'SINGLE_MCQ': {
+      const questions =
+        Array.isArray(block.questions) && block.questions.length > 0
+          ? block.questions
+          : [{ id: block.id, stem: block.stem, options: block.options }];
+      return (
+        <div>
+          <p className="text-sm text-gray-700 mb-2">{block.instruction}</p>
+          <div className="space-y-4">
+            {questions.slice(0, 3).map((question, questionIndex) => (
+              <div key={question.id} className="rounded border border-gray-200 p-3">
+                <p className="text-sm font-medium text-gray-900 mb-2">
+                  {questionIndex + 1}. {question.stem}
+                </p>
+                <div className="space-y-2">
+                  {question.options.map((opt: MCQOption, idx: number) => (
+                    <div key={opt.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded text-sm">
+                      <span className="font-medium">{String.fromCharCode(65 + idx)}.</span>
+                      <span>{opt.text}</span>
+                      {opt.isCorrect ? <span className="ml-auto text-green-600 text-xs">✓ Correct</span> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {questions.length > 3 ? (
+              <p className="text-xs text-gray-500">+ {questions.length - 3} more questions</p>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
 
     case 'SHORT_ANSWER':
       return (
@@ -489,8 +521,9 @@ function getQuestionCount(block: QuestionBlock): number {
     case 'NOTE_COMPLETION':
       return block.questions?.length || 0;
     case 'MULTI_MCQ':
-    case 'SINGLE_MCQ':
       return 1;
+    case 'SINGLE_MCQ':
+      return Array.isArray(block.questions) && block.questions.length > 0 ? block.questions.length : 1;
     case 'DIAGRAM_LABELING':
       return block.labels?.length || 0;
     case 'FLOW_CHART':

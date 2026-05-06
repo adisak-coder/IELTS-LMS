@@ -97,6 +97,53 @@ describe('QuestionBuilderPane', () => {
     });
   });
 
+  it('inline add question for SINGLE_MCQ appends a question entry instead of adding options', async () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState([
+        {
+          id: 'single-block-1',
+          type: 'SINGLE_MCQ',
+          instruction: 'Choose one answer for each question.',
+          stem: 'Legacy stem',
+          options: [
+            { id: 'legacy-a', text: 'Legacy A', isCorrect: true },
+            { id: 'legacy-b', text: 'Legacy B', isCorrect: false },
+          ],
+          questions: [
+            {
+              id: 'single-q1',
+              stem: 'Question 1',
+              options: [
+                { id: 'q1-a', text: 'A', isCorrect: true },
+                { id: 'q1-b', text: 'B', isCorrect: false },
+                { id: 'q1-c', text: 'C', isCorrect: false },
+              ],
+            },
+          ],
+        } as any,
+      ]);
+
+      const singleBlock = blocks[0] as any;
+      return (
+        <>
+          <QuestionBuilderPane title="Reading" blocks={blocks} updateBlocks={setBlocks} />
+          <div data-testid="single-question-count">{singleBlock.questions?.length ?? 0}</div>
+          <div data-testid="single-first-option-count">{singleBlock.questions?.[0]?.options?.length ?? 0}</div>
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    const addQuestionButtons = screen.getAllByRole('button', { name: /^add question$/i });
+    fireEvent.click(addQuestionButtons[1]!);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('single-question-count')).toHaveTextContent('2');
+    });
+    expect(screen.getByTestId('single-first-option-count')).toHaveTextContent('3');
+  });
+
   it('clears a deleted selection before saving a block to the bank', async () => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
 

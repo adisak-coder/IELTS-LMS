@@ -226,6 +226,13 @@ export interface SingleMCQBlock extends BaseQuestionBlock {
   type: 'SINGLE_MCQ';
   stem: string;
   options: MCQOption[];
+  questions?: SingleMCQQuestion[];
+}
+
+export interface SingleMCQQuestion {
+  id: string;
+  stem: string;
+  options: MCQOption[];
 }
 
 export interface ShortAnswerQuestion {

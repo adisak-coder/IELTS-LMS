@@ -1,6 +1,7 @@
 import {
   QuestionBlock, 
   SingleMCQBlock, 
+  SingleMCQQuestion,
   MCQOption, 
   ShortAnswerBlock, 
   ShortAnswerQuestion,
@@ -119,24 +120,44 @@ function validateInsertedImageSet(block: QuestionBlock): ValidationError[] {
 
 function validateSingleMCQ(block: SingleMCQBlock): ValidationError[] {
   const errors: ValidationError[] = [];
+  const hasQuestionList = Array.isArray(block.questions) && block.questions.length > 0;
+  const questions: SingleMCQQuestion[] = hasQuestionList
+    ? block.questions!
+    : [{ id: block.id, stem: block.stem || '', options: block.options || [] }];
 
-  if (!block.stem || block.stem.trim() === '') {
-    errors.push({ field: 'stem', message: 'Question stem is required' });
+  if (questions.length === 0) {
+    errors.push({ field: 'questions', message: 'At least one question is required' });
+    return errors;
   }
 
-  if (!block.options || block.options.length < 2) {
-    errors.push({ field: 'options', message: 'At least 2 options are required' });
-  }
+  questions.forEach((question, questionIndex) => {
+    const stemField = hasQuestionList ? `questions[${questionIndex}].stem` : 'stem';
+    const optionsField = hasQuestionList ? `questions[${questionIndex}].options` : 'options';
 
-  const correctCount = block.options?.filter((opt: MCQOption) => opt.isCorrect).length || 0;
-  if (correctCount !== 1) {
-    errors.push({ field: 'options', message: 'Exactly one option must be marked as correct' });
-  }
-
-  block.options?.forEach((opt: MCQOption, index: number) => {
-    if (!opt.text || opt.text.trim() === '') {
-      errors.push({ field: `option-${index}`, message: `Option ${index + 1} text is required` });
+    if (!question.stem || question.stem.trim() === '') {
+      errors.push({ field: stemField, message: `Question ${questionIndex + 1} stem is required` });
     }
+
+    if (!Array.isArray(question.options) || question.options.length < 2) {
+      errors.push({ field: optionsField, message: `Question ${questionIndex + 1} needs at least 2 options` });
+      return;
+    }
+
+    const correctCount = question.options.filter((opt: MCQOption) => opt.isCorrect).length;
+    if (correctCount !== 1) {
+      errors.push({ field: optionsField, message: `Question ${questionIndex + 1} must have exactly one correct option` });
+    }
+
+    question.options.forEach((opt: MCQOption, optionIndex: number) => {
+      if (!opt.text || opt.text.trim() === '') {
+        errors.push({
+          field: hasQuestionList
+            ? `questions[${questionIndex}].options[${optionIndex}].text`
+            : `option-${optionIndex}`,
+          message: `Option ${optionIndex + 1} text is required`,
+        });
+      }
+    });
   });
 
   return errors;

@@ -122,33 +122,7 @@ export function ListeningWorkspace({ state, setState }: ListeningWorkspaceProps)
   }
 
   const getBlockQuestionCount = (block: QuestionBlock): number => {
-    switch (block.type) {
-      case 'MULTI_MCQ':
-        return block.requiredSelections || 1;
-      case 'SINGLE_MCQ':
-        return 1;
-      case 'DIAGRAM_LABELING':
-        return block.labels.length;
-      case 'FLOW_CHART':
-        return block.steps.length;
-      case 'TABLE_COMPLETION':
-        return block.cells.length;
-      case 'CLASSIFICATION':
-        return block.items.length;
-      case 'MATCHING_FEATURES':
-        return block.features.length;
-      case 'TFNG':
-      case 'CLOZE':
-      case 'MATCHING':
-      case 'MAP':
-      case 'SHORT_ANSWER':
-        return 'questions' in block ? block.questions.length : 0;
-      case 'SENTENCE_COMPLETION':
-      case 'NOTE_COMPLETION':
-        return getBlockQuestionCountFromUtils(block);
-      default:
-        return 0;
-    }
+    return getBlockQuestionCountFromUtils(block);
   };
 
   const partIndex = state.listening.parts.findIndex(p => p.id === activePart.id);

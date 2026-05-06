@@ -10,13 +10,6 @@ describe('cloneExamContent', () => {
       type: 'TFNG',
       mode: 'TFNG',
       instruction: 'Instruction',
-      insertedImages: [
-        {
-          id: 'img-1',
-          url: 'https://example.com/context.png',
-          caption: 'Context image',
-        },
-      ],
       questions: [{ id: 'q-1', statement: 'S', correctAnswer: 'T' }],
     };
 
@@ -27,10 +20,6 @@ describe('cloneExamContent', () => {
     expect(cloned.questions).not.toBe(block.questions);
     expect(cloned.questions[0]?.id).not.toBe(block.questions[0]?.id);
     expect(cloned.questions[0]?.statement).toBe(block.questions[0]?.statement);
-    expect(cloned.insertedImages).not.toBe(block.insertedImages);
-    expect(cloned.insertedImages?.[0]?.id).not.toBe(block.insertedImages?.[0]?.id);
-    expect(cloned.insertedImages?.[0]?.url).toBe(block.insertedImages?.[0]?.url);
-    expect(cloned.insertedImages?.[0]?.caption).toBe(block.insertedImages?.[0]?.caption);
   });
 
   it('clones a reading passage without shared references', () => {
@@ -52,5 +41,47 @@ describe('cloneExamContent', () => {
 
     const originalBlock = original.blocks[0] as TFNGBlock;
     expect(originalBlock.questions[0]!.statement).toBe('Original');
+  });
+
+  it('regenerates nested SINGLE_MCQ question and option ids when cloning', () => {
+    const block = {
+      id: 'single-block-1',
+      type: 'SINGLE_MCQ',
+      instruction: 'Choose one answer.',
+      stem: 'legacy fallback stem',
+      options: [
+        { id: 'legacy-a', text: 'Legacy A', isCorrect: true },
+        { id: 'legacy-b', text: 'Legacy B', isCorrect: false },
+      ],
+      questions: [
+        {
+          id: 'single-q1',
+          stem: 'Question 1',
+          options: [
+            { id: 'q1-a', text: 'A', isCorrect: true },
+            { id: 'q1-b', text: 'B', isCorrect: false },
+          ],
+        },
+        {
+          id: 'single-q2',
+          stem: 'Question 2',
+          options: [
+            { id: 'q2-a', text: 'C', isCorrect: false },
+            { id: 'q2-b', text: 'D', isCorrect: true },
+          ],
+        },
+      ],
+    } as any;
+
+    const cloned = cloneQuestionBlockWithNewIds(block) as any;
+
+    expect(cloned.id).not.toBe(block.id);
+    expect(cloned.questions).toHaveLength(2);
+    expect(cloned.questions[0].id).not.toBe(block.questions[0].id);
+    expect(cloned.questions[1].id).not.toBe(block.questions[1].id);
+    expect(cloned.questions[0].options[0].id).not.toBe(block.questions[0].options[0].id);
+    expect(cloned.questions[1].options[1].id).not.toBe(block.questions[1].options[1].id);
+    expect(cloned.questions[0].stem).toBe('Question 1');
+    expect(cloned.questions[1].stem).toBe('Question 2');
   });
 });

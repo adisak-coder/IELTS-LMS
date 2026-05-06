@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { QuestionBlock, QuestionType, TFNGBlock as TFNGBlockType, ClozeBlock as ClozeBlockType, MatchingBlock as MatchingBlockType, MapBlock as MapBlockType, MultiMCQBlock as MultiMCQBlockType, SingleMCQBlock as SingleMCQBlockType, ShortAnswerBlock as ShortAnswerBlockType, SentenceCompletionBlock as SentenceCompletionBlockType, DiagramLabelingBlock as DiagramLabelingBlockType, FlowChartBlock as FlowChartBlockType, TableCompletionBlock as TableCompletionBlockType, NoteCompletionBlock as NoteCompletionBlockType, ClassificationBlock as ClassificationBlockType, MatchingFeaturesBlock as MatchingFeaturesBlockType, QuestionBankItem, SubAnswerTreeNode } from '../types';
+import { QuestionBlock, QuestionType, TFNGBlock as TFNGBlockType, ClozeBlock as ClozeBlockType, MatchingBlock as MatchingBlockType, MapBlock as MapBlockType, MultiMCQBlock as MultiMCQBlockType, SingleMCQBlock as SingleMCQBlockType, ShortAnswerBlock as ShortAnswerBlockType, SentenceCompletionBlock as SentenceCompletionBlockType, DiagramLabelingBlock as DiagramLabelingBlockType, FlowChartBlock as FlowChartBlockType, TableCompletionBlock as TableCompletionBlockType, NoteCompletionBlock as NoteCompletionBlockType, ClassificationBlock as ClassificationBlockType, MatchingFeaturesBlock as MatchingFeaturesBlockType, QuestionBankItem } from '../types';
 import { Plus, X, Search, Library } from 'lucide-react';
 import { TFNGBlock } from './blocks/TFNGBlock';
 import { ClozeBlock } from './blocks/ClozeBlock';
@@ -21,11 +21,6 @@ import { QuestionDetailModal } from './builder/QuestionDetailModal';
 import { questionBankService } from '../services/questionBankService';
 import { cloneQuestionBlockWithNewIds } from '../utils/cloneExamContent';
 import { createId } from '../utils/idUtils';
-import {
-  appendSubAnswerLeafAtSlot,
-  isTreeCapableBlockType,
-} from '../utils/subAnswerTreeSlots';
-import { SubAnswerTreeEditor } from './builder/SubAnswerTreeEditor';
 
 interface BlockWithNumbers {
   block: QuestionBlock;
@@ -45,11 +40,15 @@ const INLINE_ADD_SUPPORTED_BLOCK_TYPES = new Set<QuestionType>([
   'SENTENCE_COMPLETION',
 ]);
 
-const NATIVE_LAYOUT_BLOCK_TYPES = new Set<QuestionType>([
-  'SENTENCE_COMPLETION',
-  'TABLE_COMPLETION',
-  'NOTE_COMPLETION',
-]);
+const createDefaultSingleMcqQuestion = (id = createId('q')) => ({
+  id,
+  stem: '',
+  options: [
+    { id: createId('opt'), text: 'Option A', isCorrect: true },
+    { id: createId('opt'), text: 'Option B', isCorrect: false },
+    { id: createId('opt'), text: 'Option C', isCorrect: false },
+  ],
+});
 
 export function QuestionBuilderPane({
   blocks,
@@ -74,26 +73,6 @@ export function QuestionBuilderPane({
     const openModal = () => setShowAddModal(true);
     window.addEventListener('builder:add-question-block', openModal);
     return () => window.removeEventListener('builder:add-question-block', openModal);
-  }, []);
-
-  useEffect(() => {
-    const handleJumpToBlock = (event: Event) => {
-      const customEvent = event as CustomEvent<{ blockIndex?: number }>;
-      const blockIndex = customEvent.detail?.blockIndex;
-      if (!Number.isInteger(blockIndex) || blockIndex < 0) {
-        return;
-      }
-
-      const target = document.querySelector<HTMLElement>(`[data-builder-block-index="${blockIndex}"]`);
-      if (!target) {
-        return;
-      }
-      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      target.click();
-    };
-
-    window.addEventListener('builder:jump-to-block', handleJumpToBlock as EventListener);
-    return () => window.removeEventListener('builder:jump-to-block', handleJumpToBlock as EventListener);
   }, []);
   
   const getBlockErrors = (blockId: string) => {
@@ -233,10 +212,30 @@ export function QuestionBuilderPane({
           };
           break;
         case 'SINGLE_MCQ':
-          nextBlock = {
-            ...currentBlock,
-            options: [...(currentBlock as SingleMCQBlockType).options, { id: createId('opt'), text: 'New Option', isCorrect: false }],
-          };
+          {
+            const typedBlock = currentBlock as SingleMCQBlockType;
+            const existingQuestions =
+              Array.isArray(typedBlock.questions) && typedBlock.questions.length > 0
+                ? typedBlock.questions
+                : [
+                    {
+                      id: typedBlock.id,
+                      stem: typedBlock.stem || '',
+                      options: typedBlock.options,
+                    },
+                  ];
+            const nextQuestions = [...existingQuestions, createDefaultSingleMcqQuestion()];
+            const firstQuestion = nextQuestions[0];
+            if (!firstQuestion) {
+              return currentBlocks;
+            }
+            nextBlock = {
+              ...typedBlock,
+              stem: firstQuestion.stem,
+              options: firstQuestion.options,
+              questions: nextQuestions,
+            };
+          }
           break;
         case 'SHORT_ANSWER':
           nextBlock = {
@@ -274,7 +273,6 @@ export function QuestionBuilderPane({
           type: 'TFNG',
           mode: 'TFNG',
           instruction: 'Do the following statements agree with the information given?',
-          insertedImages: [],
           questions: [{ id: createId('q'), statement: '', correctAnswer: 'T' }]
         } as TFNGBlockType;
         break;
@@ -284,7 +282,6 @@ export function QuestionBuilderPane({
           type: 'CLOZE',
           answerRule: 'TWO_WORDS',
           instruction: 'Complete the summary below. Choose NO MORE THAN TWO WORDS from the passage for each answer.',
-          insertedImages: [],
           questions: [{ id: createId('q'), prompt: 'The ____ is important.', correctAnswer: '', acceptedAnswers: [] }]
         } as ClozeBlockType;
         break;
@@ -293,7 +290,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'MATCHING',
           instruction: 'Choose the correct heading for each paragraph from the list of headings below.',
-          insertedImages: [],
           headings: [{ id: createId('h'), text: 'Heading 1' }],
           questions: [{ id: createId('q'), paragraphLabel: 'A', correctHeading: '' }]
         } as MatchingBlockType;
@@ -303,7 +299,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'MULTI_MCQ',
           instruction: 'Choose TWO letters, A-E.',
-          insertedImages: [],
           stem: '',
           requiredSelections: 2,
           options: [
@@ -319,30 +314,27 @@ export function QuestionBuilderPane({
           type: 'MAP',
           instruction: 'Label the map below.',
           assetUrl: '',
-          referenceImagePlacement: 'question',
           questions: [{ id: createId('q'), label: 'Location A', correctAnswer: '', x: 50, y: 50 }]
         } as MapBlockType;
         break;
       case 'SINGLE_MCQ':
-        newBlock = {
-          id: createId('blk'),
-          type: 'SINGLE_MCQ',
-          instruction: 'Choose the correct answer.',
-          insertedImages: [],
-          stem: '',
-          options: [
-            { id: createId('opt'), text: 'Option A', isCorrect: true },
-            { id: createId('opt'), text: 'Option B', isCorrect: false },
-            { id: createId('opt'), text: 'Option C', isCorrect: false }
-          ]
-        } as SingleMCQBlockType;
+        {
+          const firstQuestion = createDefaultSingleMcqQuestion();
+          newBlock = {
+            id: createId('blk'),
+            type: 'SINGLE_MCQ',
+            instruction: 'Choose the correct answer.',
+            stem: firstQuestion.stem,
+            options: firstQuestion.options,
+            questions: [firstQuestion],
+          } as SingleMCQBlockType;
+        }
         break;
       case 'SHORT_ANSWER':
         newBlock = {
           id: createId('blk'),
           type: 'SHORT_ANSWER',
           instruction: 'Answer the questions below using words from the passage.',
-          insertedImages: [],
           questions: [{ id: createId('q'), prompt: 'What is described?', correctAnswer: '', acceptedAnswers: [], answerRule: 'TWO_WORDS' }]
         } as ShortAnswerBlockType;
         break;
@@ -351,7 +343,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'SENTENCE_COMPLETION',
           instruction: 'Complete the sentences below using words from the passage.',
-          insertedImages: [],
           questions: [{ id: createId('q'), sentence: 'The ____ is important.', blanks: [{ id: createId('blank'), correctAnswer: '', acceptedAnswers: [], position: 0 }], answerRule: 'TWO_WORDS' }]
         } as SentenceCompletionBlockType;
         break;
@@ -361,7 +352,6 @@ export function QuestionBuilderPane({
           type: 'DIAGRAM_LABELING',
           instruction: 'Label the diagram below.',
           imageUrl: '',
-          referenceImagePlacement: 'question',
           labels: [{ id: createId('lbl'), x: 50, y: 50, correctAnswer: '' }]
         } as DiagramLabelingBlockType;
         break;
@@ -370,7 +360,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'FLOW_CHART',
           instruction: 'Complete the flow chart below.',
-          insertedImages: [],
           steps: [{ id: createId('step'), label: 'Step 1', correctAnswer: '' }]
         } as FlowChartBlockType;
         break;
@@ -379,11 +368,10 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'TABLE_COMPLETION',
           instruction: 'Complete the table below.',
-          insertedImages: [],
           answerRule: 'TWO_WORDS',
           headers: ['Column 1', 'Column 2'],
-          rows: [['', '____']],
-          cells: [{ id: createId('cell'), correctAnswer: '', acceptedAnswers: [], row: 0, col: 1 }]
+          rows: [['', '']],
+          cells: [{ id: createId('cell'), correctAnswer: '', row: 0, col: 0 }]
         } as TableCompletionBlockType;
         break;
       case 'NOTE_COMPLETION':
@@ -391,7 +379,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'NOTE_COMPLETION',
           instruction: 'Complete the notes below.',
-          insertedImages: [],
           questions: [{ id: createId('q'), noteText: 'The ____ is important.', blanks: [{ id: createId('blank'), correctAnswer: '', acceptedAnswers: [], position: 0 }], answerRule: 'TWO_WORDS' }]
         } as NoteCompletionBlockType;
         break;
@@ -400,7 +387,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'CLASSIFICATION',
           instruction: 'Classify the following statements.',
-          insertedImages: [],
           categories: ['Category A', 'Category B'],
           items: [{ id: createId('item'), text: 'Statement 1', correctCategory: 'Category A' }]
         } as ClassificationBlockType;
@@ -410,7 +396,6 @@ export function QuestionBuilderPane({
           id: createId('blk'),
           type: 'MATCHING_FEATURES',
           instruction: 'Match the features with the options.',
-          insertedImages: [],
           features: [{ id: createId('feat'), text: 'Feature 1', correctMatch: 'Option A' }],
           options: ['Option A', 'Option B', 'Option C']
         } as MatchingFeaturesBlockType;
@@ -449,24 +434,6 @@ export function QuestionBuilderPane({
     const { block, startNum, endNum } = item;
     const blockErrors = getBlockErrors(block.id);
     const isSelected = selectedBlockId === block.id;
-    const supportsSubAnswerTreeEditor =
-      isTreeCapableBlockType(block.type) && !NATIVE_LAYOUT_BLOCK_TYPES.has(block.type);
-    const addSubAnswerToSlot = (slotIndex: number) => {
-      if (!supportsSubAnswerTreeEditor) return;
-      updateBlock({
-        ...(block as QuestionBlock & {
-          subAnswerModeEnabled?: boolean;
-          answerTree?: unknown;
-        }),
-        subAnswerModeEnabled: true,
-        answerTree: appendSubAnswerLeafAtSlot(
-          block,
-          startNum,
-          (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree,
-          slotIndex,
-        ),
-      } as QuestionBlock);
-    };
 
     let blockContent;
     switch (block.type) {
@@ -495,7 +462,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -524,7 +490,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -567,7 +532,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -582,7 +546,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -597,7 +560,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -612,7 +574,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -627,7 +588,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -642,7 +602,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={supportsSubAnswerTreeEditor ? addSubAnswerToSlot : undefined}
           />
         );
         break;
@@ -657,7 +616,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -672,7 +630,6 @@ export function QuestionBuilderPane({
             deleteBlock={deleteBlock}
             moveBlock={moveBlock}
             errors={blockErrors}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
           />
         );
         break;
@@ -686,28 +643,6 @@ export function QuestionBuilderPane({
         className={`cursor-pointer transition-all ${isSelected ? 'ring-2 ring-green-500 ring-offset-2' : 'hover:ring-2 hover:ring-gray-300 hover:ring-offset-1'}`}
       >
         {blockContent}
-        {supportsSubAnswerTreeEditor &&
-        Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled) ? (
-          <SubAnswerTreeEditor
-            block={block}
-            startNumber={startNum}
-            enabled={true}
-            onToggle={(enabled) => {
-              updateBlock({
-                ...(block as QuestionBlock & { subAnswerModeEnabled?: boolean }),
-                subAnswerModeEnabled: enabled,
-              } as QuestionBlock);
-            }}
-            onChangeTree={(nextTree) => {
-              updateBlock({
-                ...(block as QuestionBlock & { subAnswerModeEnabled?: boolean; answerTree?: SubAnswerTreeNode[] }),
-                subAnswerModeEnabled: true,
-                answerTree: nextTree,
-              } as QuestionBlock);
-            }}
-            onAddSubAnswerAtSlot={addSubAnswerToSlot}
-          />
-        ) : null}
         {INLINE_ADD_SUPPORTED_BLOCK_TYPES.has(block.type) ? (
           <button
             onClick={(e) => {
@@ -765,10 +700,8 @@ export function QuestionBuilderPane({
           </div>
         ) : (
           <div className="space-y-6">
-            {blocksWithNumbers.map((item, index) => (
-              <div key={item.block.id} data-builder-block-index={index}>
-                {renderBlock(item)}
-              </div>
+            {blocksWithNumbers.map((item) => (
+              <React.Fragment key={item.block.id}>{renderBlock(item)}</React.Fragment>
             ))}
           </div>
         )}

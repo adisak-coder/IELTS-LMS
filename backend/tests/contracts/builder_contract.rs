@@ -547,6 +547,101 @@ async fn get_validation_reports_publish_readiness_for_the_current_draft() {
 }
 
 #[tokio::test]
+async fn get_validation_reports_publish_readiness_for_single_mcq_question_list() {
+    let database = mysql::TestDatabase::new(BUILDER_MIGRATIONS).await;
+    let seeded = seed_exam(database.pool()).await;
+    let auth = mysql::create_authenticated_user(
+        database.pool(),
+        UserRole::Builder,
+        "builder@example.com",
+        "Builder",
+    )
+    .await;
+    let service = BuilderService::new(database.pool().clone());
+    let saved_version = service
+        .save_draft(
+            &contract_actor(),
+            seeded.id.clone(),
+            SaveDraftRequest {
+                content_snapshot: json!({
+                    "listening": {"parts": []},
+                    "reading": {
+                        "passages": [{
+                            "id": "passage-1",
+                            "title": "Passage 1",
+                            "blocks": [{
+                                "id": "block-1",
+                                "type": "SINGLE_MCQ",
+                                "instruction": "Choose the correct answer",
+                                "questions": [
+                                    {
+                                        "id": "single-q1",
+                                        "stem": "What is the first answer?",
+                                        "options": [
+                                            {"id": "opt-1", "text": "Option A", "isCorrect": true},
+                                            {"id": "opt-2", "text": "Option B", "isCorrect": false}
+                                        ]
+                                    },
+                                    {
+                                        "id": "single-q2",
+                                        "stem": "What is the second answer?",
+                                        "options": [
+                                            {"id": "opt-3", "text": "Option C", "isCorrect": false},
+                                            {"id": "opt-4", "text": "Option D", "isCorrect": true}
+                                        ]
+                                    }
+                                ]
+                            }]
+                        }]
+                    },
+                    "writing": {},
+                    "speaking": {}
+                }),
+                config_snapshot: json!({
+                    "general": {"title": seeded.title},
+                    "sections": {
+                        "reading": {
+                            "enabled": true,
+                            "bandScoreTable": {"39": 9.0, "38": 8.5, "37": 8.0, "36": 7.5}
+                        },
+                        "listening": {"enabled": false},
+                        "writing": {"enabled": false},
+                        "speaking": {"enabled": false}
+                    }
+                }),
+                revision: seeded.revision,
+            },
+        )
+        .await
+        .expect("seed draft");
+    let app = build_router(app_state(database.pool().clone()));
+
+    let response = app
+        .oneshot(
+            auth.with_auth(
+                Request::builder().uri(format!("/api/v1/exams/{}/validation", seeded.id)),
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["examId"], seeded.id.to_string());
+    assert_eq!(json["data"]["draftVersionId"], saved_version.id.to_string());
+    assert_eq!(json["data"]["canPublish"], true);
+    assert_eq!(json["data"]["errors"], json!([]));
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn publish_revalidates_the_current_draft_before_marking_it_published() {
     let database = mysql::TestDatabase::new(BUILDER_MIGRATIONS).await;
     let seeded = seed_exam(database.pool()).await;

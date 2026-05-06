@@ -11,20 +11,16 @@ use ielts_backend_domain::{
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
     auth::sha256_hex,
-    config::AppConfig,
     idempotency::{IdempotencyRecord, IdempotencyRepository},
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
-use sqlx::{MySql, MySqlConnection, MySqlPool, QueryBuilder};
+use sqlx::{MySqlConnection, MySqlPool};
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write as _;
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
 use crate::scheduling::SchedulingService;
-
-const AUTO_SUBMIT_EVENT_FAMILY: &str = "auto_submit_schedule_attempts_requested";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryConflictReason {
@@ -32,24 +28,6 @@ pub enum DeliveryConflictReason {
     SectionMismatch,
     AttemptProctorBlocked,
     AttemptSubmitted,
-    BaseRevisionMismatch,
-    ActiveSessionSuperseded,
-    AttemptExpired,
-    FinalFlushRequired,
-    FinalPayloadHashMismatch,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum MutationBatchResponseMode {
-    Full,
-    Ack,
-}
-
-impl MutationBatchResponseMode {
-    fn includes_attempt(self) -> bool {
-        matches!(self, Self::Full)
-    }
 }
 
 impl DeliveryConflictReason {
@@ -59,11 +37,6 @@ impl DeliveryConflictReason {
             DeliveryConflictReason::SectionMismatch => "SECTION_MISMATCH",
             DeliveryConflictReason::AttemptProctorBlocked => "ATTEMPT_PROCTOR_BLOCKED",
             DeliveryConflictReason::AttemptSubmitted => "ATTEMPT_SUBMITTED",
-            DeliveryConflictReason::BaseRevisionMismatch => "BASE_REVISION_MISMATCH",
-            DeliveryConflictReason::ActiveSessionSuperseded => "ACTIVE_SESSION_SUPERSEDED",
-            DeliveryConflictReason::AttemptExpired => "ATTEMPT_EXPIRED",
-            DeliveryConflictReason::FinalFlushRequired => "FINAL_FLUSH_REQUIRED",
-            DeliveryConflictReason::FinalPayloadHashMismatch => "FINAL_PAYLOAD_HASH_MISMATCH",
         }
     }
 }
@@ -76,9 +49,6 @@ pub enum DeliveryError {
     Conflict {
         message: String,
         reason: Option<DeliveryConflictReason>,
-        latest_revision: Option<i32>,
-        server_accepted_through_seq: Option<i64>,
-        active_session_id: Option<String>,
     },
     #[error("Not found")]
     NotFound,
@@ -93,9 +63,6 @@ impl DeliveryError {
         DeliveryError::Conflict {
             message: message.into(),
             reason: None,
-            latest_revision: None,
-            server_accepted_through_seq: None,
-            active_session_id: None,
         }
     }
 
@@ -106,25 +73,6 @@ impl DeliveryError {
         DeliveryError::Conflict {
             message: message.into(),
             reason: Some(reason),
-            latest_revision: None,
-            server_accepted_through_seq: None,
-            active_session_id: None,
-        }
-    }
-
-    pub(crate) fn conflict_with_context(
-        reason: DeliveryConflictReason,
-        message: impl Into<String>,
-        latest_revision: Option<i32>,
-        server_accepted_through_seq: Option<i64>,
-        active_session_id: Option<String>,
-    ) -> Self {
-        DeliveryError::Conflict {
-            message: message.into(),
-            reason: Some(reason),
-            latest_revision,
-            server_accepted_through_seq,
-            active_session_id,
         }
     }
 
@@ -141,44 +89,11 @@ impl DeliveryError {
 
 pub struct DeliveryService {
     pool: MySqlPool,
-    idempotency_usable_hours: i64,
-    submit_idempotency_usable_hours: i64,
-    violation_idempotency_usable_hours: i64,
-    heartbeat_presence_min_write_interval_secs: u64,
-    final_submit_grace_seconds: i64,
 }
 
 impl DeliveryService {
     pub fn new(pool: MySqlPool) -> Self {
-        Self::with_runtime_tuning(pool, 72, 72, 72, 5)
-    }
-
-    pub fn with_idempotency_usable_hours(pool: MySqlPool, idempotency_usable_hours: i64) -> Self {
-        Self::with_runtime_tuning(
-            pool,
-            idempotency_usable_hours,
-            idempotency_usable_hours,
-            idempotency_usable_hours,
-            5,
-        )
-    }
-
-    pub fn with_runtime_tuning(
-        pool: MySqlPool,
-        idempotency_usable_hours: i64,
-        submit_idempotency_usable_hours: i64,
-        violation_idempotency_usable_hours: i64,
-        heartbeat_presence_min_write_interval_secs: u64,
-    ) -> Self {
-        Self {
-            pool,
-            idempotency_usable_hours: idempotency_usable_hours.max(1),
-            submit_idempotency_usable_hours: submit_idempotency_usable_hours.max(1),
-            violation_idempotency_usable_hours: violation_idempotency_usable_hours.max(1),
-            heartbeat_presence_min_write_interval_secs: heartbeat_presence_min_write_interval_secs
-                .max(1),
-            final_submit_grace_seconds: AppConfig::from_env().final_submit_grace_seconds,
-        }
+        Self { pool }
     }
 
     pub async fn get_session_context(
@@ -218,52 +133,6 @@ impl DeliveryService {
         })
     }
 
-    pub async fn get_static_session_context(
-        &self,
-        schedule_id: Uuid,
-    ) -> Result<ielts_backend_domain::attempt::StudentStaticSessionContext, DeliveryError> {
-        let schedule = self.load_schedule(schedule_id).await?;
-        let version = self
-            .load_version(schedule.published_version_id.clone())
-            .await?;
-
-        Ok(ielts_backend_domain::attempt::StudentStaticSessionContext {
-            schedule,
-            version,
-            degraded_live_mode: false,
-        })
-    }
-
-    pub async fn get_live_session_context(
-        &self,
-        schedule_id: Uuid,
-        wcode: Option<String>,
-        student_key: Option<String>,
-        candidate_id: Option<String>,
-    ) -> Result<ielts_backend_domain::attempt::StudentLiveSessionContext, DeliveryError> {
-        let runtime = self.load_runtime(schedule_id).await?;
-
-        let attempt = if let Some(wcode) = wcode {
-            self.load_attempt_by_wcode(schedule_id.to_string(), &wcode)
-                .await?
-        } else if let Some(student_key) = student_key {
-            self.load_attempt_by_student_key(schedule_id.to_string(), &student_key)
-                .await?
-        } else if let Some(candidate_id) = candidate_id {
-            let derived = derive_student_key(schedule_id, &candidate_id);
-            self.load_attempt_by_student_key(schedule_id.to_string(), &derived)
-                .await?
-        } else {
-            None
-        };
-
-        Ok(ielts_backend_domain::attempt::StudentLiveSessionContext {
-            runtime,
-            attempt,
-            degraded_live_mode: false,
-        })
-    }
-
     pub async fn persist_precheck(
         &self,
         schedule_id: Uuid,
@@ -288,28 +157,38 @@ impl DeliveryService {
             )
             .await?;
 
+        let mut integrity = ensure_object(attempt.integrity.clone());
+        integrity.insert("preCheck".to_owned(), req.pre_check);
+        integrity.insert(
+            "deviceFingerprintHash".to_owned(),
+            req.device_fingerprint_hash
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
+        integrity.insert(
+            "clientSessionId".to_owned(),
+            Value::String(req.client_session_id.to_string()),
+        );
+        integrity.insert(
+            "lastHeartbeatStatus".to_owned(),
+            Value::String("idle".to_owned()),
+        );
+
+        let phase = determine_phase(runtime.as_ref(), true, attempt.submitted_at.is_some());
+
         let updated = self
-            .update_attempt_integrity_recovery_phase_with_retry(&attempt.id, |latest| {
-                let mut integrity = ensure_object(latest.integrity.clone());
-                integrity.insert("preCheck".to_owned(), req.pre_check.clone());
-                integrity.insert(
-                    "deviceFingerprintHash".to_owned(),
-                    req.device_fingerprint_hash
-                        .clone()
-                        .map(Value::String)
-                        .unwrap_or(Value::Null),
-                );
-                integrity.insert(
-                    "clientSessionId".to_owned(),
-                    Value::String(req.client_session_id.to_string()),
-                );
-                integrity.insert(
-                    "lastHeartbeatStatus".to_owned(),
-                    Value::String("idle".to_owned()),
-                );
-                let next_integrity = Value::Object(integrity);
-                let next_recovery = merge_recovery(
-                    latest.recovery.clone(),
+            .update_attempt(
+                attempt.id,
+                phase,
+                attempt.current_module.clone(),
+                attempt.current_question_id.clone(),
+                attempt.answers.clone(),
+                attempt.writing_answers.clone(),
+                attempt.flags.clone(),
+                attempt.violations_snapshot.clone(),
+                Value::Object(integrity),
+                merge_recovery(
+                    attempt.recovery.clone(),
                     json!({
                         "lastRecoveredAt": Value::Null,
                         "lastPersistedAt": Value::Null,
@@ -317,13 +196,10 @@ impl DeliveryService {
                         "syncState": "idle",
                         "serverAcceptedThroughSeq": 0
                     }),
-                );
-                let phase = determine_phase(runtime.as_ref(), true, latest.submitted_at.is_some());
-                let changed = next_integrity != latest.integrity
-                    || next_recovery != latest.recovery
-                    || phase != latest.phase;
-                Ok((phase, next_integrity, next_recovery, changed))
-            })
+                ),
+                attempt.final_submission.clone(),
+                attempt.submitted_at,
+            )
             .await?;
 
         sqlx::query(
@@ -384,47 +260,56 @@ impl DeliveryService {
             has_precheck,
             attempt.submitted_at.is_some(),
         );
-        let client_session_id = req.client_session_id.to_string();
+        let client_session_id_value = Value::String(req.client_session_id.to_string());
+
+        let needs_client_session_id_in_integrity = attempt
+            .integrity
+            .get("clientSessionId")
+            .and_then(Value::as_str)
+            .is_none();
+        let next_integrity = if needs_client_session_id_in_integrity {
+            let mut integrity = ensure_object(attempt.integrity.clone());
+            integrity.insert(
+                "clientSessionId".to_owned(),
+                client_session_id_value.clone(),
+            );
+            Value::Object(integrity)
+        } else {
+            attempt.integrity.clone()
+        };
+
+        let needs_client_session_id_in_recovery = attempt
+            .recovery
+            .get("clientSessionId")
+            .and_then(Value::as_str)
+            .is_none();
+        let next_recovery = if needs_client_session_id_in_recovery {
+            merge_recovery(
+                attempt.recovery.clone(),
+                json!({ "clientSessionId": req.client_session_id }),
+            )
+        } else {
+            attempt.recovery.clone()
+        };
 
         let attempt = if attempt.phase != phase
-            || attempt
-                .integrity
-                .get("clientSessionId")
-                .and_then(Value::as_str)
-                != Some(client_session_id.as_str())
-            || attempt
-                .recovery
-                .get("clientSessionId")
-                .and_then(Value::as_str)
-                != Some(client_session_id.as_str())
+            || needs_client_session_id_in_integrity
+            || needs_client_session_id_in_recovery
         {
-            self.update_attempt_integrity_recovery_phase_with_retry(&attempt.id, |latest| {
-                let has_precheck = latest
-                    .integrity
-                    .get("preCheck")
-                    .and_then(|value| value.get("completedAt"))
-                    .and_then(Value::as_str)
-                    .is_some();
-                let phase = determine_phase(
-                    runtime.as_ref(),
-                    has_precheck,
-                    latest.submitted_at.is_some(),
-                );
-                let mut integrity = ensure_object(latest.integrity.clone());
-                integrity.insert(
-                    "clientSessionId".to_owned(),
-                    Value::String(client_session_id.clone()),
-                );
-                let next_integrity = Value::Object(integrity);
-                let next_recovery = merge_recovery(
-                    latest.recovery.clone(),
-                    json!({ "clientSessionId": client_session_id.clone() }),
-                );
-                let changed = phase != latest.phase
-                    || next_integrity != latest.integrity
-                    || next_recovery != latest.recovery;
-                Ok((phase, next_integrity, next_recovery, changed))
-            })
+            self.update_attempt(
+                attempt.id,
+                phase,
+                attempt.current_module.clone(),
+                attempt.current_question_id.clone(),
+                attempt.answers.clone(),
+                attempt.writing_answers.clone(),
+                attempt.flags.clone(),
+                attempt.violations_snapshot.clone(),
+                next_integrity,
+                next_recovery,
+                attempt.final_submission.clone(),
+                attempt.submitted_at,
+            )
             .await?
         } else {
             attempt
@@ -448,7 +333,6 @@ impl DeliveryService {
         &self,
         schedule_id: Uuid,
         req: StudentMutationBatchRequest,
-        response_mode: MutationBatchResponseMode,
         idempotency_key: Option<String>,
     ) -> Result<StudentMutationBatchResponse, DeliveryError> {
         if req.mutations.is_empty() {
@@ -456,28 +340,14 @@ impl DeliveryService {
                 "Mutation batch must contain at least one mutation.".to_owned(),
             ));
         }
-        validate_unique_mutation_ids(&req.mutations)?;
 
-        let operation_mode = req
-            .mutations
-            .iter()
-            .all(|mutation| is_operation_command_type(&mutation.mutation_type));
-
-        if !operation_mode {
-            validate_batch_sequences(&req.mutations)?;
-        }
+        validate_batch_sequences(&req.mutations)?;
 
         let repository = self.idempotency_repository();
         let route_key = mutation_batch_route_key(schedule_id);
-        let request_hash = self.idempotency_request_hash(
-            &json!({
-                "request": &req,
-                "responseMode": response_mode,
-            }),
-            idempotency_key.as_ref(),
-        )?;
+        let request_hash = self.idempotency_request_hash(&req, idempotency_key.as_ref())?;
         if let Some(response) = self
-            .lookup_idempotent_response::<StudentMutationBatchResponse>(
+            .lookup_idempotent_response(
                 &repository,
                 &req.student_key,
                 &route_key,
@@ -486,16 +356,6 @@ impl DeliveryService {
             )
             .await?
         {
-            tracing::info!(
-                schedule_id = %schedule_id,
-                attempt_id = %req.attempt_id,
-                client_session_id = %req.client_session_id,
-                batch_count = req.mutations.len(),
-                applied_count = response.applied_mutation_count,
-                persisted_count = response.applied_mutation_count,
-                idempotency_replay = true,
-                "served idempotent student mutation batch response",
-            );
             return Ok(response);
         }
 
@@ -511,7 +371,7 @@ impl DeliveryService {
             ));
         }
         if let Some(response) = self
-            .lookup_idempotent_response_on_connection::<StudentMutationBatchResponse>(
+            .lookup_idempotent_response_on_connection(
                 tx.as_mut(),
                 &req.student_key,
                 &route_key,
@@ -520,59 +380,13 @@ impl DeliveryService {
             )
             .await?
         {
-            tracing::info!(
-                schedule_id = %schedule_id,
-                attempt_id = %req.attempt_id,
-                client_session_id = %req.client_session_id,
-                batch_count = req.mutations.len(),
-                applied_count = response.applied_mutation_count,
-                persisted_count = response.applied_mutation_count,
-                idempotency_replay = true,
-                "served idempotent student mutation batch response from active transaction",
-            );
             return Ok(response);
         }
         if attempt.submitted_at.is_some() {
-            return Err(DeliveryError::conflict_with_context(
+            return Err(DeliveryError::conflict_reason(
                 DeliveryConflictReason::AttemptSubmitted,
                 "Submitted attempts can no longer accept mutations.".to_owned(),
-                Some(attempt.revision),
-                attempt
-                    .recovery
-                    .get("serverAcceptedThroughSeq")
-                    .and_then(Value::as_i64),
-                attempt
-                    .recovery
-                    .get("clientSessionId")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
             ));
-        }
-
-        let active_session_id = attempt
-            .recovery
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                attempt
-                    .integrity
-                    .get("clientSessionId")
-                    .and_then(Value::as_str)
-            })
-            .map(ToOwned::to_owned);
-        if let Some(active_session_id) = active_session_id.as_deref() {
-            if !active_session_id.is_empty() && active_session_id != req.client_session_id {
-                return Err(DeliveryError::conflict_with_context(
-                    DeliveryConflictReason::ActiveSessionSuperseded,
-                    "This session is no longer active for writing.".to_owned(),
-                    Some(attempt.revision),
-                    attempt
-                        .recovery
-                        .get("serverAcceptedThroughSeq")
-                        .and_then(Value::as_i64),
-                    Some(active_session_id.to_owned()),
-                ));
-            }
         }
 
         let schedule_status: Option<String> =
@@ -585,25 +399,6 @@ impl DeliveryService {
                 DeliveryConflictReason::ObjectiveLocked,
                 "Cancelled schedules can no longer accept mutations.".to_owned(),
             ));
-        }
-        let schedule_end_at: Option<DateTime<Utc>> =
-            sqlx::query_scalar("SELECT end_time FROM exam_schedules WHERE id = ?")
-                .bind(schedule_id.to_string())
-                .fetch_optional(tx.as_mut())
-                .await?;
-        if let Some(schedule_end_at) = schedule_end_at {
-            if Utc::now() > schedule_end_at {
-                return Err(DeliveryError::conflict_with_context(
-                    DeliveryConflictReason::AttemptExpired,
-                    "Attempt deadline has passed; no new mutations are accepted.".to_owned(),
-                    Some(attempt.revision),
-                    attempt
-                        .recovery
-                        .get("serverAcceptedThroughSeq")
-                        .and_then(Value::as_i64),
-                    active_session_id.clone(),
-                ));
-            }
         }
 
         let runtime_gate = sqlx::query_as::<_, RuntimeGateRow>(
@@ -624,278 +419,18 @@ impl DeliveryService {
             .and_then(|gate| gate.current_section_key.as_deref());
 
         let version = self
-            .load_version_on_connection(tx.as_mut(), attempt.published_version_id.clone())
+            .load_version(attempt.published_version_id.clone())
             .await?;
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
 
-        if operation_mode {
-            let persisted_max_seq: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(mutation_seq), 0) FROM student_attempt_mutations WHERE attempt_id = ? AND client_session_id = ?",
-            )
-            .bind(&req.attempt_id)
-            .bind(&req.client_session_id)
-            .fetch_one(tx.as_mut())
-            .await?;
-
-            let mutation_ids: Vec<String> = req
-                .mutations
-                .iter()
-                .map(|mutation| mutation.id.clone())
-                .collect();
-            let existing_mutations = if mutation_ids.is_empty() {
-                Vec::new()
-            } else {
-                let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
-                    "SELECT client_mutation_id, mutation_type, payload, applied_revision FROM student_attempt_mutations WHERE attempt_id = ",
-                );
-                query_builder.push_bind(&req.attempt_id);
-                query_builder.push(" AND client_mutation_id IN (");
-                {
-                    let mut separated = query_builder.separated(", ");
-                    for mutation_id in &mutation_ids {
-                        separated.push_bind(mutation_id);
-                    }
-                }
-                query_builder.push(")");
-                query_builder
-                    .build_query_as::<ExistingMutationRow>()
-                    .fetch_all(tx.as_mut())
-                    .await?
-            };
-            let mut existing_by_id: HashMap<String, ExistingMutationRow> = HashMap::new();
-            for row in existing_mutations {
-                existing_by_id.insert(row.client_mutation_id.clone(), row);
-            }
-
-            let mut answers = attempt.answers.clone();
-            let mut writing_answers = attempt.writing_answers.clone();
-            let mut flags = attempt.flags.clone();
-            let mut current_question_id = attempt.current_question_id.clone();
-            let mut recovery = attempt.recovery.clone();
-            let mut working_revision = attempt.revision;
-            let mut newly_applied: Vec<AppliedOperationMutation> = Vec::new();
-
-            for mutation in &req.mutations {
-                let operation = parse_operation_mutation(
-                    mutation,
-                    &answer_schema,
-                    &writing_task_ids,
-                    objective_mutation_gate,
-                    active_section_key,
-                )?;
-                let canonical_payload = operation.canonical_payload();
-
-                if let Some(existing) = existing_by_id.get(&mutation.id) {
-                    if existing.mutation_type != mutation.mutation_type
-                        || existing.payload != canonical_payload
-                    {
-                        return Err(DeliveryError::Validation(
-                            "mutationId was reused with different command content.".to_owned(),
-                        ));
-                    }
-                    continue;
-                }
-
-                if operation.base_revision != working_revision {
-                    return Err(DeliveryError::conflict_with_context(
-                        DeliveryConflictReason::BaseRevisionMismatch,
-                        "baseRevision does not match the latest server revision.".to_owned(),
-                        Some(working_revision),
-                        attempt
-                            .recovery
-                            .get("serverAcceptedThroughSeq")
-                            .and_then(Value::as_i64),
-                        active_session_id.clone(),
-                    ));
-                }
-
-                apply_operation_mutation(
-                    &operation,
-                    &answer_schema,
-                    &writing_task_ids,
-                    &mut answers,
-                    &mut writing_answers,
-                    &mut current_question_id,
-                )?;
-
-                working_revision += 1;
-                newly_applied.push(AppliedOperationMutation {
-                    mutation_id: mutation.id.clone(),
-                    mutation_type: mutation.mutation_type.clone(),
-                    payload: canonical_payload,
-                    client_timestamp: mutation.timestamp,
-                    applied_revision: working_revision,
-                    slot_effect: operation.slot_effect(),
-                });
-            }
-
-            let applied_mutation_count = newly_applied.len();
-            let server_accepted_through_seq = persisted_max_seq + applied_mutation_count as i64;
-            let mut persisted_mutations_count = 0usize;
-            let now = Utc::now();
-            recovery = merge_recovery(
-                recovery,
-                json!({
-                    "lastPersistedAt": now,
-                    "pendingMutationCount": 0,
-                    "syncState": "saved",
-                    "serverAcceptedThroughSeq": server_accepted_through_seq,
-                    "clientSessionId": req.client_session_id.clone()
-                }),
-            );
-
-            if applied_mutation_count > 0 {
-                let schedule_id = schedule_id.to_string();
-                let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
-                    r#"
-                    INSERT INTO student_attempt_mutations (
-                        id, attempt_id, schedule_id, client_session_id, mutation_type,
-                        client_mutation_id, mutation_seq, payload, client_timestamp,
-                        server_received_at, applied_revision, applied_at
-                    )
-                    "#,
-                );
-                query_builder.push_values(
-                    newly_applied.iter().enumerate(),
-                    |mut row, (index, mutation)| {
-                        row.push_bind(Uuid::new_v4().to_string())
-                            .push_bind(&req.attempt_id)
-                            .push_bind(&schedule_id)
-                            .push_bind(&req.client_session_id)
-                            .push_bind(&mutation.mutation_type)
-                            .push_bind(&mutation.mutation_id)
-                            .push_bind(persisted_max_seq + index as i64 + 1)
-                            .push_bind(&mutation.payload)
-                            .push_bind(mutation.client_timestamp)
-                            .push("NOW()")
-                            .push_bind(mutation.applied_revision)
-                            .push("NOW()");
-                    },
-                );
-                let insert_result = query_builder.build().execute(tx.as_mut()).await?;
-                persisted_mutations_count =
-                    usize::try_from(insert_result.rows_affected()).unwrap_or(usize::MAX);
-                ensure_mutation_persistence_invariant(
-                    applied_mutation_count,
-                    persisted_mutations_count,
-                )?;
-
-                for mutation in &newly_applied {
-                    if let Some(slot_effect) = mutation.slot_effect.as_ref() {
-                        persist_slot_effect(tx.as_mut(), &req.attempt_id, slot_effect).await?;
-                    }
-                }
-
-                sqlx::query(
-                    r#"
-                    UPDATE student_attempts
-                    SET
-                        answers = ?,
-                        writing_answers = ?,
-                        flags = ?,
-                        current_question_id = ?,
-                        recovery = ?,
-                        updated_at = NOW(),
-                        revision = ?
-                    WHERE id = ?
-                    "#,
-                )
-                .bind(&answers)
-                .bind(&writing_answers)
-                .bind(&flags)
-                .bind(current_question_id)
-                .bind(recovery)
-                .bind(working_revision)
-                .bind(&req.attempt_id)
-                .execute(tx.as_mut())
-                .await?;
-            }
-
-            attempt =
-                sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
-                    .bind(&req.attempt_id)
-                    .fetch_one(tx.as_mut())
-                    .await?;
-
-            sqlx::query(
-                r#"
-                INSERT INTO session_audit_logs (
-                    id, schedule_id, actor, action_type, target_student_id, payload, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, NOW())
-                "#,
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(schedule_id.to_string())
-            .bind(&attempt.candidate_name)
-            .bind("STUDENT_MUTATION_BATCH")
-            .bind(&attempt.id)
-            .bind(json!({
-                "count": req.mutations.len(),
-                "appliedCount": applied_mutation_count,
-                "persistedMutationCount": persisted_mutations_count,
-                "types": req.mutations.iter().map(|mutation| mutation.mutation_type.clone()).collect::<Vec<_>>(),
-                "revision": attempt.revision,
-                "clientSessionId": req.client_session_id
-            }))
-            .execute(tx.as_mut())
-            .await?;
-
-            tracing::info!(
-                schedule_id = %schedule_id,
-                attempt_id = %req.attempt_id,
-                client_session_id = %req.client_session_id,
-                batch_count = req.mutations.len(),
-                applied_count = applied_mutation_count,
-                persisted_count = persisted_mutations_count,
-                idempotency_replay = false,
-                "processed student mutation batch",
-            );
-
-            let response = StudentMutationBatchResponse {
-                revision: attempt.revision,
-                attempt: response_mode.includes_attempt().then_some(attempt),
-                applied_mutation_count,
-                server_accepted_through_seq,
-                refreshed_attempt_credential: None,
-            };
-
-            self.store_idempotent_response(
-                tx.as_mut(),
-                &repository,
-                &req.student_key,
-                &route_key,
-                idempotency_key.as_deref(),
-                request_hash.as_deref(),
-                &response,
-            )
-            .await?;
-
-            tx.commit().await?;
-            return Ok(response);
-        }
-
-        let persisted_max_seq: i64 = sqlx::query_scalar(
+        let existing_max_seq: i64 = sqlx::query_scalar(
             "SELECT COALESCE(MAX(mutation_seq), 0) FROM student_attempt_mutations WHERE attempt_id = ? AND client_session_id = ?",
         )
         .bind(&req.attempt_id)
         .bind(&req.client_session_id)
         .fetch_one(tx.as_mut())
         .await?;
-        let recovery_max_seq = attempt
-            .recovery
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .filter(|client_session_id| *client_session_id == req.client_session_id)
-            .and_then(|_| {
-                attempt
-                    .recovery
-                    .get("serverAcceptedThroughSeq")
-                    .and_then(Value::as_i64)
-            })
-            .unwrap_or(0);
-        let existing_max_seq = persisted_max_seq.max(recovery_max_seq);
 
         validate_contiguous_sequences(existing_max_seq, &req.mutations)?;
 
@@ -956,52 +491,30 @@ impl DeliveryService {
             }),
         );
 
-        let persisted_mutations: Vec<&MutationEnvelope> = req.mutations.iter().collect();
-        let mut persisted_mutations_count = persisted_mutations.len();
-        let should_write_batch_audit =
-            response_mode == MutationBatchResponseMode::Full || persisted_mutations_count > 0;
-
-        if persisted_mutations_count > 0 {
-            let schedule_id = schedule_id.to_string();
-            let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
+        for mutation in &req.mutations {
+            sqlx::query(
                 r#"
                 INSERT INTO student_attempt_mutations (
                     id, attempt_id, schedule_id, client_session_id, mutation_type,
                     client_mutation_id, mutation_seq, payload, client_timestamp,
                     server_received_at, applied_revision, applied_at
                 )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, NOW())
                 "#,
-            );
-            query_builder.push_values(persisted_mutations.iter(), |mut row, mutation| {
-                let mutation = *mutation;
-                row.push_bind(Uuid::new_v4().to_string())
-                    .push_bind(&req.attempt_id)
-                    .push_bind(&schedule_id)
-                    .push_bind(&req.client_session_id)
-                    .push_bind(&mutation.mutation_type)
-                    .push_bind(&mutation.id)
-                    .push_bind(mutation.seq)
-                    .push_bind(&mutation.payload)
-                    .push_bind(mutation.timestamp)
-                    .push("NOW()")
-                    .push_bind(attempt.revision + 1)
-                    .push("NOW()");
-            });
-            let insert_result = query_builder.build().execute(tx.as_mut()).await?;
-            persisted_mutations_count =
-                usize::try_from(insert_result.rows_affected()).unwrap_or(usize::MAX);
-            ensure_mutation_persistence_invariant(req.mutations.len(), persisted_mutations_count)?;
+            )
+            .bind(Uuid::new_v4().to_string())
+            .bind(&req.attempt_id)
+            .bind(schedule_id.to_string())
+            .bind(&req.client_session_id)
+            .bind(&mutation.mutation_type)
+            .bind(&mutation.id)
+            .bind(mutation.seq)
+            .bind(&mutation.payload)
+            .bind(mutation.timestamp)
+            .bind(attempt.revision + 1)
+            .execute(tx.as_mut())
+            .await?;
         }
-
-        tracing::info!(
-            schedule_id = %schedule_id,
-            attempt_id = %req.attempt_id,
-            client_session_id = %req.client_session_id,
-            response_mode = ?response_mode,
-            mutation_batch_count = req.mutations.len(),
-            persisted_mutations_count,
-            "persisted student mutation batch",
-        );
 
         sqlx::query(
             r#"
@@ -1047,38 +560,34 @@ impl DeliveryService {
         let mut mutation_types: Vec<String> = mutation_types.into_iter().collect();
         mutation_types.sort();
 
-        if should_write_batch_audit {
-            sqlx::query(
-                r#"
-                INSERT INTO session_audit_logs (
-                    id, schedule_id, actor, action_type, target_student_id, payload, created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, NOW())
-                "#,
+        sqlx::query(
+            r#"
+            INSERT INTO session_audit_logs (
+                id, schedule_id, actor, action_type, target_student_id, payload, created_at
             )
-            .bind(Uuid::new_v4().to_string())
-            .bind(schedule_id.to_string())
-            .bind(&attempt.candidate_name)
-            .bind("STUDENT_MUTATION_BATCH")
-            .bind(&attempt.id)
-            .bind(json!({
-                "count": req.mutations.len(),
-                "persistedMutationCount": persisted_mutations_count,
-                "seqFrom": seq_from,
-                "seqTo": seq_to,
-                "types": mutation_types,
-                "phase": attempt.phase,
-                "currentModule": attempt.current_module,
-                "currentQuestionId": attempt.current_question_id,
-                "clientSessionId": req.client_session_id
-            }))
-            .execute(tx.as_mut())
-            .await?;
-        }
+            VALUES (?, ?, ?, ?, ?, ?, NOW())
+            "#,
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(schedule_id.to_string())
+        .bind(&attempt.candidate_name)
+        .bind("STUDENT_MUTATION_BATCH")
+        .bind(&attempt.id)
+        .bind(json!({
+            "count": req.mutations.len(),
+            "seqFrom": seq_from,
+            "seqTo": seq_to,
+            "types": mutation_types,
+            "phase": attempt.phase,
+            "currentModule": attempt.current_module,
+            "currentQuestionId": attempt.current_question_id,
+            "clientSessionId": req.client_session_id
+        }))
+        .execute(tx.as_mut())
+        .await?;
 
         let response = StudentMutationBatchResponse {
-            revision: attempt.revision,
-            attempt: response_mode.includes_attempt().then_some(attempt),
+            attempt,
             applied_mutation_count: req.mutations.len(),
             server_accepted_through_seq,
             refreshed_attempt_credential: None,
@@ -1094,18 +603,6 @@ impl DeliveryService {
             &response,
         )
         .await?;
-
-        tracing::info!(
-            schedule_id = %schedule_id,
-            attempt_id = %req.attempt_id,
-            client_session_id = %req.client_session_id,
-            response_mode = ?response_mode,
-            mutation_batch_count = req.mutations.len(),
-            applied_count = req.mutations.len(),
-            persisted_count = persisted_mutations_count,
-            idempotency_replay = false,
-            "processed student mutation batch",
-        );
 
         tx.commit().await?;
 
@@ -1132,82 +629,51 @@ impl DeliveryService {
         }
 
         let now = Utc::now();
-        if req.event_type == "heartbeat" {
-            self.upsert_attempt_presence(
-                &attempt.id,
-                &attempt.schedule_id,
-                &req.client_session_id,
-                "ok",
-                None,
-                false,
-            )
-            .await?;
-            return Ok(attempt);
+        let mut integrity = ensure_object(attempt.integrity.clone());
+        integrity.insert(
+            "lastHeartbeatAt".to_owned(),
+            Value::String(now.to_rfc3339()),
+        );
+        integrity.insert(
+            "lastHeartbeatStatus".to_owned(),
+            Value::String(match req.event_type.as_str() {
+                "disconnect" | "lost" => "lost".to_owned(),
+                _ => "ok".to_owned(),
+            }),
+        );
+        integrity.insert(
+            "clientSessionId".to_owned(),
+            Value::String(req.client_session_id.to_string()),
+        );
+        if req.event_type == "disconnect" || req.event_type == "lost" {
+            integrity.insert(
+                "lastDisconnectAt".to_owned(),
+                Value::String(now.to_rfc3339()),
+            );
+        }
+        if req.event_type == "reconnect" {
+            integrity.insert(
+                "lastReconnectAt".to_owned(),
+                Value::String(now.to_rfc3339()),
+            );
         }
 
-        let client_session_id = req.client_session_id.to_string();
         let updated = self
-            .update_attempt_integrity_recovery_phase_with_retry(&attempt.id, |latest| {
-                let mut integrity = ensure_object(latest.integrity.clone());
-                integrity.insert(
-                    "lastHeartbeatAt".to_owned(),
-                    Value::String(now.to_rfc3339()),
-                );
-                integrity.insert(
-                    "lastHeartbeatStatus".to_owned(),
-                    Value::String(match req.event_type.as_str() {
-                        "disconnect" | "lost" => "lost".to_owned(),
-                        _ => "ok".to_owned(),
-                    }),
-                );
-                integrity.insert(
-                    "clientSessionId".to_owned(),
-                    Value::String(client_session_id.clone()),
-                );
-                if req.event_type == "disconnect" || req.event_type == "lost" {
-                    integrity.insert(
-                        "lastDisconnectAt".to_owned(),
-                        Value::String(now.to_rfc3339()),
-                    );
-                }
-                if req.event_type == "reconnect" {
-                    integrity.insert(
-                        "lastReconnectAt".to_owned(),
-                        Value::String(now.to_rfc3339()),
-                    );
-                }
-                let next_integrity = Value::Object(integrity);
-                let changed = next_integrity != latest.integrity
-                    || latest
-                        .recovery
-                        .get("clientSessionId")
-                        .and_then(Value::as_str)
-                        != Some(client_session_id.as_str());
-                let next_recovery = if changed {
-                    merge_recovery(
-                        latest.recovery.clone(),
-                        json!({ "clientSessionId": client_session_id.clone() }),
-                    )
-                } else {
-                    latest.recovery.clone()
-                };
-                Ok((latest.phase.clone(), next_integrity, next_recovery, changed))
-            })
+            .update_attempt(
+                attempt.id,
+                attempt.phase.clone(),
+                attempt.current_module.clone(),
+                attempt.current_question_id.clone(),
+                attempt.answers.clone(),
+                attempt.writing_answers.clone(),
+                attempt.flags.clone(),
+                attempt.violations_snapshot.clone(),
+                Value::Object(integrity),
+                attempt.recovery.clone(),
+                attempt.final_submission.clone(),
+                attempt.submitted_at,
+            )
             .await?;
-
-        let heartbeat_status = match req.event_type.as_str() {
-            "disconnect" | "lost" => "lost",
-            _ => "ok",
-        };
-        self.upsert_attempt_presence(
-            &updated.id,
-            &updated.schedule_id,
-            &req.client_session_id,
-            heartbeat_status,
-            Some(req.event_type.as_str()),
-            true,
-        )
-        .await?;
 
         if req.event_type != "heartbeat" {
             let action_type = match req.event_type.as_str() {
@@ -1258,68 +724,6 @@ impl DeliveryService {
         }
 
         Ok(updated)
-    }
-
-    async fn upsert_attempt_presence(
-        &self,
-        attempt_id: &str,
-        schedule_id: &str,
-        client_session_id: &str,
-        heartbeat_status: &str,
-        transition: Option<&str>,
-        force_touch: bool,
-    ) -> Result<(), DeliveryError> {
-        let set_disconnect = transition == Some("disconnect") || transition == Some("lost");
-        let set_reconnect = transition == Some("reconnect");
-        let min_interval_secs = self.heartbeat_presence_min_write_interval_secs.max(1);
-
-        sqlx::query(
-            r#"
-            INSERT INTO student_attempt_presence (
-                attempt_id,
-                schedule_id,
-                client_session_id,
-                last_heartbeat_at,
-                last_heartbeat_status,
-                last_disconnect_at,
-                last_reconnect_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, NOW(), ?, IF(?, NOW(), NULL), IF(?, NOW(), NULL), NOW())
-            ON DUPLICATE KEY UPDATE
-                schedule_id = VALUES(schedule_id),
-                client_session_id = VALUES(client_session_id),
-                last_heartbeat_at = IF(
-                    ? OR TIMESTAMPDIFF(SECOND, last_heartbeat_at, NOW()) >= ?,
-                    VALUES(last_heartbeat_at),
-                    last_heartbeat_at
-                ),
-                last_heartbeat_status = VALUES(last_heartbeat_status),
-                last_disconnect_at = IF(?, NOW(), last_disconnect_at),
-                last_reconnect_at = IF(?, NOW(), last_reconnect_at),
-                updated_at = IF(
-                    ? OR TIMESTAMPDIFF(SECOND, last_heartbeat_at, NOW()) >= ?,
-                    NOW(),
-                    updated_at
-                )
-            "#,
-        )
-        .bind(attempt_id)
-        .bind(schedule_id)
-        .bind(client_session_id)
-        .bind(heartbeat_status)
-        .bind(set_disconnect)
-        .bind(set_reconnect)
-        .bind(force_touch)
-        .bind(min_interval_secs)
-        .bind(set_disconnect)
-        .bind(set_reconnect)
-        .bind(force_touch)
-        .bind(min_interval_secs)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(())
     }
 
     #[tracing::instrument(
@@ -1378,138 +782,6 @@ impl DeliveryService {
             ));
         }
 
-        let active_session_id = attempt
-            .recovery
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .or_else(|| {
-                attempt
-                    .integrity
-                    .get("clientSessionId")
-                    .and_then(Value::as_str)
-            })
-            .map(ToOwned::to_owned);
-        if let (Some(request_session_id), Some(active_session_id)) = (
-            req.client_session_id.as_deref(),
-            active_session_id.as_deref(),
-        ) {
-            if !active_session_id.is_empty() && request_session_id != active_session_id {
-                return Err(DeliveryError::conflict_with_context(
-                    DeliveryConflictReason::ActiveSessionSuperseded,
-                    "This session is no longer active for submission.".to_owned(),
-                    Some(attempt.revision),
-                    attempt
-                        .recovery
-                        .get("serverAcceptedThroughSeq")
-                        .and_then(Value::as_i64),
-                    Some(active_session_id.to_owned()),
-                ));
-            }
-        }
-
-        let Some(submission_id) = req.submission_id.as_ref() else {
-            return Err(DeliveryError::Validation(
-                "submissionId is required.".to_owned(),
-            ));
-        };
-        if submission_id.trim().is_empty() {
-            return Err(DeliveryError::Validation(
-                "submissionId cannot be empty.".to_owned(),
-            ));
-        }
-        if let Some(submitted_at) = attempt.submitted_at {
-            let response = build_submit_response(attempt, submitted_at);
-            self.store_idempotent_response(
-                tx.as_mut(),
-                &repository,
-                &req.student_key,
-                &route_key,
-                idempotency_key.as_deref(),
-                request_hash.as_deref(),
-                &response,
-            )
-            .await?;
-            tx.commit().await?;
-            return Ok(response);
-        }
-
-        let Some(last_seen_revision) = req.last_seen_revision else {
-            return Err(DeliveryError::Validation(
-                "lastSeenRevision is required.".to_owned(),
-            ));
-        };
-        let server_accepted_through_seq = req.server_accepted_through_seq.or_else(|| {
-            attempt
-                .recovery
-                .get("serverAcceptedThroughSeq")
-                .and_then(Value::as_i64)
-        });
-        if req.final_answer_patch.is_none() && req.client_final_seq.is_none() {
-            return Err(DeliveryError::conflict_with_context(
-                DeliveryConflictReason::FinalFlushRequired,
-                "Submit requires final flush metadata (clientFinalSeq or finalAnswerPatch)."
-                    .to_owned(),
-                Some(attempt.revision),
-                server_accepted_through_seq,
-                active_session_id.clone(),
-            ));
-        }
-        if last_seen_revision != attempt.revision {
-            if req.final_answer_patch.is_some() {
-                // Final patch submit is allowed to bridge last-moment revision drift.
-            } else {
-                return Err(DeliveryError::conflict_with_context(
-                    DeliveryConflictReason::FinalFlushRequired,
-                    "Submit requires final answer patch when revision is stale.".to_owned(),
-                    Some(attempt.revision),
-                    server_accepted_through_seq,
-                    active_session_id.clone(),
-                ));
-            }
-        }
-        let schedule_end_at: Option<DateTime<Utc>> =
-            sqlx::query_scalar("SELECT end_time FROM exam_schedules WHERE id = ?")
-                .bind(schedule_id.to_string())
-                .fetch_optional(tx.as_mut())
-                .await?;
-        let now = Utc::now();
-        let final_submit_grace = chrono::Duration::seconds(self.final_submit_grace_seconds);
-        let should_consider_final_patch = req.final_answer_patch.is_some()
-            && schedule_end_at
-                .map(|end_at| now <= end_at + final_submit_grace)
-                .unwrap_or(true);
-
-        if let (Some(final_answer_patch), Some(expected_hash)) = (
-            should_consider_final_patch
-                .then_some(req.final_answer_patch.as_ref())
-                .flatten(),
-            req.final_client_snapshot_hash.as_ref(),
-        ) {
-            let expected = expected_hash.trim().to_ascii_lowercase();
-            if expected.is_empty() {
-                return Err(DeliveryError::Validation(
-                    "finalClientSnapshotHash cannot be empty.".to_owned(),
-                ));
-            }
-            let actual = sha256_hex(&canonical_json_string(final_answer_patch)?);
-            if actual != expected {
-                return Err(DeliveryError::conflict_with_context(
-                    DeliveryConflictReason::FinalPayloadHashMismatch,
-                    "Submit rejected: final snapshot hash mismatch.".to_owned(),
-                    Some(attempt.revision),
-                    server_accepted_through_seq,
-                    active_session_id.clone(),
-                ));
-            }
-        }
-        if req.final_client_snapshot_hash.is_some() && !should_consider_final_patch {
-            // Allow late submit finalization from canonical state after grace expiry.
-        } else if req.final_client_snapshot_hash.is_some() && req.final_answer_patch.is_none() {
-            return Err(DeliveryError::Validation(
-                "finalClientSnapshotHash requires finalAnswerPatch.".to_owned(),
-            ));
-        }
-
         let schedule_status: Option<String> =
             sqlx::query_scalar("SELECT status FROM exam_schedules WHERE id = ?")
                 .bind(schedule_id.to_string())
@@ -1546,8 +818,24 @@ impl DeliveryService {
             }
         }
 
+        if let Some(submitted_at) = attempt.submitted_at {
+            let response = build_submit_response(attempt, submitted_at);
+            self.store_idempotent_response(
+                tx.as_mut(),
+                &repository,
+                &req.student_key,
+                &route_key,
+                idempotency_key.as_deref(),
+                request_hash.as_deref(),
+                &response,
+            )
+            .await?;
+            tx.commit().await?;
+            return Ok(response);
+        }
+
         let version = self
-            .load_version_on_connection(tx.as_mut(), attempt.published_version_id.clone())
+            .load_version(attempt.published_version_id.clone())
             .await?;
         let unanswered_submission_policy = version
             .config_snapshot
@@ -1556,32 +844,8 @@ impl DeliveryService {
             .and_then(Value::as_str)
             .unwrap_or("confirm");
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
-        let writing_task_ids = build_writing_task_ids(&version.config_snapshot);
-        let (final_answers, final_writing_answers, final_flags) = apply_submit_final_patch(
-            &attempt,
-            req.final_answer_patch.as_ref(),
-            &answer_schema,
-            &writing_task_ids,
-        )?;
-        let completion = compute_answer_completion(&answer_schema, &final_answers);
+        let completion = compute_answer_completion(&answer_schema, &attempt.answers);
         let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
-
-        let mut grace_outcome = "not_applicable".to_owned();
-        let mut allow_final_patch = should_consider_final_patch;
-        if let Some(end_at) = schedule_end_at {
-            if now > end_at {
-                if req.final_answer_patch.is_none() {
-                    grace_outcome = "after_deadline_no_patch".to_owned();
-                } else if now <= end_at + final_submit_grace {
-                    grace_outcome = "within_grace_patch_applied".to_owned();
-                } else {
-                    grace_outcome = "grace_expired_forced_canonical".to_owned();
-                    allow_final_patch = false;
-                }
-            } else if req.final_answer_patch.is_some() {
-                grace_outcome = "before_deadline_patch_applied".to_owned();
-            }
-        }
 
         if unanswered_submission_policy == "block"
             && matches!(runtime_status, Some("live" | "paused"))
@@ -1594,35 +858,15 @@ impl DeliveryService {
             )));
         }
 
-        let submission_id = submission_id.clone();
-        let server_accepted_through_seq = req.server_accepted_through_seq.or_else(|| {
-            attempt
-                .recovery
-                .get("serverAcceptedThroughSeq")
-                .and_then(Value::as_i64)
-        });
-        let (final_answers, final_writing_answers, final_flags) = if allow_final_patch {
-            (final_answers, final_writing_answers, final_flags)
-        } else {
-            (
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-            )
-        };
+        let now = Utc::now();
+        let submission_id = format!("submission-{}", Uuid::new_v4().simple());
         let final_submission = json!({
             "submissionId": submission_id,
             "submittedAt": now,
-            "answers": final_answers,
-            "writingAnswers": final_writing_answers,
-            "flags": final_flags,
-            "clientFinalSeq": req.client_final_seq,
-            "serverAcceptedThroughSeq": server_accepted_through_seq,
-            "finalClientSnapshotHash": req.final_client_snapshot_hash,
-            "graceOutcome": grace_outcome,
-            "finalPatchAccepted": allow_final_patch
+            "answers": attempt.answers,
+            "writingAnswers": attempt.writing_answers,
+            "flags": attempt.flags
         });
-        let canonical_hash = sha256_hex(&canonical_json_string(&final_submission)?);
         let recovery = merge_recovery(
             attempt.recovery.clone(),
             json!({
@@ -1637,9 +881,6 @@ impl DeliveryService {
             UPDATE student_attempts
             SET
                 phase = ?,
-                answers = ?,
-                writing_answers = ?,
-                flags = ?,
                 recovery = ?,
                 final_submission = ?,
                 submitted_at = ?,
@@ -1649,25 +890,11 @@ impl DeliveryService {
             "#,
         )
         .bind("post-exam")
-        .bind(&final_submission["answers"])
-        .bind(&final_submission["writingAnswers"])
-        .bind(&final_submission["flags"])
         .bind(recovery)
         .bind(&final_submission)
         .bind(now)
         .bind(&req.attempt_id)
         .execute(tx.as_mut())
-        .await?;
-
-        let canonical_revision = attempt.revision + 1;
-        upsert_attempt_submission_ledger(
-            tx.as_mut(),
-            &req.attempt_id,
-            "student",
-            canonical_revision,
-            &canonical_hash,
-            idempotency_key.as_deref(),
-        )
         .await?;
 
         let attempt =
@@ -1754,9 +981,9 @@ impl DeliveryService {
         let now = Utc::now();
 
         let attempt_id = Uuid::new_v4();
-        let insert_result = sqlx::query(
+        sqlx::query(
             r#"
-            INSERT IGNORE INTO student_attempts (
+            INSERT INTO student_attempts (
                 id, schedule_id, registration_id, wcode, student_key, organization_id, exam_id, published_version_id,
                 exam_title, candidate_id, candidate_name, candidate_email, phase, current_module,
                 answers, writing_answers, flags, violations_snapshot, integrity, recovery,
@@ -1796,20 +1023,11 @@ impl DeliveryService {
             "lastLocalMutationAt": null,
             "lastPersistedAt": null,
             "pendingMutationCount": 0,
-                "syncState": "idle",
-                "serverAcceptedThroughSeq": 0
-            }))
+            "syncState": "idle",
+            "serverAcceptedThroughSeq": 0
+        }))
         .execute(&self.pool)
         .await?;
-
-        if insert_result.rows_affected() == 0 {
-            return self
-                .load_attempt_by_student_key(schedule.id.clone(), student_key)
-                .await?
-                .ok_or(DeliveryError::Internal(
-                    "Attempt insert was a duplicate but no row was found.".to_owned(),
-                ));
-        }
 
         sqlx::query(
             r#"
@@ -1841,90 +1059,62 @@ impl DeliveryService {
             .map_err(DeliveryError::from)
     }
 
-    async fn update_attempt_integrity_recovery_phase_with_retry<F>(
+    #[allow(clippy::too_many_arguments)]
+    async fn update_attempt(
         &self,
-        attempt_id: &str,
-        mut builder: F,
-    ) -> Result<StudentAttempt, DeliveryError>
-    where
-        F: FnMut(&StudentAttempt) -> Result<(String, Value, Value, bool), DeliveryError>,
-    {
-        const MAX_RETRIES: usize = 3;
-        for retry in 0..MAX_RETRIES {
-            let latest = self
-                .load_attempt_by_id(attempt_id.to_owned())
-                .await?
-                .ok_or(DeliveryError::NotFound)?;
-            let (phase, integrity, recovery, changed) = builder(&latest)?;
-
-            if !changed {
-                return Ok(latest);
-            }
-
-            if let Some(updated) = self
-                .update_attempt_integrity_recovery_phase_if_revision(
-                    &latest.id,
-                    latest.revision,
-                    &phase,
-                    &integrity,
-                    &recovery,
-                )
-                .await?
-            {
-                return Ok(updated);
-            }
-
-            let _ = retry;
-        }
-
-        Err(DeliveryError::conflict_with_context(
-            DeliveryConflictReason::BaseRevisionMismatch,
-            "Attempt update conflicted with a concurrent write.",
-            None,
-            None,
-            None,
-        ))
-    }
-
-    async fn update_attempt_integrity_recovery_phase_if_revision(
-        &self,
-        attempt_id: &str,
-        expected_revision: i32,
-        phase: &str,
-        integrity: &Value,
-        recovery: &Value,
-    ) -> Result<Option<StudentAttempt>, DeliveryError> {
-        let result = sqlx::query(
+        attempt_id: String,
+        phase: String,
+        current_module: String,
+        current_question_id: Option<String>,
+        answers: Value,
+        writing_answers: Value,
+        flags: Value,
+        violations_snapshot: Value,
+        integrity: Value,
+        recovery: Value,
+        final_submission: Option<Value>,
+        submitted_at: Option<DateTime<Utc>>,
+    ) -> Result<StudentAttempt, DeliveryError> {
+        sqlx::query(
             r#"
             UPDATE student_attempts
             SET
                 phase = ?,
+                current_module = ?,
+                current_question_id = ?,
+                answers = ?,
+                writing_answers = ?,
+                flags = ?,
+                violations_snapshot = ?,
                 integrity = ?,
                 recovery = ?,
+                final_submission = ?,
+                submitted_at = ?,
                 updated_at = NOW(),
                 revision = revision + 1
             WHERE id = ?
-              AND revision = ?
             "#,
         )
         .bind(phase)
+        .bind(current_module)
+        .bind(current_question_id)
+        .bind(answers)
+        .bind(writing_answers)
+        .bind(flags)
+        .bind(violations_snapshot)
         .bind(integrity)
         .bind(recovery)
-        .bind(attempt_id)
-        .bind(expected_revision)
+        .bind(final_submission)
+        .bind(submitted_at)
+        .bind(attempt_id.to_string())
         .execute(&self.pool)
         .await?;
 
-        if result.rows_affected() == 0 {
-            return Ok(None);
-        }
-
-        let updated =
-            sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
-                .bind(attempt_id)
-                .fetch_optional(&self.pool)
-                .await?;
-        Ok(updated)
+        sqlx::query_as::<_, StudentAttempt>("SELECT * FROM student_attempts WHERE id = ?")
+            .bind(attempt_id.to_string())
+            .fetch_one(&self.pool)
+            .await
+            .map_err(DeliveryError::from)
     }
 
     async fn load_schedule(&self, schedule_id: Uuid) -> Result<ExamSchedule, DeliveryError> {
@@ -1943,20 +1133,6 @@ impl DeliveryService {
             .fetch_optional(&self.pool)
             .await?
             .ok_or(DeliveryError::NotFound)
-    }
-
-    async fn load_version_on_connection(
-        &self,
-        conn: &mut MySqlConnection,
-        version_id: String,
-    ) -> Result<ExamVersion, DeliveryError> {
-        sqlx::query_as::<_, ExamVersion>(
-            "SELECT id, CAST(exam_id AS CHAR) as exam_id, version_number, CAST(parent_version_id AS CHAR) as parent_version_id, content_snapshot, config_snapshot, validation_snapshot, CAST(created_by AS CHAR) as created_by, created_at, publish_notes, is_draft, is_published, revision FROM exam_versions WHERE id = ?"
-        )
-        .bind(&version_id)
-        .fetch_optional(conn)
-        .await?
-        .ok_or(DeliveryError::NotFound)
     }
 
     async fn load_runtime(
@@ -2059,12 +1235,7 @@ impl DeliveryService {
     }
 
     fn idempotency_repository(&self) -> IdempotencyRepository {
-        IdempotencyRepository::with_ttl_policy(
-            self.pool.clone(),
-            self.idempotency_usable_hours,
-            self.submit_idempotency_usable_hours,
-            self.violation_idempotency_usable_hours,
-        )
+        IdempotencyRepository::new(self.pool.clone())
     }
 
     fn idempotency_request_hash<T: Serialize>(
@@ -2191,20 +1362,6 @@ fn mutation_batch_route_key(schedule_id: Uuid) -> String {
     format!("POST:/api/v1/student/sessions/{schedule_id}/mutations:batch")
 }
 
-fn is_operation_command_type(mutation_type: &str) -> bool {
-    matches!(
-        mutation_type,
-        "SetSlot"
-            | "ClearSlot"
-            | "SetScalar"
-            | "ClearScalar"
-            | "SetChoice"
-            | "ClearChoice"
-            | "SetEssayText"
-            | "ClearEssayText"
-    )
-}
-
 fn submit_route_key(schedule_id: Uuid) -> String {
     format!("POST:/api/v1/student/sessions/{schedule_id}/submit")
 }
@@ -2214,221 +1371,61 @@ pub(crate) async fn auto_submit_schedule_attempts_in_tx(
     schedule_id: Uuid,
     completion_reason: &str,
 ) -> Result<(), DeliveryError> {
-    let configured_batch_size = AppConfig::from_env().auto_submit_batch_size.max(1);
-    let pending_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL",
+    let pending_attempts = sqlx::query_as::<_, StudentAttempt>(
+        "SELECT * FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL FOR UPDATE",
     )
     .bind(schedule_id.to_string())
-    .fetch_one(&mut *connection)
+    .fetch_all(&mut *connection)
     .await?;
-    if pending_count == 0 {
+
+    if pending_attempts.is_empty() {
         return Ok(());
     }
 
-    let event_id = Uuid::new_v4().hyphenated().to_string();
-    sqlx::query(
-        r#"
-        INSERT INTO outbox_events (
-            id, aggregate_kind, aggregate_id, revision, event_family, payload, created_at, publish_attempts
+    let now = Utc::now();
+    for attempt in pending_attempts {
+        let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+        let final_submission = json!({
+            "submissionId": submission_id,
+            "submittedAt": now,
+            "answers": attempt.answers,
+            "writingAnswers": attempt.writing_answers,
+            "flags": attempt.flags,
+            "completionReason": completion_reason,
+            "autoSubmission": true
+        });
+        let recovery = merge_recovery(
+            attempt.recovery.clone(),
+            json!({
+                "lastPersistedAt": now,
+                "pendingMutationCount": 0,
+                "syncState": "saved"
+            }),
+        );
+
+        sqlx::query(
+            r#"
+            UPDATE student_attempts
+            SET
+                phase = ?,
+                recovery = ?,
+                final_submission = ?,
+                submitted_at = ?,
+                updated_at = NOW(),
+                revision = revision + 1
+            WHERE id = ?
+            "#,
         )
-        VALUES (?, ?, ?, ?, ?, ?, NOW(), 0)
-        "#,
-    )
-    .bind(event_id)
-    .bind("schedule_runtime")
-    .bind(schedule_id.to_string())
-    .bind(0_i64)
-    .bind(AUTO_SUBMIT_EVENT_FAMILY)
-    .bind(json!({
-        "scheduleId": schedule_id,
-        "completionReason": completion_reason,
-        "batchSize": configured_batch_size,
-    }))
-    .execute(&mut *connection)
-    .await?;
+        .bind("post-exam")
+        .bind(recovery)
+        .bind(&final_submission)
+        .bind(now)
+        .bind(&attempt.id)
+        .execute(&mut *connection)
+        .await?;
+    }
 
     Ok(())
-}
-
-pub async fn finalize_pending_schedule_attempts(
-    pool: &MySqlPool,
-    schedule_id: Uuid,
-    completion_reason: &str,
-    batch_size: i64,
-) -> Result<u64, DeliveryError> {
-    let batch_size = batch_size.max(1);
-    let mut total_finalized = 0_u64;
-
-    loop {
-        let mut tx = pool.begin().await?;
-        let pending_attempt_ids = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM student_attempts WHERE schedule_id = ? AND submitted_at IS NULL ORDER BY id ASC LIMIT ? FOR UPDATE SKIP LOCKED",
-        )
-        .bind(schedule_id.to_string())
-        .bind(batch_size)
-        .fetch_all(tx.as_mut())
-        .await?;
-
-        if pending_attempt_ids.is_empty() {
-            tx.commit().await?;
-            break;
-        }
-
-        let mut query = QueryBuilder::<MySql>::new("SELECT * FROM student_attempts WHERE id IN (");
-        {
-            let mut separated = query.separated(", ");
-            for id in &pending_attempt_ids {
-                separated.push_bind(id);
-            }
-        }
-        query.push(") ORDER BY id ASC");
-        let pending_attempts = query
-            .build_query_as::<StudentAttempt>()
-            .fetch_all(tx.as_mut())
-            .await?;
-
-        let now = Utc::now();
-        for attempt in pending_attempts {
-            let submission_id = format!("submission-{}", Uuid::new_v4().simple());
-            let final_submission = json!({
-                "submissionId": submission_id,
-                "submittedAt": now,
-                "answers": attempt.answers,
-                "writingAnswers": attempt.writing_answers,
-                "flags": attempt.flags,
-                "completionReason": completion_reason,
-                "autoSubmission": true
-            });
-            let canonical_hash = sha256_hex(&canonical_json_string(&final_submission)?);
-            let recovery = merge_recovery(
-                attempt.recovery.clone(),
-                json!({
-                    "lastPersistedAt": now,
-                    "pendingMutationCount": 0,
-                    "syncState": "saved"
-                }),
-            );
-
-            let update_result = sqlx::query(
-                r#"
-                UPDATE student_attempts
-                SET
-                    phase = ?,
-                    recovery = ?,
-                    final_submission = ?,
-                    submitted_at = ?,
-                    updated_at = NOW(),
-                    revision = revision + 1
-                WHERE id = ?
-                "#,
-            )
-            .bind("post-exam")
-            .bind(recovery)
-            .bind(&final_submission)
-            .bind(now)
-            .bind(&attempt.id)
-            .execute(tx.as_mut())
-            .await?;
-            if update_result.rows_affected() == 1 {
-                let canonical_revision = attempt.revision + 1;
-                upsert_attempt_submission_ledger(
-                    tx.as_mut(),
-                    &attempt.id,
-                    "auto",
-                    canonical_revision,
-                    &canonical_hash,
-                    None,
-                )
-                .await?;
-                total_finalized += 1;
-            }
-        }
-
-        tx.commit().await?;
-    }
-
-    Ok(total_finalized)
-}
-
-pub async fn force_finalize_attempt_if_pending(
-    pool: &MySqlPool,
-    schedule_id: Uuid,
-    attempt_id: Uuid,
-    completion_reason: &str,
-) -> Result<bool, DeliveryError> {
-    let mut tx = pool.begin().await?;
-    let attempt = sqlx::query_as::<_, StudentAttempt>(
-        "SELECT * FROM student_attempts WHERE id = ? AND schedule_id = ? FOR UPDATE",
-    )
-    .bind(attempt_id.to_string())
-    .bind(schedule_id.to_string())
-    .fetch_optional(tx.as_mut())
-    .await?
-    .ok_or(DeliveryError::NotFound)?;
-
-    if attempt.submitted_at.is_some() {
-        tx.commit().await?;
-        return Ok(false);
-    }
-
-    let now = Utc::now();
-    let submission_id = format!("submission-{}", Uuid::new_v4().simple());
-    let final_submission = json!({
-        "submissionId": submission_id,
-        "submittedAt": now,
-        "answers": attempt.answers,
-        "writingAnswers": attempt.writing_answers,
-        "flags": attempt.flags,
-        "completionReason": completion_reason,
-        "autoSubmission": true,
-        "forcedByProctor": true
-    });
-    let canonical_hash = sha256_hex(&canonical_json_string(&final_submission)?);
-    let recovery = merge_recovery(
-        attempt.recovery.clone(),
-        json!({
-            "lastPersistedAt": now,
-            "pendingMutationCount": 0,
-            "syncState": "saved"
-        }),
-    );
-
-    let result = sqlx::query(
-        r#"
-        UPDATE student_attempts
-        SET
-            phase = ?,
-            recovery = ?,
-            final_submission = ?,
-            submitted_at = ?,
-            updated_at = NOW(),
-            revision = revision + 1
-        WHERE id = ? AND schedule_id = ? AND submitted_at IS NULL
-        "#,
-    )
-    .bind("post-exam")
-    .bind(recovery)
-    .bind(&final_submission)
-    .bind(now)
-    .bind(attempt_id.to_string())
-    .bind(schedule_id.to_string())
-    .execute(tx.as_mut())
-    .await?;
-    if result.rows_affected() == 1 {
-        let canonical_revision = attempt.revision + 1;
-        upsert_attempt_submission_ledger(
-            tx.as_mut(),
-            &attempt.id,
-            "auto",
-            canonical_revision,
-            &canonical_hash,
-            None,
-        )
-        .await?;
-    }
-
-    tx.commit().await?;
-    Ok(result.rows_affected() == 1)
 }
 
 #[derive(sqlx::FromRow)]
@@ -2462,38 +1459,6 @@ fn build_submit_response(
         submitted_at,
         refreshed_attempt_credential: None,
     }
-}
-
-async fn upsert_attempt_submission_ledger(
-    connection: &mut MySqlConnection,
-    attempt_id: &str,
-    submission_source: &str,
-    canonical_revision: i32,
-    canonical_hash: &str,
-    idempotency_key: Option<&str>,
-) -> Result<(), DeliveryError> {
-    sqlx::query(
-        r#"
-        INSERT INTO attempt_submission_ledger (
-            attempt_id,
-            submission_source,
-            canonical_revision,
-            canonical_hash,
-            idempotency_key
-        )
-        VALUES (?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-            attempt_id = attempt_id
-        "#,
-    )
-    .bind(attempt_id)
-    .bind(submission_source)
-    .bind(canonical_revision)
-    .bind(canonical_hash)
-    .bind(idempotency_key)
-    .execute(connection)
-    .await?;
-    Ok(())
 }
 
 fn determine_phase(
@@ -2545,32 +1510,6 @@ fn validate_batch_sequences(mutations: &[MutationEnvelope]) -> Result<(), Delive
         }
     }
     Ok(())
-}
-
-fn validate_unique_mutation_ids(mutations: &[MutationEnvelope]) -> Result<(), DeliveryError> {
-    let mut seen = HashSet::new();
-    for mutation in mutations {
-        if !seen.insert(mutation.id.as_str()) {
-            return Err(DeliveryError::Validation(
-                "Mutation batch contains duplicate mutationId values.".to_owned(),
-            ));
-        }
-    }
-    Ok(())
-}
-
-fn ensure_mutation_persistence_invariant(
-    applied_mutation_count: usize,
-    persisted_mutations_count: usize,
-) -> Result<(), DeliveryError> {
-    if applied_mutation_count == persisted_mutations_count {
-        return Ok(());
-    }
-
-    Err(DeliveryError::Internal(format!(
-        "mutation persistence invariant violated: applied_count={} persisted_count={}",
-        applied_mutation_count, persisted_mutations_count
-    )))
 }
 
 fn validate_contiguous_sequences(
@@ -2699,12 +1638,6 @@ enum AnswerConstraint {
 struct AnswerSchema {
     constraints: HashMap<String, AnswerConstraint>,
     sections: HashMap<String, String>,
-    completion_roots: Vec<CompletionRootRule>,
-}
-
-#[derive(Debug, Clone)]
-struct CompletionRootRule {
-    required_leaf_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2758,26 +1691,6 @@ fn answered_slots_for_constraint(constraint: &AnswerConstraint, value: Option<&V
 }
 
 fn compute_answer_completion(schema: &AnswerSchema, answers: &Value) -> AnswerCompletion {
-    if !schema.completion_roots.is_empty() {
-        let mut answered_roots = 0usize;
-        for root in &schema.completion_roots {
-            if root.required_leaf_ids.is_empty() {
-                continue;
-            }
-            let all_required_answered = root
-                .required_leaf_ids
-                .iter()
-                .all(|leaf_id| answers.get(leaf_id).is_some_and(is_answered_value));
-            if all_required_answered {
-                answered_roots += 1;
-            }
-        }
-        return AnswerCompletion {
-            answered_slots: answered_roots,
-            total_slots: schema.completion_roots.len(),
-        };
-    }
-
     let mut total_slots = 0usize;
     let mut answered_slots = 0usize;
 
@@ -2817,7 +1730,6 @@ fn build_writing_task_ids(config_snapshot: &Value) -> HashSet<String> {
 fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, DeliveryError> {
     let mut constraints: HashMap<String, AnswerConstraint> = HashMap::new();
     let mut sections: HashMap<String, String> = HashMap::new();
-    let mut completion_roots: Vec<CompletionRootRule> = Vec::new();
 
     if let Some(passages) = content_snapshot
         .get("reading")
@@ -2828,13 +1740,6 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
             if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
                 for block in blocks {
                     index_block(block, "reading", &mut constraints, &mut sections)?;
-                    index_tree_completion_roots(
-                        block,
-                        "reading",
-                        &mut constraints,
-                        &mut sections,
-                        &mut completion_roots,
-                    )?;
                 }
             }
         }
@@ -2849,13 +1754,6 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
             if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
                 for block in blocks {
                     index_block(block, "listening", &mut constraints, &mut sections)?;
-                    index_tree_completion_roots(
-                        block,
-                        "listening",
-                        &mut constraints,
-                        &mut sections,
-                        &mut completion_roots,
-                    )?;
                 }
             }
         }
@@ -2864,75 +1762,7 @@ fn build_answer_schema(content_snapshot: &Value) -> Result<AnswerSchema, Deliver
     Ok(AnswerSchema {
         constraints,
         sections,
-        completion_roots,
     })
-}
-
-fn index_tree_completion_roots(
-    block: &Value,
-    section_key: &str,
-    constraints: &mut HashMap<String, AnswerConstraint>,
-    sections: &mut HashMap<String, String>,
-    completion_roots: &mut Vec<CompletionRootRule>,
-) -> Result<(), DeliveryError> {
-    let enabled = block
-        .get("subAnswerModeEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    if !enabled {
-        return Ok(());
-    }
-
-    let Some(block_id) = block.get("id").and_then(Value::as_str) else {
-        return Ok(());
-    };
-
-    let Some(roots) = block.get("answerTree").and_then(Value::as_array) else {
-        return Ok(());
-    };
-
-    for root in roots {
-        let Some(root_id) = root.get("id").and_then(Value::as_str) else {
-            continue;
-        };
-        let mut required_leaf_ids = Vec::new();
-        let mut stack: Vec<(&Value, usize)> = vec![(root, 1)];
-        while let Some((node, depth)) = stack.pop() {
-            if depth > 10 {
-                return Err(DeliveryError::Validation(
-                    "Sub-answer tree depth cannot exceed 10.".to_owned(),
-                ));
-            }
-            let children = node.get("children").and_then(Value::as_array);
-            let is_leaf = children.map(|items| items.is_empty()).unwrap_or(true);
-            if is_leaf {
-                let Some(node_id) = node.get("id").and_then(Value::as_str) else {
-                    continue;
-                };
-                let leaf_id = format!("{block_id}::tree::{root_id}::{node_id}");
-                constraints.insert(leaf_id.clone(), AnswerConstraint::Text);
-                register_section(sections, &leaf_id, section_key)?;
-                let required = node
-                    .get("required")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-                if required {
-                    required_leaf_ids.push(leaf_id);
-                }
-                continue;
-            }
-            if let Some(children) = children {
-                for child in children {
-                    stack.push((child, depth + 1));
-                }
-            }
-        }
-        if !required_leaf_ids.is_empty() {
-            completion_roots.push(CompletionRootRule { required_leaf_ids });
-        }
-    }
-
-    Ok(())
 }
 
 fn index_block(
@@ -2941,10 +1771,6 @@ fn index_block(
     constraints: &mut HashMap<String, AnswerConstraint>,
     sections: &mut HashMap<String, String>,
 ) -> Result<(), DeliveryError> {
-    if is_sub_answer_tree_mode(block) {
-        return Ok(());
-    }
-
     let Some(block_type) = block.get("type").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -3040,6 +1866,28 @@ fn index_block(
             );
         }
         "SINGLE_MCQ" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                if !questions.is_empty() {
+                    for question in questions {
+                        let Some(question_id) = question.get("id").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let mut allowed = HashSet::new();
+                        if let Some(options) = question.get("options").and_then(Value::as_array) {
+                            for option in options {
+                                if let Some(id) = option.get("id").and_then(Value::as_str) {
+                                    allowed.insert(id.to_owned());
+                                }
+                            }
+                        }
+                        register_section(sections, question_id, section_key)?;
+                        constraints
+                            .insert(question_id.to_owned(), AnswerConstraint::Enum(allowed));
+                    }
+                    return Ok(());
+                }
+            }
+
             let Some(block_id) = block_id else {
                 return Ok(());
             };
@@ -3154,17 +2002,6 @@ fn index_block(
     }
 
     Ok(())
-}
-
-fn is_sub_answer_tree_mode(block: &Value) -> bool {
-    block
-        .get("subAnswerModeEnabled")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-        && block
-            .get("answerTree")
-            .and_then(Value::as_array)
-            .is_some_and(|roots| !roots.is_empty())
 }
 
 fn matching_heading_value(index: usize) -> String {
@@ -3316,886 +2153,6 @@ fn validate_answer_value(
     }
 }
 
-fn validate_final_answers_snapshot(
-    snapshot: Option<&Value>,
-    answer_schema: &AnswerSchema,
-) -> Result<Value, DeliveryError> {
-    let Some(snapshot) = snapshot else {
-        return Ok(json!({}));
-    };
-    let Some(items) = snapshot.as_object() else {
-        return Err(DeliveryError::Validation(
-            "Submit answers must be an object.".to_owned(),
-        ));
-    };
-
-    for (question_id, value) in items {
-        let constraint = answer_schema.constraints.get(question_id).ok_or_else(|| {
-            DeliveryError::Validation(
-                "Submit answers reference an unknown `questionId`.".to_owned(),
-            )
-        })?;
-        validate_answer_value(constraint, value)?;
-    }
-
-    Ok(Value::Object(items.clone()))
-}
-
-fn canonical_json_string(value: &Value) -> Result<String, DeliveryError> {
-    let mut output = String::new();
-    append_canonical_json(value, &mut output)?;
-    Ok(output)
-}
-
-fn append_canonical_json(value: &Value, output: &mut String) -> Result<(), DeliveryError> {
-    match value {
-        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {
-            output.push_str(&serde_json::to_string(value).map_err(|err| {
-                DeliveryError::Internal(format!("Failed to serialize canonical JSON scalar: {err}"))
-            })?);
-        }
-        Value::Array(items) => {
-            output.push('[');
-            for (index, item) in items.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                append_canonical_json(item, output)?;
-            }
-            output.push(']');
-        }
-        Value::Object(items) => {
-            output.push('{');
-            let mut keys = items.keys().cloned().collect::<Vec<_>>();
-            keys.sort();
-            for (index, key) in keys.iter().enumerate() {
-                if index > 0 {
-                    output.push(',');
-                }
-                write!(
-                    output,
-                    "{}:",
-                    serde_json::to_string(key).map_err(|err| {
-                        DeliveryError::Internal(format!(
-                            "Failed to serialize canonical JSON object key: {err}"
-                        ))
-                    })?
-                )
-                .map_err(|err| {
-                    DeliveryError::Internal(format!("Failed to write canonical JSON: {err}"))
-                })?;
-                if let Some(item) = items.get(key) {
-                    append_canonical_json(item, output)?;
-                }
-            }
-            output.push('}');
-        }
-    }
-    Ok(())
-}
-
-fn apply_submit_final_patch(
-    attempt: &StudentAttempt,
-    final_answer_patch: Option<&Value>,
-    answer_schema: &AnswerSchema,
-    writing_task_ids: &HashSet<String>,
-) -> Result<(Value, Value, Value), DeliveryError> {
-    let Some(final_answer_patch) = final_answer_patch else {
-        let answers = validate_final_answers_snapshot(Some(&attempt.answers), answer_schema)?;
-        let writing_answers = validate_final_writing_answers_snapshot(
-            Some(&attempt.writing_answers),
-            writing_task_ids,
-        )?;
-        let flags = validate_final_flags_snapshot(Some(&attempt.flags), answer_schema)?;
-        return Ok((answers, writing_answers, flags));
-    };
-
-    let Some(patch) = final_answer_patch.as_object() else {
-        return Err(DeliveryError::Validation(
-            "finalAnswerPatch must be an object.".to_owned(),
-        ));
-    };
-
-    for key in patch.keys() {
-        if !matches!(key.as_str(), "answers" | "writingAnswers" | "flags") {
-            return Err(DeliveryError::Validation(
-                "finalAnswerPatch contains unknown fields.".to_owned(),
-            ));
-        }
-    }
-
-    let answers = validate_final_answers_snapshot(patch.get("answers"), answer_schema)?;
-    let writing_answers =
-        validate_final_writing_answers_snapshot(patch.get("writingAnswers"), writing_task_ids)?;
-    let flags = validate_final_flags_snapshot(patch.get("flags"), answer_schema)?;
-    Ok((answers, writing_answers, flags))
-}
-
-fn validate_final_writing_answers_snapshot(
-    snapshot: Option<&Value>,
-    writing_task_ids: &HashSet<String>,
-) -> Result<Value, DeliveryError> {
-    let Some(snapshot) = snapshot else {
-        return Ok(json!({}));
-    };
-    let Some(items) = snapshot.as_object() else {
-        return Err(DeliveryError::Validation(
-            "Submit writing answers must be an object.".to_owned(),
-        ));
-    };
-
-    for (task_id, value) in items {
-        if !writing_task_ids.contains(task_id) {
-            return Err(DeliveryError::Validation(
-                "Submit writing answers reference an unknown `taskId`.".to_owned(),
-            ));
-        }
-        if !matches!(value, Value::String(_) | Value::Null) {
-            return Err(DeliveryError::Validation(
-                "Submit writing answers must be strings (or null).".to_owned(),
-            ));
-        }
-    }
-
-    Ok(Value::Object(items.clone()))
-}
-
-fn validate_final_flags_snapshot(
-    snapshot: Option<&Value>,
-    answer_schema: &AnswerSchema,
-) -> Result<Value, DeliveryError> {
-    let Some(snapshot) = snapshot else {
-        return Ok(json!({}));
-    };
-    let Some(items) = snapshot.as_object() else {
-        return Err(DeliveryError::Validation(
-            "Submit flags must be an object.".to_owned(),
-        ));
-    };
-
-    for (question_id, value) in items {
-        if !answer_schema.sections.contains_key(question_id) {
-            return Err(DeliveryError::Validation(
-                "Submit flags reference an unknown `questionId`.".to_owned(),
-            ));
-        }
-        if !value.is_boolean() {
-            return Err(DeliveryError::Validation(
-                "Submit flags must be boolean.".to_owned(),
-            ));
-        }
-    }
-
-    Ok(Value::Object(items.clone()))
-}
-
-#[derive(Debug, Clone, sqlx::FromRow)]
-struct ExistingMutationRow {
-    client_mutation_id: String,
-    mutation_type: String,
-    payload: Value,
-    applied_revision: Option<i32>,
-}
-
-#[derive(Debug, Clone)]
-struct AppliedOperationMutation {
-    mutation_id: String,
-    mutation_type: String,
-    payload: Value,
-    client_timestamp: DateTime<Utc>,
-    applied_revision: i32,
-    slot_effect: Option<SlotEffect>,
-}
-
-#[derive(Debug, Clone)]
-enum SlotEffect {
-    Upsert {
-        question_id: String,
-        slot_index: i32,
-        value: String,
-    },
-    DeleteOne {
-        question_id: String,
-        slot_index: i32,
-    },
-    DeleteAll {
-        question_id: String,
-    },
-    ReplaceAll {
-        question_id: String,
-        values: Vec<String>,
-    },
-}
-
-#[derive(Debug, Clone)]
-enum OperationMutationCommand {
-    SetSlot {
-        question_id: String,
-        slot_index: usize,
-        value: String,
-    },
-    ClearSlot {
-        question_id: String,
-        slot_index: usize,
-    },
-    SetScalar {
-        question_id: String,
-        value: String,
-    },
-    ClearScalar {
-        question_id: String,
-    },
-    SetChoice {
-        question_id: String,
-        value: Value,
-    },
-    ClearChoice {
-        question_id: String,
-    },
-    SetEssayText {
-        task_id: String,
-        value: String,
-    },
-    ClearEssayText {
-        task_id: String,
-    },
-}
-
-#[derive(Debug, Clone)]
-struct ParsedOperationMutation {
-    base_revision: i32,
-    command: OperationMutationCommand,
-}
-
-impl ParsedOperationMutation {
-    fn canonical_payload(&self) -> Value {
-        match &self.command {
-            OperationMutationCommand::SetSlot {
-                question_id,
-                slot_index,
-                value,
-            } => json!({
-                "baseRevision": self.base_revision,
-                "questionId": question_id,
-                "slotIndex": slot_index,
-                "value": value
-            }),
-            OperationMutationCommand::ClearSlot {
-                question_id,
-                slot_index,
-            } => json!({
-                "baseRevision": self.base_revision,
-                "questionId": question_id,
-                "slotIndex": slot_index
-            }),
-            OperationMutationCommand::SetScalar { question_id, value } => json!({
-                "baseRevision": self.base_revision,
-                "questionId": question_id,
-                "value": value
-            }),
-            OperationMutationCommand::ClearScalar { question_id } => json!({
-                "baseRevision": self.base_revision,
-                "questionId": question_id
-            }),
-            OperationMutationCommand::SetChoice { question_id, value } => json!({
-                "baseRevision": self.base_revision,
-                "questionId": question_id,
-                "value": value
-            }),
-            OperationMutationCommand::ClearChoice { question_id } => json!({
-                "baseRevision": self.base_revision,
-                "questionId": question_id
-            }),
-            OperationMutationCommand::SetEssayText { task_id, value } => json!({
-                "baseRevision": self.base_revision,
-                "taskId": task_id,
-                "value": value
-            }),
-            OperationMutationCommand::ClearEssayText { task_id } => json!({
-                "baseRevision": self.base_revision,
-                "taskId": task_id
-            }),
-        }
-    }
-
-    fn slot_effect(&self) -> Option<SlotEffect> {
-        match &self.command {
-            OperationMutationCommand::SetSlot {
-                question_id,
-                slot_index,
-                value,
-            } => Some(SlotEffect::Upsert {
-                question_id: question_id.clone(),
-                slot_index: *slot_index as i32,
-                value: value.clone(),
-            }),
-            OperationMutationCommand::ClearSlot {
-                question_id,
-                slot_index,
-            } => Some(SlotEffect::DeleteOne {
-                question_id: question_id.clone(),
-                slot_index: *slot_index as i32,
-            }),
-            OperationMutationCommand::SetScalar { question_id, value } => {
-                Some(SlotEffect::Upsert {
-                    question_id: question_id.clone(),
-                    slot_index: 0,
-                    value: value.clone(),
-                })
-            }
-            OperationMutationCommand::ClearScalar { question_id } => Some(SlotEffect::DeleteAll {
-                question_id: question_id.clone(),
-            }),
-            OperationMutationCommand::SetChoice { question_id, value } => {
-                if let Some(choice) = value.as_str() {
-                    return Some(SlotEffect::Upsert {
-                        question_id: question_id.clone(),
-                        slot_index: 0,
-                        value: choice.to_owned(),
-                    });
-                }
-                let values = value
-                    .as_array()
-                    .map(|items| {
-                        items
-                            .iter()
-                            .filter_map(|entry| entry.as_str().map(ToOwned::to_owned))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                Some(SlotEffect::ReplaceAll {
-                    question_id: question_id.clone(),
-                    values,
-                })
-            }
-            OperationMutationCommand::ClearChoice { question_id } => Some(SlotEffect::DeleteAll {
-                question_id: question_id.clone(),
-            }),
-            OperationMutationCommand::SetEssayText { .. }
-            | OperationMutationCommand::ClearEssayText { .. } => None,
-        }
-    }
-}
-
-fn parse_operation_mutation(
-    mutation: &MutationEnvelope,
-    answer_schema: &AnswerSchema,
-    writing_task_ids: &HashSet<String>,
-    objective_mutation_gate: ObjectiveMutationGate,
-    active_section_key: Option<&str>,
-) -> Result<ParsedOperationMutation, DeliveryError> {
-    let base_revision = mutation
-        .payload
-        .get("baseRevision")
-        .and_then(Value::as_i64)
-        .and_then(|value| i32::try_from(value).ok())
-        .ok_or_else(|| {
-            DeliveryError::Validation("Mutation payload is missing `baseRevision`.".to_owned())
-        })?;
-
-    let parsed = match mutation.mutation_type.as_str() {
-        "SetSlot" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept slot mutations.".to_owned(),
-                ));
-            }
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            let slot_index_raw = mutation
-                .payload
-                .get("slotIndex")
-                .and_then(Value::as_i64)
-                .ok_or_else(|| {
-                    DeliveryError::Validation("Mutation payload is missing `slotIndex`.".to_owned())
-                })?;
-            let slot_index = usize::try_from(slot_index_raw).map_err(|_| {
-                DeliveryError::Validation("`slotIndex` must be a non-negative integer.".to_owned())
-            })?;
-            let value = required_string(&mutation.payload, "value")?;
-            if value.trim().is_empty() {
-                return Err(DeliveryError::Validation(
-                    "SetSlot rejects empty values. Use ClearSlot instead.".to_owned(),
-                ));
-            }
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::SetSlot {
-                    question_id,
-                    slot_index,
-                    value,
-                },
-            }
-        }
-        "ClearSlot" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept slot mutations.".to_owned(),
-                ));
-            }
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            let slot_index_raw = mutation
-                .payload
-                .get("slotIndex")
-                .and_then(Value::as_i64)
-                .ok_or_else(|| {
-                    DeliveryError::Validation("Mutation payload is missing `slotIndex`.".to_owned())
-                })?;
-            let slot_index = usize::try_from(slot_index_raw).map_err(|_| {
-                DeliveryError::Validation("`slotIndex` must be a non-negative integer.".to_owned())
-            })?;
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::ClearSlot {
-                    question_id,
-                    slot_index,
-                },
-            }
-        }
-        "SetScalar" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept scalar mutations.".to_owned(),
-                ));
-            }
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            let value = required_string(&mutation.payload, "value")?;
-            if value.trim().is_empty() {
-                return Err(DeliveryError::Validation(
-                    "SetScalar rejects empty values. Use ClearScalar instead.".to_owned(),
-                ));
-            }
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::SetScalar { question_id, value },
-            }
-        }
-        "ClearScalar" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept scalar mutations.".to_owned(),
-                ));
-            }
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::ClearScalar { question_id },
-            }
-        }
-        "SetChoice" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept choice mutations.".to_owned(),
-                ));
-            }
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            let value = mutation.payload.get("value").cloned().ok_or_else(|| {
-                DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
-            })?;
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::SetChoice { question_id, value },
-            }
-        }
-        "ClearChoice" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept choice mutations.".to_owned(),
-                ));
-            }
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::ClearChoice { question_id },
-            }
-        }
-        "SetEssayText" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept writing mutations.".to_owned(),
-                ));
-            }
-            if active_section_key.is_some_and(|value| value != "writing") {
-                return Err(DeliveryError::conflict_reason(
-                    DeliveryConflictReason::SectionMismatch,
-                    "This session can no longer accept writing mutations for the current section."
-                        .to_owned(),
-                ));
-            }
-            let task_id = required_string(&mutation.payload, "taskId")?;
-            if !writing_task_ids.contains(&task_id) {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `taskId`.".to_owned(),
-                ));
-            }
-            let value = required_string(&mutation.payload, "value")?;
-            if value.trim().is_empty() {
-                return Err(DeliveryError::Validation(
-                    "SetEssayText rejects empty values. Use ClearEssayText instead.".to_owned(),
-                ));
-            }
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::SetEssayText { task_id, value },
-            }
-        }
-        "ClearEssayText" => {
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept writing mutations.".to_owned(),
-                ));
-            }
-            if active_section_key.is_some_and(|value| value != "writing") {
-                return Err(DeliveryError::conflict_reason(
-                    DeliveryConflictReason::SectionMismatch,
-                    "This session can no longer accept writing mutations for the current section."
-                        .to_owned(),
-                ));
-            }
-            let task_id = required_string(&mutation.payload, "taskId")?;
-            if !writing_task_ids.contains(&task_id) {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `taskId`.".to_owned(),
-                ));
-            }
-            ParsedOperationMutation {
-                base_revision,
-                command: OperationMutationCommand::ClearEssayText { task_id },
-            }
-        }
-        _ => {
-            return Err(DeliveryError::Validation(
-                "Unknown mutation command type.".to_owned(),
-            ))
-        }
-    };
-
-    Ok(parsed)
-}
-
-fn apply_operation_mutation(
-    operation: &ParsedOperationMutation,
-    answer_schema: &AnswerSchema,
-    _writing_task_ids: &HashSet<String>,
-    answers: &mut Value,
-    writing_answers: &mut Value,
-    current_question_id: &mut Option<String>,
-) -> Result<(), DeliveryError> {
-    match &operation.command {
-        OperationMutationCommand::SetSlot {
-            question_id,
-            slot_index,
-            value,
-        } => {
-            let Some(constraint) = answer_schema.constraints.get(question_id) else {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
-            };
-            let max_len = match constraint {
-                AnswerConstraint::ArrayText { max_len }
-                | AnswerConstraint::EnumArray { max_len, .. } => *max_len,
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "SetSlot is only allowed for slot-based questions.".to_owned(),
-                    ))
-                }
-            };
-            if max_len > 0 && *slot_index >= max_len {
-                return Err(DeliveryError::Validation(
-                    "`slotIndex` is outside the question answer range.".to_owned(),
-                ));
-            }
-            let mut next_answers = ensure_object(std::mem::take(answers));
-            let mut next_value = next_answers
-                .get(question_id)
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let target_len = if max_len > 0 {
-                max_len.max(*slot_index + 1)
-            } else {
-                *slot_index + 1
-            };
-            if next_value.len() < target_len {
-                next_value.resize(target_len, Value::Null);
-            }
-            next_value[*slot_index] = Value::String(value.clone());
-            let next_value = Value::Array(next_value);
-            validate_answer_value(constraint, &next_value)?;
-            next_answers.insert(question_id.clone(), next_value);
-            *answers = Value::Object(next_answers);
-            *current_question_id = Some(question_id.clone());
-        }
-        OperationMutationCommand::ClearSlot {
-            question_id,
-            slot_index,
-        } => {
-            let Some(constraint) = answer_schema.constraints.get(question_id) else {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
-            };
-            let max_len = match constraint {
-                AnswerConstraint::ArrayText { max_len }
-                | AnswerConstraint::EnumArray { max_len, .. } => *max_len,
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "ClearSlot is only allowed for slot-based questions.".to_owned(),
-                    ))
-                }
-            };
-            if max_len > 0 && *slot_index >= max_len {
-                return Err(DeliveryError::Validation(
-                    "`slotIndex` is outside the question answer range.".to_owned(),
-                ));
-            }
-            let mut next_answers = ensure_object(std::mem::take(answers));
-            let mut next_value = next_answers
-                .get(question_id)
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            let target_len = if max_len > 0 {
-                max_len.max(*slot_index + 1)
-            } else {
-                *slot_index + 1
-            };
-            if next_value.len() < target_len {
-                next_value.resize(target_len, Value::Null);
-            }
-            next_value[*slot_index] = Value::Null;
-            let next_value = Value::Array(next_value);
-            validate_answer_value(constraint, &next_value)?;
-            next_answers.insert(question_id.clone(), next_value);
-            *answers = Value::Object(next_answers);
-            *current_question_id = Some(question_id.clone());
-        }
-        OperationMutationCommand::SetScalar { question_id, value } => {
-            let Some(constraint) = answer_schema.constraints.get(question_id) else {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
-            };
-            match constraint {
-                AnswerConstraint::Text | AnswerConstraint::Enum(_) => {}
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "SetScalar is only allowed for scalar questions.".to_owned(),
-                    ))
-                }
-            }
-            let next_value = Value::String(value.clone());
-            validate_answer_value(constraint, &next_value)?;
-            let mut next_answers = ensure_object(std::mem::take(answers));
-            next_answers.insert(question_id.clone(), next_value);
-            *answers = Value::Object(next_answers);
-            *current_question_id = Some(question_id.clone());
-        }
-        OperationMutationCommand::ClearScalar { question_id } => {
-            let Some(constraint) = answer_schema.constraints.get(question_id) else {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
-            };
-            match constraint {
-                AnswerConstraint::Text | AnswerConstraint::Enum(_) => {}
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "ClearScalar is only allowed for scalar questions.".to_owned(),
-                    ))
-                }
-            }
-            let mut next_answers = ensure_object(std::mem::take(answers));
-            next_answers.insert(question_id.clone(), Value::Null);
-            *answers = Value::Object(next_answers);
-            *current_question_id = Some(question_id.clone());
-        }
-        OperationMutationCommand::SetChoice { question_id, value } => {
-            let Some(constraint) = answer_schema.constraints.get(question_id) else {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
-            };
-            match constraint {
-                AnswerConstraint::Enum(_) | AnswerConstraint::MultiChoice { .. } => {}
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "SetChoice is only allowed for choice questions.".to_owned(),
-                    ))
-                }
-            }
-            match value {
-                Value::String(text) => {
-                    if text.trim().is_empty() {
-                        return Err(DeliveryError::Validation(
-                            "SetChoice rejects empty values. Use ClearChoice instead.".to_owned(),
-                        ));
-                    }
-                }
-                Value::Array(values) => {
-                    if values.is_empty() {
-                        return Err(DeliveryError::Validation(
-                            "SetChoice rejects empty selections. Use ClearChoice instead."
-                                .to_owned(),
-                        ));
-                    }
-                }
-                _ => {}
-            }
-            validate_answer_value(constraint, value)?;
-            let mut next_answers = ensure_object(std::mem::take(answers));
-            next_answers.insert(question_id.clone(), value.clone());
-            *answers = Value::Object(next_answers);
-            *current_question_id = Some(question_id.clone());
-        }
-        OperationMutationCommand::ClearChoice { question_id } => {
-            let Some(constraint) = answer_schema.constraints.get(question_id) else {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
-            };
-            match constraint {
-                AnswerConstraint::Enum(_) | AnswerConstraint::MultiChoice { .. } => {}
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "ClearChoice is only allowed for choice questions.".to_owned(),
-                    ))
-                }
-            }
-            let mut next_answers = ensure_object(std::mem::take(answers));
-            next_answers.insert(question_id.clone(), Value::Null);
-            *answers = Value::Object(next_answers);
-            *current_question_id = Some(question_id.clone());
-        }
-        OperationMutationCommand::SetEssayText { task_id, value } => {
-            let mut next_writing = ensure_object(std::mem::take(writing_answers));
-            next_writing.insert(task_id.clone(), Value::String(value.clone()));
-            *writing_answers = Value::Object(next_writing);
-            *current_question_id = Some(task_id.clone());
-        }
-        OperationMutationCommand::ClearEssayText { task_id } => {
-            let mut next_writing = ensure_object(std::mem::take(writing_answers));
-            next_writing.remove(task_id);
-            *writing_answers = Value::Object(next_writing);
-            *current_question_id = Some(task_id.clone());
-        }
-    }
-
-    Ok(())
-}
-
-async fn persist_slot_effect(
-    connection: &mut MySqlConnection,
-    attempt_id: &str,
-    effect: &SlotEffect,
-) -> Result<(), DeliveryError> {
-    match effect {
-        SlotEffect::Upsert {
-            question_id,
-            slot_index,
-            value,
-        } => {
-            sqlx::query(
-                r#"
-                INSERT INTO student_attempt_answer_slots (
-                    attempt_id, question_id, slot_index, value_text, updated_at
-                )
-                VALUES (?, ?, ?, ?, NOW())
-                ON DUPLICATE KEY UPDATE
-                    value_text = VALUES(value_text),
-                    updated_at = NOW()
-                "#,
-            )
-            .bind(attempt_id)
-            .bind(question_id)
-            .bind(*slot_index)
-            .bind(value)
-            .execute(&mut *connection)
-            .await?;
-        }
-        SlotEffect::DeleteOne {
-            question_id,
-            slot_index,
-        } => {
-            sqlx::query(
-                "DELETE FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ? AND slot_index = ?",
-            )
-            .bind(attempt_id)
-            .bind(question_id)
-            .bind(*slot_index)
-            .execute(&mut *connection)
-            .await?;
-        }
-        SlotEffect::DeleteAll { question_id } => {
-            sqlx::query(
-                "DELETE FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ?",
-            )
-            .bind(attempt_id)
-            .bind(question_id)
-            .execute(&mut *connection)
-            .await?;
-        }
-        SlotEffect::ReplaceAll {
-            question_id,
-            values,
-        } => {
-            sqlx::query(
-                "DELETE FROM student_attempt_answer_slots WHERE attempt_id = ? AND question_id = ?",
-            )
-            .bind(attempt_id)
-            .bind(question_id)
-            .execute(&mut *connection)
-            .await?;
-
-            if !values.is_empty() {
-                let mut query_builder: QueryBuilder<MySql> = QueryBuilder::new(
-                    "INSERT INTO student_attempt_answer_slots (attempt_id, question_id, slot_index, value_text, updated_at) ",
-                );
-                query_builder.push_values(values.iter().enumerate(), |mut row, (index, value)| {
-                    row.push_bind(attempt_id)
-                        .push_bind(question_id)
-                        .push_bind(index as i32)
-                        .push_bind(value)
-                        .push("NOW()");
-                });
-                query_builder.build().execute(&mut *connection).await?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
 fn apply_mutation(
     mutation: &MutationEnvelope,
     answer_schema: &AnswerSchema,
@@ -4234,80 +2191,9 @@ fn apply_mutation(
                 DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
             })?;
             validate_answer_value(constraint, &value)?;
-            let slot_index = match mutation.payload.get("slotIndex") {
-                None => None,
-                Some(Value::Number(number)) => {
-                    let raw = number.as_u64().ok_or_else(|| {
-                        DeliveryError::Validation(
-                            "`slotIndex` must be a non-negative integer when present.".to_owned(),
-                        )
-                    })?;
-                    Some(usize::try_from(raw).map_err(|_| {
-                        DeliveryError::Validation("`slotIndex` is too large to process.".to_owned())
-                    })?)
-                }
-                Some(_) => {
-                    return Err(DeliveryError::Validation(
-                        "`slotIndex` must be a non-negative integer when present.".to_owned(),
-                    ));
-                }
-            };
-
             let next_answers = ensure_object(std::mem::take(answers));
-            let next_value = match constraint {
-                AnswerConstraint::ArrayText { max_len }
-                | AnswerConstraint::EnumArray { max_len, .. } => {
-                    let slot_index = slot_index.ok_or_else(|| {
-                        DeliveryError::Validation(
-                            "Array-style answer mutations must include `slotIndex`.".to_owned(),
-                        )
-                    })?;
-                    if *max_len > 0 && slot_index >= *max_len {
-                        return Err(DeliveryError::Validation(
-                            "`slotIndex` is outside the question answer range.".to_owned(),
-                        ));
-                    }
-
-                    let incoming_values = value.as_array().ok_or_else(|| {
-                        DeliveryError::Validation(
-                            "Answer value must be an array when `slotIndex` is provided."
-                                .to_owned(),
-                        )
-                    })?;
-                    let Some(slot_value) = incoming_values.get(slot_index) else {
-                        return Err(DeliveryError::Validation(
-                            "Answer value is missing the requested `slotIndex`.".to_owned(),
-                        ));
-                    };
-
-                    let mut merged_values = next_answers
-                        .get(&question_id)
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_else(|| incoming_values.clone());
-                    if slot_index >= merged_values.len() {
-                        let target_len = if *max_len > 0 {
-                            (*max_len).max(slot_index + 1)
-                        } else {
-                            slot_index + 1
-                        };
-                        merged_values.resize(target_len, Value::String(String::new()));
-                    }
-                    merged_values[slot_index] = slot_value.clone();
-                    Value::Array(merged_values)
-                }
-                _ => {
-                    if slot_index.is_some() {
-                        return Err(DeliveryError::Validation(
-                            "`slotIndex` is only supported for array-style answers.".to_owned(),
-                        ));
-                    }
-                    value
-                }
-            };
-            validate_answer_value(constraint, &next_value)?;
             *current_question_id = Some(question_id.clone());
-            *answers = Value::Object(set_value(next_answers, question_id, next_value));
+            *answers = Value::Object(set_value(next_answers, question_id, value));
         }
         "writing_answer" => {
             let task_id = required_string(&mutation.payload, "taskId")?;
@@ -4575,8 +2461,6 @@ mod tests {
             active_section_key: None,
             current_section_key: None,
             current_section_remaining_seconds: 0,
-            current_section_deadline_at: None,
-            server_now: now,
             waiting_for_next_section: false,
             is_overrun: false,
             total_paused_seconds: 0,
@@ -4636,7 +2520,6 @@ mod tests {
                 ),
             )]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
-            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = ["task-1".to_owned()].into_iter().collect();
 
@@ -4655,7 +2538,6 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "answer".to_owned(),
-                base_revision: None,
                 payload: json!({"questionId": "q1", "value": "A"}),
             },
             &answer_schema,
@@ -4683,7 +2565,6 @@ mod tests {
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 5).unwrap(),
                 mutation_type: "writing_answer".to_owned(),
-                base_revision: None,
                 payload: json!({"taskId": "task-1", "value": "Draft 1"}),
             },
             &answer_schema,
@@ -4711,7 +2592,6 @@ mod tests {
                 seq: 3,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 10).unwrap(),
                 mutation_type: "flag".to_owned(),
-                base_revision: None,
                 payload: json!({"questionId": "q1", "value": true}),
             },
             &answer_schema,
@@ -4734,157 +2614,12 @@ mod tests {
     }
 
     #[test]
-    fn apply_mutation_merges_array_answer_by_slot_index_without_clearing_other_slots() {
-        let question_id = "blk-af811567-c9aa-4a4d-8775-44b529b499fd".to_owned();
-        let answer_schema = AnswerSchema {
-            constraints: HashMap::from_iter([(
-                question_id.clone(),
-                AnswerConstraint::ArrayText { max_len: 10 },
-            )]),
-            sections: HashMap::from_iter([(question_id.clone(), "listening".to_owned())]),
-            completion_roots: Vec::new(),
-        };
-        let writing_task_ids: HashSet<String> = HashSet::new();
-
-        let mut answers = json!({
-            "blk-af811567-c9aa-4a4d-8775-44b529b499fd": [
-                "239",
-                "modern",
-                "lamp",
-                "Aaron",
-                "renting",
-                "electronic ",
-                "insurance",
-                "Space",
-                "app",
-                "Exchange"
-            ]
-        });
-        let mut writing_answers = json!({});
-        let mut flags = json!({});
-        let mut violations_snapshot = json!([]);
-        let mut phase = "exam".to_owned();
-        let mut current_module = "listening".to_owned();
-        let mut current_question_id = None;
-        let mut recovery = json!({});
-
-        apply_mutation(
-            &MutationEnvelope {
-                id: "m-slot-1".to_owned(),
-                seq: 1,
-                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-                mutation_type: "answer".to_owned(),
-                base_revision: None,
-                payload: json!({
-                    "questionId": "blk-af811567-c9aa-4a4d-8775-44b529b499fd",
-                    "value": ["239", "MODERN", "LAMP", "", "", "", "", "", "", ""],
-                    "slotIndex": 2
-                }),
-            },
-            &answer_schema,
-            &writing_task_ids,
-            ObjectiveMutationGate::allow(),
-            Some("listening"),
-            &mut answers,
-            &mut writing_answers,
-            &mut flags,
-            &mut violations_snapshot,
-            &mut phase,
-            &mut current_module,
-            &mut current_question_id,
-            &mut recovery,
-        )
-        .expect("apply answer slot update");
-
-        assert_eq!(
-            answers["blk-af811567-c9aa-4a4d-8775-44b529b499fd"],
-            json!([
-                "239",
-                "modern",
-                "LAMP",
-                "Aaron",
-                "renting",
-                "electronic ",
-                "insurance",
-                "Space",
-                "app",
-                "Exchange"
-            ]),
-        );
-        assert_eq!(
-            current_question_id.as_deref(),
-            Some("blk-af811567-c9aa-4a4d-8775-44b529b499fd"),
-        );
-    }
-
-    #[test]
-    fn apply_mutation_rejects_array_answer_without_slot_index() {
-        let question_id = "blk-af811567-c9aa-4a4d-8775-44b529b499fd".to_owned();
-        let answer_schema = AnswerSchema {
-            constraints: HashMap::from_iter([(
-                question_id.clone(),
-                AnswerConstraint::ArrayText { max_len: 10 },
-            )]),
-            sections: HashMap::from_iter([(question_id.clone(), "listening".to_owned())]),
-            completion_roots: Vec::new(),
-        };
-        let writing_task_ids: HashSet<String> = HashSet::new();
-
-        let mut answers = json!({});
-        let mut writing_answers = json!({});
-        let mut flags = json!({});
-        let mut violations_snapshot = json!([]);
-        let mut phase = "exam".to_owned();
-        let mut current_module = "listening".to_owned();
-        let mut current_question_id = None;
-        let mut recovery = json!({});
-
-        let error = apply_mutation(
-            &MutationEnvelope {
-                id: "m-slot-missing".to_owned(),
-                seq: 1,
-                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-                mutation_type: "answer".to_owned(),
-                base_revision: None,
-                payload: json!({
-                    "questionId": "blk-af811567-c9aa-4a4d-8775-44b529b499fd",
-                    "value": ["239", "MODERN", "LAMP", "", "", "", "", "", "", ""]
-                }),
-            },
-            &answer_schema,
-            &writing_task_ids,
-            ObjectiveMutationGate::allow(),
-            Some("listening"),
-            &mut answers,
-            &mut writing_answers,
-            &mut flags,
-            &mut violations_snapshot,
-            &mut phase,
-            &mut current_module,
-            &mut current_question_id,
-            &mut recovery,
-        )
-        .expect_err("array mutation without slotIndex should be rejected");
-
-        match error {
-            DeliveryError::Validation(message) => {
-                assert_eq!(
-                    message,
-                    "Array-style answer mutations must include `slotIndex`."
-                );
-            }
-            other => panic!("expected validation error, got {:?}", other),
-        }
-    }
-
-    #[test]
     fn validate_contiguous_sequences_rejects_gaps() {
         let base = MutationEnvelope {
             id: "m".to_owned(),
             seq: 0,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
             mutation_type: "answer".to_owned(),
-            base_revision: None,
             payload: json!({"questionId": "q1", "value": "A"}),
         };
         let mut a = base.clone();
@@ -4896,50 +2631,10 @@ mod tests {
     }
 
     #[test]
-    fn validate_unique_mutation_ids_rejects_duplicates() {
-        let first = MutationEnvelope {
-            id: "m-1".to_owned(),
-            seq: 1,
-            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-            mutation_type: "SetScalar".to_owned(),
-            base_revision: None,
-            payload: json!({"baseRevision": 0, "questionId": "q1", "value": "A"}),
-        };
-        let second = MutationEnvelope {
-            id: "m-1".to_owned(),
-            seq: 2,
-            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
-            mutation_type: "SetScalar".to_owned(),
-            base_revision: None,
-            payload: json!({"baseRevision": 1, "questionId": "q1", "value": "B"}),
-        };
-
-        let err = validate_unique_mutation_ids(&[first, second]).unwrap_err();
-        assert!(
-            matches!(err, DeliveryError::Validation(message) if message == "Mutation batch contains duplicate mutationId values.")
-        );
-    }
-
-    #[test]
-    fn mutation_persistence_invariant_accepts_matching_counts() {
-        let result = ensure_mutation_persistence_invariant(3, 3);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn mutation_persistence_invariant_rejects_mismatch() {
-        let error = ensure_mutation_persistence_invariant(2, 1).unwrap_err();
-        assert!(
-            matches!(error, DeliveryError::Internal(message) if message.contains("applied_count=2") && message.contains("persisted_count=1"))
-        );
-    }
-
-    #[test]
     fn apply_mutation_records_position_as_telemetry() {
         let answer_schema = AnswerSchema {
             constraints: HashMap::from_iter([("q1".to_owned(), AnswerConstraint::Text)]),
             sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
-            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = ["task1".to_owned()].into_iter().collect();
         let mut answers = json!({});
@@ -4957,7 +2652,6 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "position".to_owned(),
-                base_revision: None,
                 payload: json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q1"}),
             },
             &answer_schema,
@@ -4994,7 +2688,6 @@ mod tests {
                 ("sentence-1".to_owned(), "reading".to_owned()),
                 ("sentence-1:blank-1".to_owned(), "reading".to_owned()),
             ]),
-            completion_roots: Vec::new(),
         };
         let writing_task_ids: HashSet<String> = HashSet::new();
         let mut answers = json!({});
@@ -5012,7 +2705,6 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "position".to_owned(),
-                base_revision: None,
                 payload: json!({
                     "phase": "exam",
                     "currentModule": "reading",
@@ -5040,7 +2732,6 @@ mod tests {
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
                 mutation_type: "flag".to_owned(),
-                base_revision: None,
                 payload: json!({
                     "questionId": "sentence-1:blank-1",
                     "value": true
@@ -5151,6 +2842,81 @@ mod tests {
     }
 
     #[test]
+    fn build_answer_schema_indexes_single_mcq_question_level_constraints() {
+        let schema = build_answer_schema(&json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "single-block",
+                        "type": "SINGLE_MCQ",
+                        "questions": [
+                            {
+                                "id": "single-q1",
+                                "options": [
+                                    { "id": "opt-a" },
+                                    { "id": "opt-b" }
+                                ]
+                            },
+                            {
+                                "id": "single-q2",
+                                "options": [
+                                    { "id": "opt-c" },
+                                    { "id": "opt-d" }
+                                ]
+                            }
+                        ]
+                    }]
+                }]
+            }
+        }))
+        .expect("schema");
+
+        assert!(schema.constraints.contains_key("single-q1"));
+        assert!(schema.constraints.contains_key("single-q2"));
+        assert!(!schema.constraints.contains_key("single-block"));
+
+        match schema.constraints.get("single-q1") {
+            Some(AnswerConstraint::Enum(allowed)) => {
+                assert!(allowed.contains("opt-a"));
+                assert!(allowed.contains("opt-b"));
+            }
+            other => panic!("expected enum constraint for single-q1, found {other:?}"),
+        }
+
+        assert_eq!(
+            schema.sections.get("single-q1").map(String::as_str),
+            Some("reading"),
+        );
+        assert_eq!(
+            schema.sections.get("single-q2").map(String::as_str),
+            Some("reading"),
+        );
+    }
+
+    #[test]
+    fn build_answer_schema_keeps_legacy_single_mcq_block_constraint() {
+        let schema = build_answer_schema(&json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "legacy-single",
+                        "type": "SINGLE_MCQ",
+                        "stem": "Choose one",
+                        "options": [
+                            { "id": "opt-a" },
+                            { "id": "opt-b" }
+                        ]
+                    }]
+                }]
+            }
+        }))
+        .expect("schema");
+
+        assert!(schema.constraints.contains_key("legacy-single"));
+        assert!(!schema.constraints.contains_key("single-q1"));
+    }
+
+    #[test]
     fn compute_answer_completion_counts_required_slots_across_constraint_types() {
         let schema = AnswerSchema {
             constraints: HashMap::from_iter([
@@ -5175,7 +2941,6 @@ mod tests {
                 ),
             ]),
             sections: HashMap::new(),
-            completion_roots: Vec::new(),
         };
 
         let answers = json!({
@@ -5188,157 +2953,5 @@ mod tests {
         let completion = compute_answer_completion(&schema, &answers);
         assert_eq!(completion.total_slots, 1 + 2 + 2 + 3);
         assert_eq!(completion.answered_slots, 1 + 1 + 1 + 1);
-    }
-
-    #[test]
-    fn build_answer_schema_indexes_tree_leaf_ids_and_completion_roots() {
-        let schema = build_answer_schema(&json!({
-            "reading": {
-                "passages": [{
-                    "blocks": [{
-                        "id": "tree-block",
-                        "type": "SHORT_ANSWER",
-                        "subAnswerModeEnabled": true,
-                        "answerTree": [{
-                            "id": "root-a",
-                            "label": "Root A",
-                            "children": [
-                                { "id": "leaf-a", "label": "Leaf A", "acceptedAnswers": ["cat"], "required": true },
-                                { "id": "leaf-b", "label": "Leaf B", "acceptedAnswers": ["dog"], "required": true }
-                            ]
-                        }]
-                    }]
-                }]
-            }
-        }))
-        .expect("schema");
-
-        assert!(schema
-            .constraints
-            .contains_key("tree-block::tree::root-a::leaf-a"));
-        assert!(schema
-            .constraints
-            .contains_key("tree-block::tree::root-a::leaf-b"));
-        assert_eq!(
-            schema
-                .sections
-                .get("tree-block::tree::root-a::leaf-a")
-                .map(String::as_str),
-            Some("reading")
-        );
-        assert_eq!(schema.completion_roots.len(), 1);
-        let mut required = schema.completion_roots[0].required_leaf_ids.clone();
-        required.sort();
-        assert_eq!(
-            required,
-            vec![
-                "tree-block::tree::root-a::leaf-a".to_owned(),
-                "tree-block::tree::root-a::leaf-b".to_owned(),
-            ],
-        );
-    }
-
-    #[test]
-    fn compute_answer_completion_uses_root_rules_for_tree_mode() {
-        let schema = AnswerSchema {
-            constraints: HashMap::new(),
-            sections: HashMap::new(),
-            completion_roots: vec![
-                CompletionRootRule {
-                    required_leaf_ids: vec![
-                        "tree-block::tree::root-a::leaf-a".to_owned(),
-                        "tree-block::tree::root-a::leaf-b".to_owned(),
-                    ],
-                },
-                CompletionRootRule {
-                    required_leaf_ids: vec!["tree-block::tree::root-b::leaf-c".to_owned()],
-                },
-            ],
-        };
-
-        let completion = compute_answer_completion(
-            &schema,
-            &json!({
-                "tree-block::tree::root-a::leaf-a": "cat",
-                "tree-block::tree::root-a::leaf-b": "dog",
-                "tree-block::tree::root-b::leaf-c": ""
-            }),
-        );
-        assert_eq!(completion.total_slots, 2);
-        assert_eq!(completion.answered_slots, 1);
-    }
-
-    #[test]
-    fn submit_final_snapshot_validation_accepts_known_answers_writing_and_flags() {
-        let schema = AnswerSchema {
-            constraints: HashMap::from_iter([(
-                "q1".to_owned(),
-                AnswerConstraint::Enum(HashSet::from_iter(["A".to_owned(), "B".to_owned()])),
-            )]),
-            sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
-            completion_roots: Vec::new(),
-        };
-        let writing_task_ids = HashSet::from_iter(["task1".to_owned()]);
-
-        let answers = validate_final_answers_snapshot(Some(&json!({ "q1": "A" })), &schema)
-            .expect("answers should validate");
-        let writing_answers = validate_final_writing_answers_snapshot(
-            Some(&json!({ "task1": "Essay text" })),
-            &writing_task_ids,
-        )
-        .expect("writing should validate");
-        let flags = validate_final_flags_snapshot(Some(&json!({ "q1": true })), &schema)
-            .expect("flags should validate");
-
-        assert_eq!(answers, json!({ "q1": "A" }));
-        assert_eq!(writing_answers, json!({ "task1": "Essay text" }));
-        assert_eq!(flags, json!({ "q1": true }));
-    }
-
-    #[test]
-    fn submit_final_snapshot_validation_rejects_unknown_objective_question() {
-        let schema = AnswerSchema {
-            constraints: HashMap::from_iter([("q1".to_owned(), AnswerConstraint::Text)]),
-            sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
-            completion_roots: Vec::new(),
-        };
-
-        let err = validate_final_answers_snapshot(Some(&json!({ "q-missing": "A" })), &schema)
-            .expect_err("unknown answers should be rejected");
-
-        assert!(matches!(err, DeliveryError::Validation(_)));
-    }
-
-    #[test]
-    fn canonical_json_string_sorts_object_keys_recursively() {
-        let payload = json!({
-            "writingAnswers": { "task2": "two", "task1": "one" },
-            "flags": { "q2": false, "q1": true },
-            "answers": { "q2": "B", "q1": "A" }
-        });
-
-        let canonical = canonical_json_string(&payload).expect("canonical json");
-        assert_eq!(
-            canonical,
-            r#"{"answers":{"q1":"A","q2":"B"},"flags":{"q1":true,"q2":false},"writingAnswers":{"task1":"one","task2":"two"}}"#
-        );
-    }
-
-    #[test]
-    fn canonical_hash_is_stable_for_equivalent_key_orderings() {
-        let left = json!({
-            "answers": { "q1": "A", "q2": "B" },
-            "flags": { "q1": true, "q2": false },
-            "writingAnswers": { "task1": "one", "task2": "two" }
-        });
-        let right = json!({
-            "writingAnswers": { "task2": "two", "task1": "one" },
-            "flags": { "q2": false, "q1": true },
-            "answers": { "q2": "B", "q1": "A" }
-        });
-
-        let left_hash = sha256_hex(&canonical_json_string(&left).expect("left canonical"));
-        let right_hash = sha256_hex(&canonical_json_string(&right).expect("right canonical"));
-        assert_eq!(left_hash, right_hash);
     }
 }

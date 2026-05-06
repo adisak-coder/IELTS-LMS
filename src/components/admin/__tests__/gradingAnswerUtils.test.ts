@@ -5,10 +5,6 @@ import type {
 import {
   getCorrectAnswerDisplay,
   getQuestionPrompt,
-  projectRawObjectiveAnswer,
-  rawSlotValue,
-  renderRawMultiSlotAnswer,
-  formatAnswerValue,
   getStudentAnswerDisplay,
   isStudentAnswerCorrect,
 } from '../gradingAnswerUtils';
@@ -99,7 +95,7 @@ describe('gradingAnswerUtils', () => {
     expect(isStudentAnswerCorrect(descriptor, { 'q-alt': 'different' })).toBe(false);
   });
 
-  test('SINGLE_MCQ: displays mapped option text in student answer display', () => {
+  test('SINGLE_MCQ: maps option id to option text', () => {
     const descriptor = {
       id: 'block-1',
       blockId: 'block-1',
@@ -126,7 +122,60 @@ describe('gradingAnswerUtils', () => {
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': 'A' })).toBe(true);
   });
 
-  test('MULTI_MCQ: set-compare ignores ordering while display maps ids to readable option text', () => {
+  test('SINGLE_MCQ: resolves prompt/options from question-level data when questions[] is present', () => {
+    const descriptor = {
+      id: 'single-q2',
+      blockId: 'block-1',
+      groupId: 'p1',
+      groupLabel: 'Passage 1',
+      isMulti: false,
+      correctCount: 1,
+      answerKey: 'single-q2',
+      block: {
+        id: 'block-1',
+        type: 'SINGLE_MCQ',
+        instruction: '',
+        stem: 'legacy fallback stem',
+        options: [
+          { id: 'legacy-a', text: 'Legacy A', isCorrect: true },
+          { id: 'legacy-b', text: 'Legacy B', isCorrect: false },
+        ],
+        questions: [
+          {
+            id: 'single-q1',
+            stem: 'Question 1',
+            options: [
+              { id: 'q1-a', text: 'Q1 A', isCorrect: true },
+              { id: 'q1-b', text: 'Q1 B', isCorrect: false },
+            ],
+          },
+          {
+            id: 'single-q2',
+            stem: 'Question 2',
+            options: [
+              { id: 'q2-a', text: 'Q2 A', isCorrect: false },
+              { id: 'q2-b', text: 'Q2 B', isCorrect: true },
+            ],
+          },
+        ],
+      },
+      question: {
+        id: 'single-q2',
+        stem: 'Question 2',
+        options: [
+          { id: 'q2-a', text: 'Q2 A', isCorrect: false },
+          { id: 'q2-b', text: 'Q2 B', isCorrect: true },
+        ],
+      },
+    } as unknown as StudentQuestionDescriptor;
+
+    expect(getQuestionPrompt(descriptor)).toBe('Question 2');
+    expect(getCorrectAnswerDisplay(descriptor)).toBe('Q2 B');
+    expect(getStudentAnswerDisplay(descriptor, { 'single-q2': 'q2-b' })).toBe('Q2 B');
+    expect(isStudentAnswerCorrect(descriptor, { 'single-q2': 'q2-b' })).toBe(true);
+  });
+
+  test('MULTI_MCQ: set-compare ignores ordering', () => {
     const descriptor = {
       id: 'block-1',
       blockId: 'block-1',
@@ -153,56 +202,6 @@ describe('gradingAnswerUtils', () => {
     expect(getCorrectAnswerDisplay(descriptor)).toBe('Alpha, Charlie');
     expect(getStudentAnswerDisplay(descriptor, { 'block-1': ['C', 'A'] })).toBe('Charlie, Alpha');
     expect(isStudentAnswerCorrect(descriptor, { 'block-1': ['C', 'A'] })).toBe(true);
-  });
-
-  test('formatAnswerValue preserves empty slot order and line breaks for array answers', () => {
-    expect(formatAnswerValue(['a', '', 'c'])).toBe('["a","","c"]');
-    expect(formatAnswerValue([' keep ', '\nline\n', 'x'])).toBe('[" keep ","\\nline\\n","x"]');
-  });
-
-  test('MULTI_MCQ: slot descriptors apply partial-credit correctness by answerIndex', () => {
-    const firstSlotDescriptor = {
-      id: 'block-2:slot:1',
-      blockId: 'block-2',
-      groupId: 'p1',
-      groupLabel: 'Passage 1',
-      rootId: 'block-2:slot:1',
-      rootNumber: 10,
-      numberLabel: '10',
-      isMulti: false,
-      correctCount: 1,
-      answerKey: 'block-2',
-      answerIndex: 0,
-      block: {
-        id: 'block-2',
-        type: 'MULTI_MCQ',
-        instruction: '',
-        stem: 'Choose two',
-        requiredSelections: 2,
-        options: [
-          { id: 'A', text: 'Alpha', isCorrect: true },
-          { id: 'B', text: 'Beta', isCorrect: false },
-          { id: 'C', text: 'Charlie', isCorrect: true },
-        ],
-      },
-      question: null,
-    } as unknown as StudentQuestionDescriptor;
-
-    const secondSlotDescriptor = {
-      ...firstSlotDescriptor,
-      id: 'block-2:slot:2',
-      rootId: 'block-2:slot:2',
-      rootNumber: 11,
-      numberLabel: '11',
-      answerIndex: 1,
-    } as unknown as StudentQuestionDescriptor;
-
-    expect(isStudentAnswerCorrect(firstSlotDescriptor, { 'block-2': ['A'] })).toBe(true);
-    expect(isStudentAnswerCorrect(secondSlotDescriptor, { 'block-2': ['A'] })).toBe(false);
-    expect(isStudentAnswerCorrect(firstSlotDescriptor, { 'block-2': ['A', 'C'] })).toBe(true);
-    expect(isStudentAnswerCorrect(secondSlotDescriptor, { 'block-2': ['A', 'C'] })).toBe(true);
-    expect(isStudentAnswerCorrect(firstSlotDescriptor, { 'block-2': ['B'] })).toBe(false);
-    expect(isStudentAnswerCorrect(secondSlotDescriptor, { 'block-2': ['B'] })).toBe(false);
   });
 
   test('SENTENCE_COMPLETION: uses answerIndex to resolve correct blank', () => {
@@ -347,176 +346,5 @@ describe('gradingAnswerUtils', () => {
 
     expect(getCorrectAnswerDisplay(descriptor)).toBe('dog | cat');
     expect(isStudentAnswerCorrect(descriptor, { 'sa-1': 'cat' })).toBe(true);
-  });
-
-  test('TABLE_COMPLETION: matches accepted alternatives using canonical row-major slot ordering', () => {
-    const descriptor = {
-      id: 'tbl-1:cell-b',
-      blockId: 'tbl-1',
-      groupId: 'p1',
-      groupLabel: 'Passage 1',
-      isMulti: false,
-      correctCount: 1,
-      answerKey: 'tbl-1',
-      answerIndex: 0,
-      block: {
-        id: 'tbl-1',
-        type: 'TABLE_COMPLETION',
-        instruction: 'Complete the table.',
-        answerRule: 'ONE_WORD',
-        headers: ['Key', 'Value'],
-        rows: [
-          ['Name', '____'],
-          ['Country', '____'],
-        ],
-        cells: [
-          { id: 'cell-country', row: 1, col: 1, correctAnswer: 'India', acceptedAnswers: ['India', 'IND'] },
-          { id: 'cell-name', row: 0, col: 1, correctAnswer: 'Anu', acceptedAnswers: ['Anu', 'Anupama'] },
-        ],
-      },
-      question: null,
-    } as unknown as StudentQuestionDescriptor;
-
-    expect(getQuestionPrompt(descriptor)).toBe('Table cell row 1, col 2');
-    expect(getCorrectAnswerDisplay(descriptor)).toBe('Anu | Anupama');
-    expect(isStudentAnswerCorrect(descriptor, { 'tbl-1': ['anupama', 'india'] })).toBe(true);
-  });
-
-  test('TABLE_COMPLETION: supports multiple placeholders inside the same table cell', () => {
-    const firstSlot = {
-      id: 'tbl-2:cell-a',
-      blockId: 'tbl-2',
-      groupId: 'p1',
-      groupLabel: 'Passage 1',
-      rootId: 'tbl-2:cell-a',
-      rootNumber: 51,
-      numberLabel: '51',
-      isMulti: false,
-      correctCount: 1,
-      answerKey: 'tbl-2',
-      answerIndex: 0,
-      block: {
-        id: 'tbl-2',
-        type: 'TABLE_COMPLETION',
-        instruction: 'Complete the table.',
-        answerRule: 'ONE_WORD',
-        headers: ['Key', 'Value'],
-        rows: [['Names', '____, ____']],
-        cells: [
-          { id: 'cell-a', row: 0, col: 1, placeholderIndex: 0, correctAnswer: 'Alice' },
-          { id: 'cell-b', row: 0, col: 1, placeholderIndex: 1, correctAnswer: 'Bob' },
-        ],
-      },
-      question: null,
-    } as unknown as StudentQuestionDescriptor;
-
-    const secondSlot = {
-      ...firstSlot,
-      id: 'tbl-2:cell-b',
-      rootId: 'tbl-2:cell-b',
-      rootNumber: 52,
-      numberLabel: '52',
-      answerIndex: 1,
-    } as unknown as StudentQuestionDescriptor;
-
-    expect(isStudentAnswerCorrect(firstSlot, { 'tbl-2': ['alice', 'bob'] })).toBe(true);
-    expect(isStudentAnswerCorrect(secondSlot, { 'tbl-2': ['alice', 'bob'] })).toBe(true);
-    expect(isStudentAnswerCorrect(secondSlot, { 'tbl-2': ['alice', 'wrong'] })).toBe(false);
-  });
-
-  test('raw slot fidelity: preserves scalar string exactly and maps nullish to empty', () => {
-    expect(rawSlotValue(' answer ')).toBe(' answer ');
-    expect(rawSlotValue('\nline\n')).toBe('\nline\n');
-    expect(rawSlotValue(null)).toBe('');
-    expect(rawSlotValue(undefined)).toBe('');
-  });
-
-  test('raw slot fidelity: preserves multi-slot order, empties, whitespace, punctuation, and symbols', () => {
-    const fixtures: string[][] = [
-      ['A', 'B', 'C'],
-      [' A ', 'B\nB', 'C\tC'],
-      ['A', '', 'C'],
-      ['', '', ''],
-      ['A,', 'B|B', '[C]'],
-      ['0', 'false', 'null'],
-      [' A\n', '\tB ', ' C  '],
-    ];
-
-    fixtures.forEach((fixture) => {
-      expect(renderRawMultiSlotAnswer(fixture)).toEqual(fixture);
-    });
-  });
-
-  test('raw slot fidelity: preserves empty intermediate slots without filter(Boolean) loss', () => {
-    const projected = projectRawObjectiveAnswer(['first', '', 'third']);
-    expect(projected.slots).toEqual(['first', '', 'third']);
-    expect(projected.canonical).toBe('["first","","third"]');
-  });
-
-  test('raw slot fidelity: null and undefined slots become empty strings', () => {
-    const projected = projectRawObjectiveAnswer(['A', null, undefined, 'D']);
-    expect(projected.slots).toEqual(['A', '', '', 'D']);
-  });
-
-  test('raw slot fidelity: comma-containing slot values are not flattened with join', () => {
-    const projected = projectRawObjectiveAnswer(['hello, world', 'x', 'y']);
-    expect(projected.canonical).not.toBe('hello, world, x, y');
-    expect(projected.slots).toEqual(['hello, world', 'x', 'y']);
-  });
-
-  test('sub-answer tree leaf descriptors resolve prompt and accepted answers', () => {
-    const descriptor = {
-      id: 'tree-block::tree::root-a::leaf-a',
-      blockId: 'tree-block',
-      groupId: 'p1',
-      groupLabel: 'Passage 1',
-      rootId: 'tree-block::tree::root::root-a',
-      rootNumber: 21,
-      numberLabel: '21.1',
-      isMulti: false,
-      correctCount: 1,
-      answerKey: 'tree-block::tree::root-a::leaf-a',
-      isSubAnswerTreeLeaf: true,
-      treePrompt: 'Leaf prompt',
-      treeAcceptedAnswers: ['cat', 'kitty'],
-      block: {
-        id: 'tree-block',
-        type: 'SHORT_ANSWER',
-        instruction: '',
-        questions: [],
-      },
-      question: null,
-    } as unknown as StudentQuestionDescriptor;
-
-    expect(getQuestionPrompt(descriptor)).toBe('Leaf prompt');
-    expect(getCorrectAnswerDisplay(descriptor)).toBe('cat | kitty');
-    expect(isStudentAnswerCorrect(descriptor, { [descriptor.id]: 'Kitty' })).toBe(true);
-  });
-
-  test('sub-answer tree grading prompt falls back to question number, not node id', () => {
-    const descriptor = {
-      id: 'tree-block::tree::root-a::legacy-node-id',
-      blockId: 'tree-block',
-      groupId: 'p1',
-      groupLabel: 'Passage 1',
-      rootId: 'tree-block::tree::root::root-a',
-      rootNumber: 21,
-      numberLabel: '21.1',
-      isMulti: false,
-      correctCount: 1,
-      answerKey: 'tree-block::tree::root-a::legacy-node-id',
-      isSubAnswerTreeLeaf: true,
-      treePrompt: '   ',
-      treeAcceptedAnswers: ['cat'],
-      block: {
-        id: 'tree-block',
-        type: 'SHORT_ANSWER',
-        instruction: '',
-        questions: [],
-      },
-      question: null,
-    } as unknown as StudentQuestionDescriptor;
-
-    expect(getQuestionPrompt(descriptor)).toBe('21.1');
   });
 });
