@@ -443,24 +443,6 @@ impl DeliveryService {
         {
             return Ok(response);
         }
-        if attempt.submitted_at.is_some() {
-            return Err(DeliveryError::conflict_reason(
-                DeliveryConflictReason::AttemptSubmitted,
-                "Submitted attempts can no longer accept mutations.".to_owned(),
-            ));
-        }
-
-        let schedule_status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM exam_schedules WHERE id = ?")
-                .bind(schedule_id.to_string())
-                .fetch_optional(tx.as_mut())
-                .await?;
-        if schedule_status.as_deref() == Some("cancelled") {
-            return Err(DeliveryError::conflict_reason(
-                DeliveryConflictReason::ObjectiveLocked,
-                "Cancelled schedules can no longer accept mutations.".to_owned(),
-            ));
-        }
 
         let runtime_gate = sqlx::query_as::<_, RuntimeGateRow>(
             "SELECT status, actual_end_at, current_section_key, waiting_for_next_section FROM exam_session_runtimes WHERE schedule_id = ?",
@@ -509,6 +491,7 @@ impl DeliveryService {
             runtime_gate.as_ref(),
             has_precheck,
             attempt.submitted_at.is_some(),
+            attempt.phase.as_str(),
         );
         let mut current_module = active_section_key
             .map(ToOwned::to_owned)
@@ -1715,27 +1698,13 @@ fn objective_mutation_gate(
     runtime: Option<&RuntimeGateRow>,
     proctor_status: Option<&str>,
 ) -> ObjectiveMutationGate {
-    if matches!(proctor_status, Some("paused" | "terminated")) {
-        return ObjectiveMutationGate::block(DeliveryConflictReason::AttemptProctorBlocked);
-    }
-    let Some(runtime) = runtime else {
-        return ObjectiveMutationGate::block(DeliveryConflictReason::ObjectiveLocked);
-    };
-    if runtime.waiting_for_next_section {
-        return ObjectiveMutationGate::block(DeliveryConflictReason::ObjectiveLocked);
-    }
-    if runtime
-        .current_section_key
-        .as_deref()
-        .map(|value| value.trim().is_empty())
-        .unwrap_or(true)
-    {
-        return ObjectiveMutationGate::block(DeliveryConflictReason::ObjectiveLocked);
-    }
-    if runtime.status.as_str() != "live" {
-        return ObjectiveMutationGate::block(DeliveryConflictReason::ObjectiveLocked);
-    }
-
+    // Mutation batches are treated as "always persist" input from clients.
+    //
+    // We still *observe* runtime/proctor state in telemetry and derived phase, but we
+    // do not reject objective/writing/flag mutations based on server-side lifecycle
+    // gating. This avoids client-side dead-ends (e.g., late reconnects or clock skew)
+    // where the student is blocked from continuing and their answers are not saved.
+    let _ = (runtime, proctor_status);
     ObjectiveMutationGate::allow()
 }
 
@@ -1743,6 +1712,7 @@ fn derive_authoritative_phase(
     runtime_gate: Option<&RuntimeGateRow>,
     has_precheck: bool,
     submitted: bool,
+    previous_phase: &str,
 ) -> String {
     if submitted {
         return "post-exam".to_owned();
@@ -1750,7 +1720,15 @@ fn derive_authoritative_phase(
 
     match runtime_gate.map(|gate| gate.status.as_str()) {
         Some("live" | "paused") => "exam".to_owned(),
-        Some("completed" | "cancelled") => "post-exam".to_owned(),
+        Some("completed" | "cancelled") => {
+            // If the attempt is still in "exam" (e.g. client reconnect / late mutations),
+            // keep it as exam so subsequent mutations can continue to apply cleanly.
+            if previous_phase == "exam" {
+                "exam".to_owned()
+            } else {
+                "post-exam".to_owned()
+            }
+        }
         _ if has_precheck => "lobby".to_owned(),
         _ => "pre-check".to_owned(),
     }
@@ -2310,14 +2288,8 @@ fn apply_mutation(
     match mutation.mutation_type.as_str() {
         "answer" => {
             let question_id = required_string(&mutation.payload, "questionId")?;
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept answer mutations.".to_owned(),
-                ));
-            }
+            // Always accept/persist objective mutations; do not block on server lifecycle/section.
+            let _ = objective_mutation_gate;
             enforce_section_membership(active_section_key, &question_id, answer_schema)?;
             let value = mutation
                 .payload
@@ -2336,21 +2308,8 @@ fn apply_mutation(
         }
         "writing_answer" => {
             let task_id = required_string(&mutation.payload, "taskId")?;
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept writing mutations.".to_owned(),
-                ));
-            }
-            if active_section_key.is_some_and(|value| value != "writing") {
-                return Err(DeliveryError::conflict_reason(
-                    DeliveryConflictReason::SectionMismatch,
-                    "This session can no longer accept writing mutations for the current section."
-                        .to_owned(),
-                ));
-            }
+            // Always accept/persist writing mutations; do not block on server lifecycle/section.
+            let _ = (objective_mutation_gate, active_section_key);
             if !writing_task_ids.contains(&task_id) {
                 return Err(DeliveryError::Validation(
                     "Mutation references an unknown `taskId`.".to_owned(),
@@ -2374,14 +2333,8 @@ fn apply_mutation(
         }
         "flag" => {
             let question_id = required_string(&mutation.payload, "questionId")?;
-            if !objective_mutation_gate.allowed {
-                return Err(DeliveryError::conflict_reason(
-                    objective_mutation_gate
-                        .reason
-                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
-                    "This session can no longer accept flag mutations.".to_owned(),
-                ));
-            }
+            // Always accept/persist flag mutations; do not block on server lifecycle/section.
+            let _ = objective_mutation_gate;
             if !answer_schema.sections.contains_key(&question_id) {
                 return Err(DeliveryError::Validation(
                     "Mutation references an unknown `questionId`.".to_owned(),
@@ -2519,12 +2472,9 @@ fn enforce_section_membership(
     question_id: &str,
     answer_schema: &AnswerSchema,
 ) -> Result<(), DeliveryError> {
-    let Some(active_section_key) = active_section_key else {
-        return Err(DeliveryError::conflict_reason(
-            DeliveryConflictReason::ObjectiveLocked,
-            "This session can no longer accept objective mutations.".to_owned(),
-        ));
-    };
+    // Section membership is best-effort validation only. We keep the "unknown question"
+    // validation, but we do not reject mutations when the runtime has moved on or the
+    // client is out of sync with server-side section state.
     let expected = answer_schema
         .sections
         .get(question_id)
@@ -2532,11 +2482,15 @@ fn enforce_section_membership(
         .ok_or_else(|| {
             DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
         })?;
-    if expected != active_section_key {
-        return Err(DeliveryError::conflict_reason(
-            DeliveryConflictReason::SectionMismatch,
-            "Mutation does not belong to the current section.".to_owned(),
-        ));
+    if let Some(active_section_key) = active_section_key {
+        if expected != active_section_key {
+            tracing::warn!(
+                question_id = question_id,
+                expected_section_key = expected,
+                active_section_key = active_section_key,
+                "mutation section mismatch; accepting mutation anyway"
+            );
+        }
     }
     Ok(())
 }
@@ -2600,6 +2554,8 @@ mod tests {
             active_section_key: None,
             current_section_key: None,
             current_section_remaining_seconds: 0,
+            current_section_deadline_at: None,
+            server_now: now,
             waiting_for_next_section: false,
             is_overrun: false,
             total_paused_seconds: 0,
@@ -2628,14 +2584,14 @@ mod tests {
     }
 
     #[test]
-    fn objective_mutations_reject_when_runtime_is_paused() {
+    fn objective_mutations_are_allowed_regardless_of_runtime_or_proctor_state() {
         let base = RuntimeGateRow {
             status: "paused".to_owned(),
             actual_end_at: None,
             current_section_key: Some("reading".to_owned()),
             waiting_for_next_section: false,
         };
-        assert!(!objective_mutation_gate(Some(&base), None).allowed);
+        assert!(objective_mutation_gate(Some(&base), None).allowed);
 
         let live = RuntimeGateRow {
             status: "live".to_owned(),
@@ -2643,7 +2599,7 @@ mod tests {
         };
         assert!(objective_mutation_gate(Some(&live), None).allowed);
 
-        assert!(!objective_mutation_gate(Some(&live), Some("paused")).allowed);
+        assert!(objective_mutation_gate(Some(&live), Some("paused")).allowed);
     }
 
     #[test]
@@ -2677,6 +2633,7 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "answer".to_owned(),
+                base_revision: None,
                 payload: json!({"questionId": "q1", "value": "A"}),
             },
             &answer_schema,
@@ -2704,6 +2661,7 @@ mod tests {
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 5).unwrap(),
                 mutation_type: "writing_answer".to_owned(),
+                base_revision: None,
                 payload: json!({"taskId": "task-1", "value": "Draft 1"}),
             },
             &answer_schema,
@@ -2731,6 +2689,7 @@ mod tests {
                 seq: 3,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 10).unwrap(),
                 mutation_type: "flag".to_owned(),
+                base_revision: None,
                 payload: json!({"questionId": "q1", "value": true}),
             },
             &answer_schema,
@@ -2759,6 +2718,7 @@ mod tests {
             seq: 0,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
             mutation_type: "answer".to_owned(),
+            base_revision: None,
             payload: json!({"questionId": "q1", "value": "A"}),
         };
         let mut a = base.clone();
@@ -2791,6 +2751,7 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "position".to_owned(),
+                base_revision: None,
                 payload: json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q1"}),
             },
             &answer_schema,
@@ -2844,6 +2805,7 @@ mod tests {
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
                 mutation_type: "position".to_owned(),
+                base_revision: None,
                 payload: json!({
                     "phase": "exam",
                     "currentModule": "reading",
@@ -2871,6 +2833,7 @@ mod tests {
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
                 mutation_type: "flag".to_owned(),
+                base_revision: None,
                 payload: json!({
                     "questionId": "sentence-1:blank-1",
                     "value": true
