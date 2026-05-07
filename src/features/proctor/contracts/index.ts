@@ -11,6 +11,8 @@ import { ExamSchedule, ExamSessionRuntime } from '../../../types/domain';
 export interface ProctorScheduleMetrics {
   studentCount: number;
   activeCount: number;
+  joinReadyCount?: number | undefined;
+  joinTotalCount?: number | undefined;
   alertCount: number;
   violationCount: number;
   degradedLiveMode: boolean;

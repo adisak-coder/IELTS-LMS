@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuthSession } from '../../auth/authSession';
 import { studentAttemptRepository } from '@services/studentAttemptRepository';
 import { commonSchemas } from '@app/validation/validateApiResponse';
+import type { StudentQueuedAdmission } from '@services/authService';
 
 interface EntryFormData {
   wcode: string;
@@ -113,6 +114,8 @@ export function StudentEntryRoute() {
   const [errors, setErrors] = useState<Partial<Record<keyof EntryFormData, string>>>({});
   const [isLoading, setIsLoading] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [queuedAdmission, setQueuedAdmission] = useState<StudentQueuedAdmission | null>(null);
+  const [queuedPayload, setQueuedPayload] = useState<EntryFormData | null>(null);
 
   useEffect(() => {
     if (!scheduleId) {
@@ -199,14 +202,25 @@ export function StudentEntryRoute() {
 
     setIsLoading(true);
     setSubmitError(null);
+    setQueuedAdmission(null);
 
     try {
-      await studentEntry({
+      const result = await studentEntry({
         scheduleId,
         wcode: normalizedWcode,
         email: normalizedEmail,
         studentName: normalizedName,
       });
+
+      if ('state' in result && result.state === 'queued') {
+        setQueuedAdmission(result);
+        setQueuedPayload({
+          wcode: normalizedWcode,
+          email: normalizedEmail,
+          studentName: normalizedName,
+        });
+        return;
+      }
 
       storeLastWcode(scheduleId, normalizedWcode);
       storeCandidateProfile(scheduleId, normalizedWcode, {
@@ -223,6 +237,50 @@ export function StudentEntryRoute() {
     }
   };
 
+  useEffect(() => {
+    if (!scheduleId || !queuedAdmission || !queuedPayload) {
+      return;
+    }
+
+    let cancelled = false;
+    const pollAfterMs = Math.max(300, queuedAdmission.pollAfterMs || 1500);
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await studentEntry({
+          scheduleId,
+          wcode: queuedPayload.wcode,
+          email: queuedPayload.email,
+          studentName: queuedPayload.studentName,
+        });
+        if (cancelled) {
+          return;
+        }
+        if ('state' in result && result.state === 'queued') {
+          setQueuedAdmission(result);
+          return;
+        }
+
+        storeLastWcode(scheduleId, queuedPayload.wcode);
+        storeCandidateProfile(scheduleId, queuedPayload.wcode, {
+          studentName: queuedPayload.studentName,
+          email: queuedPayload.email,
+        });
+        navigate(`/student/${scheduleId}/${queuedPayload.wcode}`);
+      } catch (error) {
+        if (!cancelled) {
+          setSubmitError(
+            error instanceof Error ? error.message : 'Admission polling failed. Please retry.',
+          );
+        }
+      }
+    }, pollAfterMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [navigate, queuedAdmission, queuedPayload, scheduleId, studentEntry]);
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="max-w-md w-full bg-white rounded-lg shadow-md p-8">
@@ -231,6 +289,14 @@ export function StudentEntryRoute() {
         {submitError && (
           <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
             <p className="text-sm text-red-600">{submitError}</p>
+          </div>
+        )}
+
+        {queuedAdmission && (
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-md">
+            <p className="text-sm text-blue-700">
+              You are in queue. Position: {queuedAdmission.position}
+            </p>
           </div>
         )}
 
@@ -245,6 +311,7 @@ export function StudentEntryRoute() {
               value={formData.wcode}
               onChange={(e) => handleInputChange('wcode', e.target.value.toUpperCase())}
               placeholder="W250334"
+              disabled={isLoading || Boolean(queuedAdmission)}
               className={`w-full px-3 py-2 border rounded-md ${
                 errors.wcode ? 'border-red-300' : 'border-gray-300'
               } focus:outline-none focus:ring-2 focus:ring-blue-500`}
@@ -265,6 +332,7 @@ export function StudentEntryRoute() {
               value={formData.email}
               onChange={(e) => handleInputChange('email', e.target.value)}
               placeholder="student@example.com"
+              disabled={isLoading || Boolean(queuedAdmission)}
               className={`w-full px-3 py-2 border rounded-md ${
                 errors.email ? 'border-red-300' : 'border-gray-300'
               } focus:outline-none focus:ring-2 focus:ring-blue-500`}
@@ -282,6 +350,7 @@ export function StudentEntryRoute() {
               value={formData.studentName}
               onChange={(e) => handleInputChange('studentName', e.target.value)}
               placeholder="John Doe"
+              disabled={isLoading || Boolean(queuedAdmission)}
               className={`w-full px-3 py-2 border rounded-md ${
                 errors.studentName ? 'border-red-300' : 'border-gray-300'
               } focus:outline-none focus:ring-2 focus:ring-blue-500`}
@@ -293,10 +362,10 @@ export function StudentEntryRoute() {
 
           <button
             type="submit"
-            disabled={isLoading}
+            disabled={isLoading || Boolean(queuedAdmission)}
             className="w-full bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
           >
-            {isLoading ? 'Checking in...' : 'Continue'}
+            {queuedAdmission ? 'Waiting for Admission...' : isLoading ? 'Checking in...' : 'Continue'}
           </button>
         </form>
       </div>

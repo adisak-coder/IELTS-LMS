@@ -155,6 +155,8 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
         const activeCount =
           metrics?.activeCount ??
           roster.filter((session) => session.status === 'active' || session.status === 'warned').length;
+        const joinReadyCount = metrics?.joinReadyCount ?? studentCount;
+        const joinTotalCount = Math.max(metrics?.joinTotalCount ?? studentCount, joinReadyCount);
         const violationCount =
           metrics?.violationCount ??
           roster.reduce((count, session) => count + session.violations.length, 0);
@@ -178,6 +180,8 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
           currentLiveSection: runtime?.currentSectionKey ?? null,
           studentCount,
           activeCount,
+          joinReadyCount,
+          joinTotalCount,
           violationCount,
           status:
             schedule.status === 'cancelled'
@@ -594,7 +598,7 @@ export const ProctorDashboard = React.memo(function ProctorDashboard({
               </h2>
               <p className="mt-1 text-sm text-slate-500">
                 {selectedGroup
-                  ? `${filteredSessions.length} visible students, ${selectedGroup.violationCount} recorded violations`
+                  ? `${filteredSessions.length} visible students · join progress ${selectedGroup.joinReadyCount}/${selectedGroup.joinTotalCount} · ${selectedGroup.violationCount} recorded violations`
                   : 'Select a cohort to open the roster and student activity drawer.'}
               </p>
             </div>

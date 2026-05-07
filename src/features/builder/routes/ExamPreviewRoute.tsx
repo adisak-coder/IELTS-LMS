@@ -19,6 +19,7 @@ export function ExamPreviewRoute() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuthSession();
+  const controller = useBuilderRouteController(examId);
   const [previewSession, setPreviewSession] = useState<PreviewRuntimeSession | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(false);
@@ -32,68 +33,27 @@ export function ExamPreviewRoute() {
     return MODULE_KEYS.includes(normalized as ModuleType) ? (normalized as ModuleType) : null;
   }, [searchParams]);
 
-  if (!examId) {
-    return (
-      <ErrorSurface
-        title="Preview unavailable"
-        description="Exam ID not found."
-      />
-    );
-  }
-
-  const controller = useBuilderRouteController(examId);
-
-  if (controller.isLoading) {
-    return <LoadingSurface label="Loading preview…" />;
-  }
-
-  if (controller.error) {
-    return (
-      <ErrorSurface
-        title="Preview load failed"
-        description={controller.error}
-      />
-    );
-  }
-
-  if (!controller.state) {
-    return (
-      <ErrorSurface
-        title="Preview unavailable"
-        description="The requested exam could not be loaded."
-      />
-    );
-  }
-
-  if (!controller.exam) {
-    return (
-      <ErrorSurface
-        title="Preview unavailable"
-        description="Exam metadata not found."
-      />
-    );
-  }
-
-  if (!session?.user?.id) {
-    return (
-      <ErrorSurface
-        title="Preview unavailable"
-        description="Author session not available."
-      />
-    );
-  }
-
-  const resolvedExam = controller.exam;
-  const resolvedState = controller.state;
-  const resolvedAuthorUserId = session.user.id;
-
-  const enabledModules = getEnabledModules(resolvedState.config);
+  const resolvedExam = controller.exam ?? null;
+  const resolvedState = controller.state ?? null;
+  const resolvedAuthorUserId = session?.user?.id ?? null;
+  const enabledModules = resolvedState ? getEnabledModules(resolvedState.config) : [];
   const previewModule =
     requestedModule && enabledModules.includes(requestedModule)
       ? requestedModule
       : enabledModules[0] ?? 'reading';
 
   useEffect(() => {
+    if (
+      !examId
+      || controller.isLoading
+      || controller.error
+      || !resolvedExam
+      || !resolvedState
+      || !resolvedAuthorUserId
+    ) {
+      return;
+    }
+
     let cancelled = false;
 
     setSessionLoading(true);
@@ -136,6 +96,9 @@ export function ExamPreviewRoute() {
       cancelled = true;
     };
   }, [
+    examId,
+    controller.isLoading,
+    controller.error,
     resolvedAuthorUserId,
     resolvedExam,
     resolvedState,
@@ -144,6 +107,55 @@ export function ExamPreviewRoute() {
     searchParams,
     setSearchParams,
   ]);
+
+  if (!examId) {
+    return (
+      <ErrorSurface
+        title="Preview unavailable"
+        description="Exam ID not found."
+      />
+    );
+  }
+
+  if (controller.isLoading) {
+    return <LoadingSurface label="Loading preview…" />;
+  }
+
+  if (controller.error) {
+    return (
+      <ErrorSurface
+        title="Preview load failed"
+        description={controller.error}
+      />
+    );
+  }
+
+  if (!resolvedState) {
+    return (
+      <ErrorSurface
+        title="Preview unavailable"
+        description="The requested exam could not be loaded."
+      />
+    );
+  }
+
+  if (!resolvedExam) {
+    return (
+      <ErrorSurface
+        title="Preview unavailable"
+        description="Exam metadata not found."
+      />
+    );
+  }
+
+  if (!resolvedAuthorUserId) {
+    return (
+      <ErrorSurface
+        title="Preview unavailable"
+        description="Author session not available."
+      />
+    );
+  }
 
   const handleModuleChange = (nextModule: ModuleType) => {
     if (nextModule === previewModule) {

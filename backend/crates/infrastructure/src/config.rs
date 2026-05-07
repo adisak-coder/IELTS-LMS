@@ -88,6 +88,8 @@ pub struct AppConfig {
     pub master_key_enabled: bool,
     pub master_key_username: String,
     pub master_key_password: String,
+    // Join-storm admission queue toggle
+    pub storm_admission_enabled: bool,
 }
 
 impl AppConfig {
@@ -467,6 +469,10 @@ impl AppConfig {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or(default.master_key_password),
+            storm_admission_enabled: env::var("STORM_ADMISSION_ENABLED")
+                .ok()
+                .and_then(|value| parse_bool(&value))
+                .unwrap_or(default.storm_admission_enabled),
         }
         .with_resource_profile_from_env()
     }
@@ -606,6 +612,7 @@ impl Default for AppConfig {
             master_key_enabled: false,
             master_key_username: "master".to_owned(),
             master_key_password: "".to_owned(),
+            storm_admission_enabled: false,
         }
     }
 }

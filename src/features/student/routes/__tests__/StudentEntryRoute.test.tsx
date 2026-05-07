@@ -160,4 +160,42 @@ describe('StudentEntryRoute', () => {
       expect(studentEntryMock).not.toHaveBeenCalled();
     });
   });
+
+  it('shows queue position and keeps polling until admission is granted', async () => {
+    const scheduleId = '550e8400-e29b-41d4-a716-446655440123';
+    studentEntryMock
+      .mockResolvedValueOnce({
+        state: 'queued',
+        ticketId: 'ticket-1',
+        scheduleId,
+        wcode: 'W250334',
+        position: 3,
+        pollAfterMs: 10,
+        queuedAt: '2026-05-08T00:00:00.000Z',
+      })
+      .mockResolvedValueOnce({
+        user: {
+          id: 'student-1',
+          email: 'student@example.com',
+          displayName: 'Student One',
+          role: 'student',
+          state: 'active',
+        },
+        csrfToken: 'csrf-1',
+        expiresAt: '2026-01-01T12:00:00.000Z',
+      });
+
+    renderRoute(scheduleId);
+    submitForm();
+
+    await waitFor(() => {
+      expect(screen.getByText(/you are in queue/i)).toBeInTheDocument();
+      expect(screen.getByText(/position: 3/i)).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(studentEntryMock).toHaveBeenCalledTimes(2);
+      expect(navigateMock).toHaveBeenCalledWith(`/student/${scheduleId}/W250334`);
+    });
+  });
 });

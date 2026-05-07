@@ -15,6 +15,7 @@ import {
   authService,
   type AuthSession,
   type AuthUserRole,
+  type StudentEntryResult,
 } from '../../services/authService';
 
 type AuthStatus = 'loading' | 'authenticated' | 'unauthenticated';
@@ -28,7 +29,7 @@ interface AuthSessionContextValue {
     wcode: string;
     email: string;
     studentName: string;
-  }) => Promise<AuthSession>;
+  }) => Promise<StudentEntryResult>;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
   refresh: () => Promise<AuthSession | null>;
@@ -146,8 +147,11 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     email: string;
     studentName: string;
   }) => {
-    const nextSession = await authService.studentEntry(payload);
-    return setSessionState(nextSession, setSession, setStatus) as AuthSession;
+    const result = await authService.studentEntry(payload);
+    if ('state' in result && result.state === 'queued') {
+      return result;
+    }
+    return setSessionState(result, setSession, setStatus) as AuthSession;
   }, []);
 
   const logout = useCallback(async () => {

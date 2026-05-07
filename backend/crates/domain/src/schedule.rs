@@ -687,6 +687,8 @@ pub struct ProctorSessionSummary {
     pub runtime: ExamSessionRuntime,
     pub student_count: i64,
     pub active_count: i64,
+    pub join_ready_count: Option<i64>,
+    pub join_total_count: Option<i64>,
     pub alert_count: i64,
     pub violation_count: i64,
     pub degraded_live_mode: bool,

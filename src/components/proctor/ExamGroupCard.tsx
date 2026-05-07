@@ -37,6 +37,9 @@ export const ExamGroupCard = React.memo(function ExamGroupCard({ group, onClick,
         <div>
           <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Students</p>
           <div className="flex items-center gap-1.5 text-slate-900"><Users size={14} className="text-slate-400" /><span className="font-semibold">{group.studentCount}</span></div>
+          <p className="mt-1 text-[11px] font-medium text-slate-500">
+            Joined {group.joinReadyCount}/{group.joinTotalCount}
+          </p>
         </div>
         <div>
           <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">Live Section</p>

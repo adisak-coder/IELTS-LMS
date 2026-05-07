@@ -133,6 +133,7 @@ impl ProctoringService {
                 &schedule_ids,
             )
             .await?;
+        let join_totals = self.load_admission_queue_totals(&schedule_ids).await?;
         let alert_counts = self
             .load_grouped_counts(
                 r#"
@@ -186,6 +187,11 @@ impl ProctoringService {
             items.push(ProctorSessionSummary {
                 student_count: *student_counts.get(&schedule.id).unwrap_or(&0),
                 active_count: *active_counts.get(&schedule.id).unwrap_or(&0),
+                join_ready_count: Some(*student_counts.get(&schedule.id).unwrap_or(&0)),
+                join_total_count: Some(
+                    (*join_totals.get(&schedule.id).unwrap_or(&0))
+                        .max(*student_counts.get(&schedule.id).unwrap_or(&0)),
+                ),
                 alert_count: *alert_counts.get(&schedule.id).unwrap_or(&0),
                 violation_count: *violation_counts.get(&schedule.id).unwrap_or(&0),
                 degraded_live_mode: degraded.get(&schedule.id).copied().unwrap_or(false),
@@ -1689,6 +1695,52 @@ impl ProctoringService {
             separated.push_bind(schedule_id);
         }
         separated.push_unseparated(suffix);
+
+        let rows = query
+            .build_query_as::<ScheduleCountRow>()
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| (row.schedule_id, row.count))
+            .collect())
+    }
+
+    async fn admission_queue_table_exists(&self) -> Result<bool, ProctoringError> {
+        let exists = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT COUNT(*)
+            FROM information_schema.tables
+            WHERE table_schema = DATABASE()
+              AND table_name = 'student_admission_queue'
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(exists > 0)
+    }
+
+    async fn load_admission_queue_totals(
+        &self,
+        schedule_ids: &[String],
+    ) -> Result<HashMap<String, i64>, ProctoringError> {
+        if schedule_ids.is_empty() || !self.admission_queue_table_exists().await? {
+            return Ok(HashMap::new());
+        }
+
+        let mut query = QueryBuilder::<MySql>::new(
+            r#"
+            SELECT schedule_id, COUNT(*) AS count
+            FROM student_admission_queue
+            WHERE schedule_id IN (
+            "#,
+        );
+        let mut separated = query.separated(", ");
+        for schedule_id in schedule_ids {
+            separated.push_bind(schedule_id);
+        }
+        separated.push_unseparated(") AND status <> 'cancelled' GROUP BY schedule_id");
 
         let rows = query
             .build_query_as::<ScheduleCountRow>()

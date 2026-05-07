@@ -14,7 +14,7 @@ use ielts_backend_application::{builder::BuilderService, scheduling::SchedulingS
 use ielts_backend_domain::{
     auth::{LoginRequest, PasswordResetRequest, StudentEntryRequest},
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
-    schedule::CreateScheduleRequest,
+    schedule::{CreateScheduleRequest, RuntimeCommandAction, RuntimeCommandRequest},
 };
 use ielts_backend_infrastructure::actor_context::{ActorContext, ActorRole};
 use ielts_backend_infrastructure::config::AppConfig;
@@ -30,6 +30,21 @@ const AUTH_MIGRATIONS: &[&str] = &[
     "0008_grading_results.sql",
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
+    "0011_outbox_notify_trigger.sql",
+    "0012_registration_fields.sql",
+    "0013_proctor_presence_unique.sql",
+    "0014_student_attempt_presence.sql",
+    "0015_operation_write_hardening.sql",
+    "0016_attempt_mutation_id_uniqueness.sql",
+    "0017_production_hardening.sql",
+    "0018_exam_day_concurrency_hardening.sql",
+    "0019_violation_id_idempotency.sql",
+    "0020_schedule_role_display_names.sql",
+    "0021_attempt_finalization_consistency.sql",
+    "0022_attempt_submission_ledger.sql",
+    "0023_sort_memory_hotpath_indexes.sql",
+    "0024_projection_sort_hardening.sql",
+    "0025_join_storm_admission_queue.sql",
 ];
 
 #[tokio::test]
@@ -207,6 +222,191 @@ async fn student_entry_is_rate_limited_per_ip() {
     assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
     let json = json_body(second).await;
     assert_eq!(json["error"]["code"], "RATE_LIMIT_EXCEEDED");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn student_entry_returns_queued_admission_when_storm_mode_enabled() {
+    let database = mysql::TestDatabase::new(AUTH_MIGRATIONS).await;
+    let schedule = seed_schedule_with_slug(database.pool(), "auth-storm-queued").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig {
+            storm_admission_enabled: true,
+            ..AppConfig::default()
+        },
+        database.pool().clone(),
+    ));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/student/entry")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "203.0.113.21")
+                .body(Body::from(
+                    serde_json::to_vec(&StudentEntryRequest {
+                        schedule_id: schedule.id.clone(),
+                        wcode: "W123456".to_owned(),
+                        email: "alice@example.com".to_owned(),
+                        student_name: "Alice Candidate".to_owned(),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let json = json_body(response).await;
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["state"], "queued");
+    assert_eq!(json["data"]["wcode"], "W123456");
+    assert_eq!(json["data"]["position"], 1);
+    assert!(json["data"]["ticketId"].is_string());
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn student_entry_queue_retries_are_not_rate_limited_in_storm_mode() {
+    let database = mysql::TestDatabase::new(AUTH_MIGRATIONS).await;
+    let schedule = seed_schedule_with_slug(database.pool(), "auth-storm-retry").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig {
+            storm_admission_enabled: true,
+            rate_limit_student_entry_per_ip: 1,
+            rate_limit_student_entry_per_ip_window_secs: 60,
+            rate_limit_student_entry_per_schedule: 10_000,
+            ..AppConfig::default()
+        },
+        database.pool().clone(),
+    ));
+
+    let payload = StudentEntryRequest {
+        schedule_id: schedule.id.clone(),
+        wcode: "W123456".to_owned(),
+        email: "alice@example.com".to_owned(),
+        student_name: "Alice Candidate".to_owned(),
+    };
+
+    let first = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/student/entry")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "203.0.113.22")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::ACCEPTED);
+
+    let second = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/student/entry")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "203.0.113.22")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(second.status(), StatusCode::ACCEPTED);
+    let json = json_body(second).await;
+    assert_eq!(json["data"]["state"], "queued");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn student_entry_transitions_from_queued_to_authenticated_after_runtime_start() {
+    let database = mysql::TestDatabase::new(AUTH_MIGRATIONS).await;
+    let schedule = seed_schedule_with_slug(database.pool(), "auth-storm-admit").await;
+    let admin = mysql::create_authenticated_user(
+        database.pool(),
+        ielts_backend_domain::auth::UserRole::Admin,
+        "admin@example.com",
+        "Admin",
+    )
+    .await;
+    let app = build_router(AppState::with_pool(
+        AppConfig {
+            storm_admission_enabled: true,
+            ..AppConfig::default()
+        },
+        database.pool().clone(),
+    ));
+
+    let payload = StudentEntryRequest {
+        schedule_id: schedule.id.clone(),
+        wcode: "W123456".to_owned(),
+        email: "alice@example.com".to_owned(),
+        student_name: "Alice Candidate".to_owned(),
+    };
+
+    let queued = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/student/entry")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "203.0.113.23")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(queued.status(), StatusCode::ACCEPTED);
+
+    let start = app
+        .clone()
+        .oneshot(
+            admin
+                .with_csrf(Request::builder())
+                .method("POST")
+                .uri(format!("/api/v1/schedules/{}/runtime/commands", schedule.id))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&RuntimeCommandRequest {
+                        action: RuntimeCommandAction::StartRuntime,
+                        reason: Some("storm release".to_owned()),
+                    })
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(start.status(), StatusCode::OK);
+
+    let admitted = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/student/entry")
+                .header("content-type", "application/json")
+                .header("x-forwarded-for", "203.0.113.23")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(admitted.status(), StatusCode::OK);
+    let json = json_body(admitted).await;
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["user"]["role"], "student");
 
     database.shutdown().await;
 }
@@ -910,15 +1110,33 @@ async fn seed_schedule_with_slug(
             exam_id.clone(),
             SaveDraftRequest {
                 content_snapshot: json!({
-                    "reading": {"passages": [{"id": "reading-1", "blocks": [{"type": "TFNG", "questions": [{"id": "r1"}]}]}]},
-                    "listening": {"parts": [{"id": "listening-1", "blocks": [{"type": "TFNG", "questions": [{"id": "q1"}]}]}]},
-                    "writing": {"tasks": [{"id": "writing-1"}]},
+                    "reading": {"passages": [{"id": "reading-1", "title": "Reading Passage 1", "blocks": [{"type": "TFNG", "questions": [{"id": "r1"}]}]}]},
+                    "listening": {"parts": [{"id": "listening-1", "title": "Listening Part 1", "blocks": [{"type": "TFNG", "questions": [{"id": "q1"}]}]}]},
+                    "writing": {
+                        "task1Prompt": "Summarise the chart.",
+                        "task2Prompt": "Discuss both views.",
+                        "tasks": [{"id": "writing-1"}]
+                    },
                     "speaking": {"part1Topics": ["topic"], "cueCard": "cue", "part3Discussion": ["discussion"]}
                 }),
                 config_snapshot: json!({
                     "sections": {
-                        "listening": {"enabled": true, "label": "Listening", "order": 1, "duration": 30, "gapAfterMinutes": 5},
-                        "reading": {"enabled": true, "label": "Reading", "order": 2, "duration": 60, "gapAfterMinutes": 0},
+                        "listening": {
+                            "enabled": true,
+                            "label": "Listening",
+                            "order": 1,
+                            "duration": 30,
+                            "gapAfterMinutes": 5,
+                            "bandScoreTable": { "39": 9.0, "37": 8.5, "35": 8.0, "32": 7.5, "30": 7.0, "26": 6.5, "23": 6.0, "18": 5.5, "16": 5.0, "13": 4.5, "10": 4.0, "6": 3.5, "4": 3.0, "2": 2.5 }
+                        },
+                        "reading": {
+                            "enabled": true,
+                            "label": "Reading",
+                            "order": 2,
+                            "duration": 60,
+                            "gapAfterMinutes": 0,
+                            "bandScoreTable": { "39": 9.0, "37": 8.5, "35": 8.0, "33": 7.5, "30": 7.0, "27": 6.5, "23": 6.0, "19": 5.5, "15": 5.0, "13": 4.5, "10": 4.0, "8": 3.5, "6": 3.0, "4": 2.5 }
+                        },
                         "writing": {"enabled": true, "label": "Writing", "order": 3, "duration": 60, "gapAfterMinutes": 10},
                         "speaking": {"enabled": true, "label": "Speaking", "order": 4, "duration": 15, "gapAfterMinutes": 0}
                     }

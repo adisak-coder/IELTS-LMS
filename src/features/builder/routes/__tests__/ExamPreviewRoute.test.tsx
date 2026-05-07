@@ -180,4 +180,54 @@ describe('ExamPreviewRoute', () => {
     expect(nextParams.get('module')).toBe('reading');
     expect(options).toEqual({ replace: true });
   });
+
+  it('keeps hook order stable when loading state resolves', async () => {
+    const state = createInitialExamState('Preview exam', 'Academic');
+    const exam = {
+      id: 'exam-1',
+      slug: 'exam-1',
+      title: 'Preview exam',
+      type: 'Academic',
+      status: 'draft',
+      visibility: 'private',
+      owner: 'builder-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      currentDraftVersionId: 'ver-1',
+      currentPublishedVersionId: null,
+      canEdit: true,
+      canPublish: true,
+      canDelete: true,
+      schemaVersion: 4,
+    };
+    let isLoaded = false;
+
+    mockController.mockImplementation(() =>
+      isLoaded
+        ? {
+            isLoading: false,
+            error: null,
+            exam,
+            state,
+          }
+        : {
+            isLoading: true,
+            error: null,
+            exam: undefined,
+            state: null,
+          },
+    );
+
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { rerender } = render(<ExamPreviewRoute />);
+
+    isLoaded = true;
+
+    expect(() => rerender(<ExamPreviewRoute />)).not.toThrow();
+    await waitFor(() => {
+      expect(screen.getByTestId('student-app-wrapper')).toBeInTheDocument();
+    });
+
+    consoleErrorSpy.mockRestore();
+  });
 });

@@ -758,6 +758,8 @@ export interface ExamGroup {
   currentLiveSection: ModuleType | null;
   studentCount: number;
   activeCount: number;
+  joinReadyCount: number;
+  joinTotalCount: number;
   violationCount: number;
   status: 'live' | 'scheduled' | 'completed' | 'cancelled' | 'not_started';
   plannedDurationMinutes: number;

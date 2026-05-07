@@ -27,6 +27,18 @@ export interface AuthSession {
   idleTimeoutAt?: string | undefined;
 }
 
+export interface StudentQueuedAdmission {
+  state: 'queued';
+  ticketId: string;
+  scheduleId: string;
+  wcode: string;
+  position: number;
+  pollAfterMs: number;
+  queuedAt: string;
+}
+
+export type StudentEntryResult = AuthSession | StudentQueuedAdmission;
+
 interface LoginPayload {
   email: string;
   password: string;
@@ -131,11 +143,11 @@ class AuthService {
     return extractEnvelopeData<AuthSession>(response);
   }
 
-  async studentEntry(payload: StudentEntryPayload): Promise<AuthSession> {
-    const response = await post<BackendEnvelope<AuthSession>>('/v1/auth/student/entry', payload, {
+  async studentEntry(payload: StudentEntryPayload): Promise<StudentEntryResult> {
+    const response = await post<BackendEnvelope<StudentEntryResult>>('/v1/auth/student/entry', payload, {
       retries: 0,
     });
-    return extractEnvelopeData<AuthSession>(response);
+    return extractEnvelopeData<StudentEntryResult>(response);
   }
 }
 

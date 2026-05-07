@@ -315,9 +315,14 @@ export function useProctorRouteController(): ProctorRouteController {
 
       const metrics: Record<string, ProctorScheduleMetrics> = {};
       for (const summary of filteredSummaries) {
+        const studentCount = summary.studentCount ?? 0;
+        const joinReadyCount = summary.joinReadyCount ?? studentCount;
+        const joinTotalCount = Math.max(summary.joinTotalCount ?? studentCount, joinReadyCount);
         metrics[summary.schedule.id] = {
-          studentCount: summary.studentCount ?? 0,
+          studentCount,
           activeCount: summary.activeCount ?? 0,
+          joinReadyCount,
+          joinTotalCount,
           alertCount: summary.alertCount ?? 0,
           violationCount: summary.violationCount ?? 0,
           degradedLiveMode: summary.degradedLiveMode,

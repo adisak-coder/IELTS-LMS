@@ -7,6 +7,8 @@ export type ProctorSessionSummaryPayload = {
   runtime: Parameters<typeof mapBackendRuntime>[0];
   studentCount?: number | undefined;
   activeCount?: number | undefined;
+  joinReadyCount?: number | undefined;
+  joinTotalCount?: number | undefined;
   alertCount?: number | undefined;
   violationCount?: number | undefined;
   degradedLiveMode: boolean;
