@@ -319,13 +319,12 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
         const target = event.target;
         const targetElement = target instanceof HTMLElement ? target : null;
         const highlightModeEnabled = uiState.accessibilitySettings.highlightMode;
-        const moduleAllowsHighlightDrag =
-          runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening';
+        const isReadingModule = runtimeState.currentModule === 'reading';
         const withinHighlightableContainer = Boolean(
           targetElement?.closest('[data-student-highlightable="true"]'),
         );
 
-        if (highlightModeEnabled && moduleAllowsHighlightDrag && withinHighlightableContainer) {
+        if (highlightModeEnabled && isReadingModule && withinHighlightableContainer) {
           return;
         }
       }

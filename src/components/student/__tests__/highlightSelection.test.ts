@@ -283,4 +283,27 @@ describe('applySelectionHighlight', () => {
     expect(html).toContain('data-highlighted="true"');
     expect(html).toContain('beta gamma delta');
   });
+
+  it('fails closed when the reported selected text diverges from the range text', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta gamma</p>';
+    const textNode = container.querySelector('p')?.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      throw new Error('Expected a text node');
+    }
+
+    const range = document.createRange();
+    range.setStart(textNode, 6);
+    range.setEnd(textNode, 10);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => 'wrong selected text',
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
+    expect(html).toBeNull();
+  });
 });

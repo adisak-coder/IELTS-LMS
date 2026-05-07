@@ -245,7 +245,7 @@ describe('StudentKeyboardProvider', () => {
     expect(harness.runtime.state.violations.at(-1)?.type).toBe('DRAG_DROP_BLOCKED');
   });
 
-  it('allows dragstart inside highlightable reading/listening text when highlight mode is active', () => {
+  it('allows dragstart inside highlightable reading text when highlight mode is active', () => {
     const harness = renderHarness();
 
     act(() => {
@@ -264,6 +264,27 @@ describe('StudentKeyboardProvider', () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(harness.runtime.state.violations).toHaveLength(0);
+  });
+
+  it('still blocks dragstart inside highlightable listening text when highlight mode is active', () => {
+    const harness = renderHarness();
+
+    act(() => {
+      harness.runtime.actions.setCurrentModule('listening');
+      harness.ui.actions.toggleHighlightMode();
+    });
+
+    const event = new Event('dragstart', {
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      harness.highlightTarget.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(harness.runtime.state.violations.at(-1)?.type).toBe('DRAG_DROP_BLOCKED');
   });
 
   it('allows same-editor select-all shortcuts', () => {

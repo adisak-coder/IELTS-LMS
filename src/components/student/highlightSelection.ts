@@ -16,6 +16,22 @@ export interface HighlightSelectionSnapshot {
   signature: string;
 }
 
+const isHighlightDebugEnabled =
+  typeof import.meta !== 'undefined' &&
+  typeof import.meta.env !== 'undefined' &&
+  Boolean(import.meta.env.DEV);
+
+function debugHighlight(reason: string, details?: Record<string, unknown>): void {
+  if (!isHighlightDebugEnabled) {
+    return;
+  }
+  console.debug('[highlight]', reason, details ?? {});
+}
+
+function normalizeSelectionText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
 export function applySelectionHighlight(
   container: HTMLElement,
   selection: Selection,
@@ -23,12 +39,24 @@ export function applySelectionHighlight(
 ): string | null {
   const snapshot = createHighlightSelectionSnapshot(container, selection);
   if (!snapshot) {
+    debugHighlight('applySelectionHighlight:no_snapshot');
     return null;
   }
 
   const clonedContainer = container.cloneNode(true) as HTMLElement;
   const clonedRange = createClonedRangeFromSnapshot(clonedContainer, snapshot);
   if (!clonedRange) {
+    debugHighlight('applySelectionHighlight:clone_range_failed');
+    return null;
+  }
+
+  const normalizedSnapshotText = normalizeSelectionText(snapshot.selectedText);
+  const normalizedRangeText = normalizeSelectionText(clonedRange.toString());
+  if (!normalizedSnapshotText || normalizedSnapshotText !== normalizedRangeText) {
+    debugHighlight('applySelectionHighlight:text_mismatch_guard', {
+      snapshot: normalizedSnapshotText,
+      range: normalizedRangeText,
+    });
     return null;
   }
 
@@ -54,6 +82,17 @@ export function applyHighlightFromSnapshot(
   const clonedContainer = container.cloneNode(true) as HTMLElement;
   const clonedRange = createClonedRangeFromSnapshot(clonedContainer, snapshot);
   if (!clonedRange) {
+    debugHighlight('applyHighlightFromSnapshot:clone_range_failed');
+    return null;
+  }
+
+  const normalizedSnapshotText = normalizeSelectionText(snapshot.selectedText);
+  const normalizedRangeText = normalizeSelectionText(clonedRange.toString());
+  if (!normalizedSnapshotText || normalizedSnapshotText !== normalizedRangeText) {
+    debugHighlight('applyHighlightFromSnapshot:text_mismatch_guard', {
+      snapshot: normalizedSnapshotText,
+      range: normalizedRangeText,
+    });
     return null;
   }
 
@@ -90,6 +129,7 @@ export function createHighlightSelectionSnapshot(
   selection: Selection,
 ): HighlightSelectionSnapshot | null {
   if (selection.rangeCount === 0) {
+    debugHighlight('createSnapshot:no_range');
     return null;
   }
 
@@ -97,20 +137,24 @@ export function createHighlightSelectionSnapshot(
   try {
     range = selection.getRangeAt(0);
   } catch {
+    debugHighlight('createSnapshot:get_range_failed');
     return null;
   }
   const selectedText = selection.toString().trim();
   if (!selectedText) {
+    debugHighlight('createSnapshot:collapsed_or_empty');
     return null;
   }
 
   if (!container.contains(range.commonAncestorContainer)) {
+    debugHighlight('createSnapshot:outside_container');
     return null;
   }
 
   const startNodePath = getNodePath(container, range.startContainer);
   const endNodePath = getNodePath(container, range.endContainer);
   if (!startNodePath || !endNodePath) {
+    debugHighlight('createSnapshot:path_resolution_failed');
     return null;
   }
 

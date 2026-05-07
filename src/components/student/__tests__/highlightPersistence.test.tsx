@@ -440,4 +440,54 @@ describe('student highlight persistence', () => {
       expect(container.querySelector('mark[data-highlighted="true"]')).toHaveTextContent('delta');
     });
   });
+
+  it('retries desktop mouse apply when selection collapses right after mouseup', async () => {
+    vi.useFakeTimers();
+    let currentTextNode: ChildNode | null = null;
+    let collapsed = false;
+    const selectionMock = {
+      get rangeCount() {
+        return collapsed ? 0 : 1;
+      },
+      getRangeAt: () => {
+        if (collapsed) {
+          throw new Error('Selection collapsed');
+        }
+        const textNode = currentTextNode;
+        if (!textNode) {
+          throw new Error('Expected a text node');
+        }
+        const range = document.createRange();
+        range.setStart(textNode, 6);
+        range.setEnd(textNode, 10);
+        return range;
+      },
+      toString: () => (collapsed ? '' : 'beta'),
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const getSelectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selectionMock);
+
+    const { container } = render(<RichTextHighlighter content="Alpha beta gamma" enabled />);
+    const textElement = container.querySelector('[data-student-highlightable="true"]');
+    if (!textElement) {
+      throw new Error('Expected a rendered highlight container');
+    }
+
+    currentTextNode = textElement.firstChild;
+    collapsed = true;
+    fireEvent.mouseDown(textElement);
+    fireEvent.mouseUp(textElement);
+    expect(container.querySelector('mark')).toBeNull();
+
+    collapsed = false;
+    await act(async () => {
+      vi.advanceTimersByTime(120);
+    });
+
+    expect(container.querySelector('mark')).not.toBeNull();
+    expect(container.querySelector('mark')).toHaveTextContent('beta');
+
+    getSelectionSpy.mockRestore();
+  });
 });
