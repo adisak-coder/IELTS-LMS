@@ -106,6 +106,109 @@ function forgetReviewDraft(id: string): string | undefined {
   return submissionId;
 }
 
+type BackendGradingSession = Omit<GradingSession, 'institution' | 'assignedTeachers'> & {
+  institution?: string | null | undefined;
+  assignedTeachers?: string[] | null | undefined;
+};
+
+type BackendStudentSubmission = Omit<
+  StudentSubmission,
+  'submissionId' | 'studentEmail' | 'assignedTeacherId' | 'assignedTeacherName' | 'flagReason' | 'dueDate'
+> & {
+  studentEmail?: string | null | undefined;
+  assignedTeacherId?: string | null | undefined;
+  assignedTeacherName?: string | null | undefined;
+  flagReason?: string | null | undefined;
+  dueDate?: string | null | undefined;
+};
+
+type BackendSectionSubmission = Omit<
+  SectionSubmission,
+  'autoGradingResults' | 'reviewedBy' | 'reviewedAt' | 'finalizedBy' | 'finalizedAt'
+> & {
+  autoGradingResults?: SectionSubmission['autoGradingResults'] | null | undefined;
+  reviewedBy?: string | null | undefined;
+  reviewedAt?: string | null | undefined;
+  finalizedBy?: string | null | undefined;
+  finalizedAt?: string | null | undefined;
+};
+
+type BackendWritingTaskSubmission = Omit<
+  WritingTaskSubmission,
+  | 'rubricAssessment'
+  | 'overallFeedback'
+  | 'studentVisibleNotes'
+  | 'gradedBy'
+  | 'gradedAt'
+  | 'finalizedBy'
+  | 'finalizedAt'
+> & {
+  sectionSubmissionId?: string | null | undefined;
+  rubricAssessment?: WritingTaskSubmission['rubricAssessment'] | null | undefined;
+  annotations?: WritingTaskSubmission['annotations'] | null | undefined;
+  overallFeedback?: string | null | undefined;
+  studentVisibleNotes?: string | null | undefined;
+  gradedBy?: string | null | undefined;
+  gradedAt?: string | null | undefined;
+  finalizedBy?: string | null | undefined;
+  finalizedAt?: string | null | undefined;
+};
+
+type BackendReviewDraft = Omit<
+  ReviewDraft,
+  | 'overallFeedback'
+  | 'studentVisibleNotes'
+  | 'internalNotes'
+  | 'teacherSummary'
+  | 'lastAutoSaveAt'
+> & {
+  revision?: number | null | undefined;
+  overallFeedback?: string | null | undefined;
+  studentVisibleNotes?: string | null | undefined;
+  internalNotes?: string | null | undefined;
+  teacherSummary?: ReviewDraft['teacherSummary'] | null | undefined;
+  lastAutoSaveAt?: string | null | undefined;
+};
+
+type BackendStudentResult = Omit<
+  StudentResult,
+  | 'releasedAt'
+  | 'releasedBy'
+  | 'scheduledReleaseDate'
+  | 'previousVersionId'
+  | 'revisionReason'
+  | 'teacherSummary'
+  | 'sectionBands'
+> & {
+  releasedAt?: string | null | undefined;
+  releasedBy?: string | null | undefined;
+  scheduledReleaseDate?: string | null | undefined;
+  previousVersionId?: string | null | undefined;
+  revisionReason?: string | null | undefined;
+  teacherSummary?: StudentResult['teacherSummary'] | null | undefined;
+  sectionBands?: StudentResult['sectionBands'] | null | undefined;
+};
+
+type BackendReleaseEvent = Omit<ReleaseEvent, 'actor' | 'actorName' | 'timestamp' | 'payload'> & {
+  actorId?: string | null | undefined;
+  actor?: string | null | undefined;
+  actorName?: string | null | undefined;
+  createdAt?: string | null | undefined;
+  timestamp?: string | null | undefined;
+  payload?: Record<string, unknown> | null | undefined;
+};
+
+type BackendSubmissionSummaryResponse = {
+  submission: BackendStudentSubmission;
+};
+
+type BackendSessionDetailResponse = {
+  submissions?: BackendStudentSubmission[] | null | undefined;
+  pagination?: {
+    hasMore?: boolean | null | undefined;
+  } | null | undefined;
+};
+
 export interface IGradingRepository {
   getAllSessions(): Promise<GradingSession[]>;
   getSessionById(id: string): Promise<GradingSession | null>;
@@ -151,13 +254,22 @@ export interface IGradingRepository {
 }
 
 class BackendGradingRepository implements IGradingRepository {
-  private readonly submissionSummaryCache = createTtlLruCache<string, Promise<any>>(
+  private readonly submissionSummaryCache = createTtlLruCache<
+    string,
+    Promise<BackendSubmissionSummaryResponse>
+  >(
     gradingMemoryCachePolicy,
   );
-  private readonly submissionSectionsCache = createTtlLruCache<string, Promise<any[]>>(
+  private readonly submissionSectionsCache = createTtlLruCache<
+    string,
+    Promise<BackendSectionSubmission[]>
+  >(
     gradingMemoryCachePolicy,
   );
-  private readonly submissionWritingTasksCache = createTtlLruCache<string, Promise<any[]>>(
+  private readonly submissionWritingTasksCache = createTtlLruCache<
+    string,
+    Promise<BackendWritingTaskSubmission[]>
+  >(
     gradingMemoryCachePolicy,
   );
 
@@ -189,7 +301,7 @@ class BackendGradingRepository implements IGradingRepository {
     }
   }
 
-  private mapSession(payload: any): GradingSession {
+  private mapSession(payload: BackendGradingSession): GradingSession {
     return {
       id: payload.id,
       scheduleId: payload.scheduleId,
@@ -214,7 +326,7 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private mapSubmission(payload: any): StudentSubmission {
+  private mapSubmission(payload: BackendStudentSubmission): StudentSubmission {
     return {
       id: payload.id,
       submissionId: payload.id,
@@ -240,7 +352,7 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private mapSection(payload: any): SectionSubmission {
+  private mapSection(payload: BackendSectionSubmission): SectionSubmission {
     rememberSectionSubmission(payload.id, payload.submissionId);
     return {
       id: payload.id,
@@ -257,7 +369,7 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private mapWritingTask(payload: any): WritingTaskSubmission {
+  private mapWritingTask(payload: BackendWritingTaskSubmission): WritingTaskSubmission {
     if (typeof payload.sectionSubmissionId === 'string') {
       writingTaskSectionIndex.set(payload.id, payload.sectionSubmissionId);
     }
@@ -284,8 +396,11 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private mapReviewDraft(payload: any): ReviewDraft {
-    rememberReviewDraftRevision(payload.id, payload.revision);
+  private mapReviewDraft(payload: BackendReviewDraft): ReviewDraft {
+    rememberReviewDraftRevision(
+      payload.id,
+      typeof payload.revision === 'number' ? payload.revision : undefined,
+    );
     rememberReviewDraftSubmission(payload.id, payload.submissionId);
 
     return {
@@ -309,7 +424,7 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private mapStudentResult(payload: any): StudentResult {
+  private mapStudentResult(payload: BackendStudentResult): StudentResult {
     rememberStudentResultSubmission(payload.id, payload.submissionId);
     return {
       id: payload.id,
@@ -335,25 +450,25 @@ class BackendGradingRepository implements IGradingRepository {
     };
   }
 
-  private mapReleaseEvent(payload: any): ReleaseEvent {
+  private mapReleaseEvent(payload: BackendReleaseEvent): ReleaseEvent {
     return {
       id: payload.id,
       resultId: payload.resultId,
       action: payload.action,
-      actor: payload.actorId ?? payload.actor,
+      actor: payload.actorId ?? payload.actor ?? 'unknown',
       actorName: payload.actorName ?? payload.actorId ?? 'Unknown',
-      timestamp: payload.createdAt ?? payload.timestamp,
+      timestamp: payload.createdAt ?? payload.timestamp ?? new Date(0).toISOString(),
       payload: payload.payload ?? undefined,
     };
   }
 
-  private async getSubmissionSummary(submissionId: string): Promise<any> {
+  private async getSubmissionSummary(submissionId: string): Promise<BackendSubmissionSummaryResponse> {
     const cached = this.submissionSummaryCache.get(submissionId);
     if (cached) {
       return await cached;
     }
 
-    const request = backendGet<any>(`/v1/grading/submissions/${submissionId}`);
+    const request = backendGet<BackendSubmissionSummaryResponse>(`/v1/grading/submissions/${submissionId}`);
     this.submissionSummaryCache.set(submissionId, request);
 
     try {
@@ -364,13 +479,15 @@ class BackendGradingRepository implements IGradingRepository {
     }
   }
 
-  private async getSubmissionSectionsPayload(submissionId: string): Promise<any[]> {
+  private async getSubmissionSectionsPayload(
+    submissionId: string,
+  ): Promise<BackendSectionSubmission[]> {
     const cached = this.submissionSectionsCache.get(submissionId);
     if (cached) {
       return await cached;
     }
 
-    const request = backendGet<any[]>(`/v1/grading/submissions/${submissionId}/sections`);
+    const request = backendGet<BackendSectionSubmission[]>(`/v1/grading/submissions/${submissionId}/sections`);
     this.submissionSectionsCache.set(submissionId, request);
 
     try {
@@ -381,13 +498,17 @@ class BackendGradingRepository implements IGradingRepository {
     }
   }
 
-  private async getSubmissionWritingTasksPayload(submissionId: string): Promise<any[]> {
+  private async getSubmissionWritingTasksPayload(
+    submissionId: string,
+  ): Promise<BackendWritingTaskSubmission[]> {
     const cached = this.submissionWritingTasksCache.get(submissionId);
     if (cached) {
       return await cached;
     }
 
-    const request = backendGet<any[]>(`/v1/grading/submissions/${submissionId}/writing-tasks`);
+    const request = backendGet<BackendWritingTaskSubmission[]>(
+      `/v1/grading/submissions/${submissionId}/writing-tasks`,
+    );
     this.submissionWritingTasksCache.set(submissionId, request);
 
     try {
@@ -399,14 +520,14 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async getAllSessions(): Promise<GradingSession[]> {
-    return (await backendGet<any[]>('/v1/grading/sessions')).map((session) =>
+    return (await backendGet<BackendGradingSession[]>('/v1/grading/sessions')).map((session) =>
       this.mapSession(session),
     );
   }
 
   async getSessionById(id: string): Promise<GradingSession | null> {
     try {
-      const detail = await backendGet<any>(`/v1/grading/sessions/${id}`);
+      const detail = await backendGet<{ session: BackendGradingSession }>(`/v1/grading/sessions/${id}`);
       return this.mapSession(detail.session);
     } catch (error) {
       if (isBackendNotFound(error)) {
@@ -452,10 +573,10 @@ class BackendGradingRepository implements IGradingRepository {
     let hasMore = true;
 
     while (hasMore) {
-      const detail = await backendGet<any>(
+      const detail = await backendGet<BackendSessionDetailResponse>(
         `/v1/grading/sessions/${sessionId}?page=${page}&pageSize=${pageSize}`,
       );
-      const pageSubmissions = (detail.submissions ?? []).map((submission: any) =>
+      const pageSubmissions = (detail.submissions ?? []).map((submission) =>
         this.mapSubmission(submission),
       );
       submissions.push(...pageSubmissions);
@@ -501,7 +622,7 @@ class BackendGradingRepository implements IGradingRepository {
 
   async getSectionSubmissionsBySubmissionId(submissionId: string): Promise<SectionSubmission[]> {
     const sections = await this.getSubmissionSectionsPayload(submissionId);
-    return (sections ?? []).map((section: any) => this.mapSection(section));
+    return (sections ?? []).map((section) => this.mapSection(section));
   }
 
   async saveSectionSubmission(section: SectionSubmission): Promise<void> {
@@ -537,7 +658,7 @@ class BackendGradingRepository implements IGradingRepository {
 
   async getWritingSubmissionsBySubmissionId(submissionId: string): Promise<WritingTaskSubmission[]> {
     const writingTasks = await this.getSubmissionWritingTasksPayload(submissionId);
-    return (writingTasks ?? []).map((writing: any) => this.mapWritingTask(writing));
+    return (writingTasks ?? []).map((writing) => this.mapWritingTask(writing));
   }
 
   async saveWritingSubmission(writing: WritingTaskSubmission): Promise<void> {
@@ -566,7 +687,9 @@ class BackendGradingRepository implements IGradingRepository {
 
   async getReviewDraftBySubmission(submissionId: string): Promise<ReviewDraft | null> {
     try {
-      const draft = await backendGet<any>(`/v1/grading/submissions/${submissionId}/review-draft`);
+      const draft = await backendGet<BackendReviewDraft>(
+        `/v1/grading/submissions/${submissionId}/review-draft`,
+      );
       return this.mapReviewDraft(draft);
     } catch (error) {
       if (isBackendNotFound(error)) {
@@ -577,7 +700,7 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async saveReviewDraft(draft: ReviewDraft): Promise<void> {
-    const revision = (draft as unknown as { revision?: unknown }).revision;
+    const revision = (draft as { revision?: unknown }).revision;
     rememberReviewDraftRevision(draft.id, typeof revision === 'number' ? revision : undefined);
     rememberReviewDraftSubmission(draft.id, draft.submissionId);
     this.invalidateSubmissionBundleCache(draft.submissionId);
@@ -597,12 +720,14 @@ class BackendGradingRepository implements IGradingRepository {
   async saveReviewEvent(_event: ReviewEvent): Promise<void> {}
 
   async getAllStudentResults(): Promise<StudentResult[]> {
-    return (await backendGet<any[]>('/v1/results')).map((result) => this.mapStudentResult(result));
+    return (await backendGet<BackendStudentResult[]>('/v1/results')).map((result) =>
+      this.mapStudentResult(result),
+    );
   }
 
   async getStudentResultById(id: string): Promise<StudentResult | null> {
     try {
-      return this.mapStudentResult(await backendGet<any>(`/v1/results/${id}`));
+      return this.mapStudentResult(await backendGet<BackendStudentResult>(`/v1/results/${id}`));
     } catch (error) {
       if (isBackendNotFound(error)) {
         return null;
@@ -629,7 +754,7 @@ class BackendGradingRepository implements IGradingRepository {
   }
 
   async getReleaseEvents(resultId: string, limit = 100): Promise<ReleaseEvent[]> {
-    return (await backendGet<any[]>(`/v1/results/${resultId}/events`))
+    return (await backendGet<BackendReleaseEvent[]>(`/v1/results/${resultId}/events`))
       .map((event) => this.mapReleaseEvent(event))
       .slice(0, limit);
   }

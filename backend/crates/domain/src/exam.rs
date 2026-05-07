@@ -1,10 +1,48 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
-use uuid::Uuid;
-
+use serde_json::Value;
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
+use std::fmt;
+
+macro_rules! json_wrapper {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+        #[serde(transparent)]
+        pub struct $name(pub Value);
+
+        impl std::ops::Deref for $name {
+            type Target = Value;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        impl From<Value> for $name {
+            fn from(value: Value) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<$name> for Value {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+    };
+}
+
+json_wrapper!(ExamContentSnapshot);
+json_wrapper!(ExamConfigSnapshot);
+json_wrapper!(ExamValidationSnapshot);
+json_wrapper!(ExamEventPayload);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "sqlx", derive(FromRow))]
@@ -13,9 +51,9 @@ pub struct ExamEntity {
     pub id: String,
     pub slug: String,
     pub title: String,
-    pub exam_type: String,
-    pub status: String,
-    pub visibility: String,
+    pub exam_type: ExamType,
+    pub status: ExamStatus,
+    pub visibility: Visibility,
     pub organization_id: Option<String>,
     pub owner_id: String,
     pub created_at: DateTime<Utc>,
@@ -33,23 +71,91 @@ pub struct ExamEntity {
 
 impl ExamEntity {
     pub fn get_exam_type(&self) -> Result<ExamType, String> {
-        ExamType::from_str(&self.exam_type)
+        Ok(self.exam_type.clone())
     }
 
     pub fn get_status(&self) -> Result<ExamStatus, String> {
-        ExamStatus::from_str(&self.status)
+        Ok(self.status.clone())
     }
 
     pub fn get_visibility(&self) -> Result<Visibility, String> {
-        Visibility::from_str(&self.visibility)
+        Ok(self.visibility.clone())
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "UPPERCASE")]
 pub enum ExamType {
+    #[serde(rename = "Academic")]
     Academic,
+    #[serde(rename = "General Training")]
     GeneralTraining,
+}
+
+#[cfg(feature = "sqlx")]
+mod sqlx_exam_enums {
+    use super::{ExamStatus, ExamType, Visibility};
+    use sqlx::{
+        decode::Decode, encode::Encode, error::BoxDynError, mysql::MySqlTypeInfo, MySql, Type,
+    };
+
+    fn invalid_enum_value(name: &str, value: &str) -> BoxDynError {
+        format!("invalid {name} value: {value}").into()
+    }
+
+    macro_rules! impl_text_enum {
+        ($ty:ty, { $($variant:ident => $value:expr),+ $(,)? }) => {
+            impl Type<MySql> for $ty {
+                fn type_info() -> MySqlTypeInfo {
+                    <&str as Type<MySql>>::type_info()
+                }
+
+                fn compatible(ty: &MySqlTypeInfo) -> bool {
+                    <&str as Type<MySql>>::compatible(ty)
+                }
+            }
+
+            impl<'q> Encode<'q, MySql> for $ty {
+                fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+                    let value = match self {
+                        $(Self::$variant => $value,)+
+                    };
+                    <&str as Encode<MySql>>::encode_by_ref(&value, buf)
+                }
+            }
+
+            impl<'r> Decode<'r, MySql> for $ty {
+                fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+                    let text = <&str as Decode<MySql>>::decode(value)?;
+                    match text {
+                        $($value => Ok(Self::$variant),)+
+                        other => Err(invalid_enum_value(stringify!($ty), other)),
+                    }
+                }
+            }
+        };
+    }
+
+    impl_text_enum!(ExamType, {
+        Academic => "Academic",
+        GeneralTraining => "General Training",
+    });
+
+    impl_text_enum!(ExamStatus, {
+        Draft => "draft",
+        InReview => "in_review",
+        Approved => "approved",
+        Rejected => "rejected",
+        Scheduled => "scheduled",
+        Published => "published",
+        Archived => "archived",
+        Unpublished => "unpublished",
+    });
+
+    impl_text_enum!(Visibility, {
+        Private => "private",
+        Organization => "organization",
+        Public => "public",
+    });
 }
 
 impl ExamType {
@@ -148,9 +254,9 @@ pub struct ExamVersion {
     pub exam_id: String,
     pub version_number: i32,
     pub parent_version_id: Option<String>,
-    pub content_snapshot: serde_json::Value,
-    pub config_snapshot: serde_json::Value,
-    pub validation_snapshot: Option<serde_json::Value>,
+    pub content_snapshot: ExamContentSnapshot,
+    pub config_snapshot: ExamConfigSnapshot,
+    pub validation_snapshot: Option<ExamValidationSnapshot>,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
     pub publish_notes: Option<String>,
@@ -167,7 +273,7 @@ pub struct ExamVersionSummary {
     pub exam_id: String,
     pub version_number: i32,
     pub parent_version_id: Option<String>,
-    pub validation_snapshot: Option<serde_json::Value>,
+    pub validation_snapshot: Option<ExamValidationSnapshot>,
     pub created_by: String,
     pub created_at: DateTime<Utc>,
     pub publish_notes: Option<String>,
@@ -186,7 +292,7 @@ pub struct ExamEvent {
     pub action: ExamEventAction,
     pub from_state: Option<String>,
     pub to_state: Option<String>,
-    pub payload: Option<serde_json::Value>,
+    pub payload: Option<ExamEventPayload>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -297,6 +403,48 @@ mod sqlx_text_enums {
         Reviewer => "reviewer",
         Grader => "grader",
     });
+}
+
+#[cfg(feature = "sqlx")]
+mod sqlx_json_wrappers {
+    use super::{
+        ExamConfigSnapshot, ExamContentSnapshot, ExamEventPayload, ExamValidationSnapshot,
+    };
+    use sqlx::{
+        decode::Decode, encode::Encode, error::BoxDynError, mysql::MySqlTypeInfo, MySql, Type,
+    };
+
+    macro_rules! impl_json_wrapper_type {
+        ($ty:ty) => {
+            impl Type<MySql> for $ty {
+                fn type_info() -> MySqlTypeInfo {
+                    <serde_json::Value as Type<MySql>>::type_info()
+                }
+
+                fn compatible(ty: &MySqlTypeInfo) -> bool {
+                    <serde_json::Value as Type<MySql>>::compatible(ty)
+                }
+            }
+
+            impl<'q> Encode<'q, MySql> for $ty {
+                fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+                    <serde_json::Value as Encode<MySql>>::encode_by_ref(&self.0, buf)
+                }
+            }
+
+            impl<'r> Decode<'r, MySql> for $ty {
+                fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+                    let json = <serde_json::Value as Decode<MySql>>::decode(value)?;
+                    Ok(Self(json))
+                }
+            }
+        };
+    }
+
+    impl_json_wrapper_type!(ExamContentSnapshot);
+    impl_json_wrapper_type!(ExamConfigSnapshot);
+    impl_json_wrapper_type!(ExamValidationSnapshot);
+    impl_json_wrapper_type!(ExamEventPayload);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

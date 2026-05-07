@@ -192,7 +192,7 @@ describe('StudentNetworkProvider', () => {
     expect(result.current.network.state.lastDisconnectAt).not.toBeNull();
   });
 
-  it('flushes queued mutations before clearing reconnect blocking', async () => {
+  it('clears reconnect blocking after queued mutations flush successfully', async () => {
     const pendingMutation: StudentAttemptMutation = {
       id: 'mutation-1',
       attemptId: 'attempt-1',
@@ -293,7 +293,7 @@ describe('StudentNetworkProvider', () => {
     });
   });
 
-  it('keeps reconnect recovery active without blocking when queued mutations fail to flush', async () => {
+  it('keeps reconnect recovery active with syncing block when queued mutations fail to flush', async () => {
     const pendingMutation: StudentAttemptMutation = {
       id: 'mutation-1',
       attemptId: 'attempt-1',
@@ -334,7 +334,7 @@ describe('StudentNetworkProvider', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBeNull();
+      expect(result.current.runtime.state.blocking.reason).toBe('syncing_reconnect');
     });
 
     await waitFor(() => {
@@ -485,7 +485,7 @@ describe('StudentNetworkProvider', () => {
     );
 
     act(() => {
-      result.current.runtime.actions.setBlockingReason('offline');
+      result.current.runtime.actions.transitionBlocking('offline', true);
       result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
     });
 
@@ -525,7 +525,7 @@ describe('StudentNetworkProvider', () => {
     );
 
     act(() => {
-      result.current.runtime.actions.setBlockingReason('offline');
+      result.current.runtime.actions.transitionBlocking('offline', true);
       result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
     });
 

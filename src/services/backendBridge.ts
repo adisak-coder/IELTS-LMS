@@ -45,6 +45,9 @@ type BackendExamEntity = {
   totalReadingQuestions?: number | null | undefined;
   totalListeningQuestions?: number | null | undefined;
   schemaVersion?: number | undefined;
+  canEdit?: boolean | null | undefined;
+  canPublish?: boolean | null | undefined;
+  canDelete?: boolean | null | undefined;
   revision: number;
 };
 
@@ -210,7 +213,9 @@ function extractBackendData<T>(value: unknown): T {
     if (!value.success) {
       throw new Error(value.error?.message ?? 'Backend request failed');
     }
-
+    if (!('data' in value) || value.data === undefined) {
+      throw new Error('Backend response missing data payload');
+    }
     return value.data as T;
   }
 
@@ -415,9 +420,9 @@ export function mapBackendExamEntity(payload: BackendExamEntity): ExamEntity {
     archivedAt: payload.archivedAt ?? undefined,
     currentDraftVersionId: payload.currentDraftVersionId ?? null,
     currentPublishedVersionId: payload.currentPublishedVersionId ?? null,
-    canEdit: true,
-    canPublish: true,
-    canDelete: true,
+    canEdit: payload.canEdit === true,
+    canPublish: payload.canPublish === true,
+    canDelete: payload.canDelete === true,
     totalQuestions: payload.totalQuestions ?? undefined,
     totalReadingQuestions: payload.totalReadingQuestions ?? undefined,
     totalListeningQuestions: payload.totalListeningQuestions ?? undefined,

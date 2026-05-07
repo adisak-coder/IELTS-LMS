@@ -1,4 +1,5 @@
-import type { RuntimeStatus, SectionRuntimeStatus } from './types/domain';
+import type { ExamStatus, RuntimeStatus, SectionRuntimeStatus } from './types/domain';
+import type { StudentAnswerValue } from './types/answers';
 
 export type ModuleType = 'listening' | 'reading' | 'writing' | 'speaking';
 export type DeepPartial<T> =
@@ -69,12 +70,8 @@ export interface MCQOption {
   isCorrect: boolean;
 }
 
-export type QuestionAnswer = 
-  | string // For text answers, single MCQ selection, matching
-  | string[] // For multi-select MCQ
-  | 'T' | 'F' | 'NG' | 'Y' | 'N' // For TFNG/YNNG questions
-  | null
-  | undefined; // For unassigned answers
+export type { StudentAnswerValue };
+export type QuestionAnswer = StudentAnswerValue;
 
 export type StimulusAnnotationTool = 'pointer' | 'hotspot' | 'arrow' | 'text' | 'box' | 'zoom';
 
@@ -286,6 +283,8 @@ export interface DiagramLabel {
 export interface DiagramLabelingBlock extends BaseQuestionBlock {
   type: 'DIAGRAM_LABELING';
   imageUrl: string;
+  imageSrc?: string | undefined;
+  assetUrl?: string | undefined;
   referenceImagePlacement?: ReferenceImagePlacement;
   labels: DiagramLabel[];
   subAnswerModeEnabled?: boolean;
@@ -673,6 +672,7 @@ export interface Exam {
   title: string;
   type: 'Academic' | 'General Training';
   status: 'Draft' | 'Published' | 'Archived';
+  workflowStatus?: ExamStatus | undefined;
   author: string;
   lastModified: string;
   createdAt: string;

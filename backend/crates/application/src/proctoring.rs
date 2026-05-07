@@ -149,7 +149,12 @@ impl ProctoringService {
                     'AUTO_ACTION',
                     'STUDENT_WARN',
                     'STUDENT_PAUSE',
-                    'STUDENT_TERMINATE'
+                    'STUDENT_TERMINATE',
+                    'VIOLATION_DETECTED'
+                  )
+                  AND (
+                    action_type != 'VIOLATION_DETECTED'
+                    OR JSON_UNQUOTE(JSON_EXTRACT(payload, '$.severity')) IN ('high', 'critical')
                   )
                 GROUP BY schedule_id"#,
                 &schedule_ids,
@@ -2131,6 +2136,16 @@ fn build_alerts(
     audit_logs
         .iter()
         .filter(|log| {
+            if log.action_type.as_str() == "VIOLATION_DETECTED" {
+                let severity = log
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("severity"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                return matches!(severity, "high" | "critical");
+            }
+
             matches!(
                 log.action_type.as_str(),
                 "HEARTBEAT_LOST"
@@ -2165,13 +2180,13 @@ fn build_alerts(
                 .as_ref()
                 .and_then(|payload| payload.get("message").or_else(|| payload.get("reason")))
                 .and_then(Value::as_str)
-                .unwrap_or_else(|| default_alert_message(&log.action_type))
+                .unwrap_or_else(|| default_alert_message(log.action_type.as_str()))
                 .to_owned();
 
             ProctorAlert {
                 id: Uuid::parse_str(&log.id).unwrap_or(Uuid::nil()),
                 severity,
-                alert_type: log.action_type.clone(),
+                alert_type: log.action_type.as_str().to_owned(),
                 student_name: session
                     .map(|session| session.student_name.clone())
                     .unwrap_or_else(|| "Candidate".to_owned()),
@@ -2194,6 +2209,7 @@ fn default_alert_message(action_type: &str) -> &'static str {
         "STUDENT_WARN" => "Proctor warning issued.",
         "STUDENT_PAUSE" => "Candidate session paused by proctor.",
         "STUDENT_TERMINATE" => "Candidate session terminated by proctor.",
+        "VIOLATION_DETECTED" => "Candidate violation detected.",
         _ => "Monitoring alert detected.",
     }
 }
@@ -2329,5 +2345,81 @@ mod runtime_hydration_tests {
         assert!(runtime.current_section_remaining_seconds > 600 - 50);
         assert!(!runtime.is_overrun);
         assert_eq!(runtime.revision, 7);
+    }
+}
+
+#[cfg(test)]
+mod proctor_alert_tests {
+    use super::*;
+
+    fn minimal_session(schedule_id: Uuid, attempt_id: &str) -> StudentSessionSummary {
+        StudentSessionSummary {
+            attempt_id: attempt_id.to_owned(),
+            student_id: "student-1".to_owned(),
+            student_name: "Alice".to_owned(),
+            student_email: "alice@example.com".to_owned(),
+            schedule_id: schedule_id.to_string(),
+            status: "active".to_owned(),
+            current_section: "reading".to_owned(),
+            time_remaining: 120,
+            runtime_status: RuntimeStatus::Live,
+            runtime_current_section: Some("reading".to_owned()),
+            runtime_time_remaining_seconds: 120,
+            runtime_section_status: Some("live".to_owned()),
+            runtime_waiting: false,
+            violations: json!([]),
+            warnings: 0,
+            last_activity: Utc::now(),
+            exam_id: Uuid::new_v4(),
+            exam_name: "Exam".to_owned(),
+        }
+    }
+
+    fn minimal_audit_log(
+        schedule_id: Uuid,
+        attempt_id: &str,
+        action_type: &str,
+        payload: Value,
+    ) -> SessionAuditLog {
+        SessionAuditLog {
+            id: Uuid::new_v4().to_string(),
+            schedule_id: schedule_id.to_string(),
+            actor: ielts_backend_domain::schedule::SessionAuditActor::StudentSystem,
+            action_type: ielts_backend_domain::schedule::AuditActionType::from_str(action_type),
+            target_student_id: Some(attempt_id.to_owned()),
+            payload: Some(payload),
+            acknowledged_at: None,
+            acknowledged_by: None,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn violation_detected_alerts_only_for_high_and_critical() {
+        let schedule_id = Uuid::new_v4();
+        let sessions = vec![minimal_session(schedule_id, "attempt-1")];
+
+        let medium = minimal_audit_log(
+            schedule_id,
+            "attempt-1",
+            "VIOLATION_DETECTED",
+            json!({"severity": "medium", "message": "medium violation"}),
+        );
+        let high = minimal_audit_log(
+            schedule_id,
+            "attempt-1",
+            "VIOLATION_DETECTED",
+            json!({"severity": "high", "message": "high violation"}),
+        );
+        let critical = minimal_audit_log(
+            schedule_id,
+            "attempt-1",
+            "VIOLATION_DETECTED",
+            json!({"severity": "critical", "message": "critical violation"}),
+        );
+
+        assert!(build_alerts(&[medium], &sessions).is_empty());
+        assert_eq!(build_alerts(&[high], &sessions).len(), 1);
+        assert_eq!(build_alerts(&[critical], &sessions).len(), 1);
     }
 }

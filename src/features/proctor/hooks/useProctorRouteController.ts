@@ -519,6 +519,8 @@ export function useProctorRouteController(): ProctorRouteController {
         return;
       }
 
+      const notifyAlerts: ProctorAlert[] = [];
+
       for (const session of studentSessions) {
         if (session.scheduleId !== scheduleId) {
           continue;
@@ -557,6 +559,18 @@ export function useProctorRouteController(): ProctorRouteController {
             );
           } else if (rule.action === 'pause') {
             await examDeliveryService.pauseStudentAttempt(session.id, 'system');
+          } else if (rule.action === 'notify_proctor') {
+            const latestViolationId = session.violations.at(-1)?.id ?? 'none';
+            notifyAlerts.push({
+              id: `auto-rule-notify:${rule.id}:${session.id}:${latestViolationId}:${session.violations.length}`,
+              severity: rule.specificSeverity ?? 'high',
+              type: 'RULE_NOTIFY_PROCTOR',
+              studentName: session.name,
+              studentId: session.studentId,
+              timestamp: new Date().toISOString(),
+              message: `Auto-rule notification: ${rule.triggerType} threshold reached for ${session.name}.`,
+              isAcknowledged: false,
+            });
           } else if (rule.action === 'terminate') {
             await examDeliveryService.terminateStudentAttempt(session.id, 'system');
           }
@@ -564,6 +578,17 @@ export function useProctorRouteController(): ProctorRouteController {
       }
 
       await loadMonitoringState();
+
+      if (notifyAlerts.length > 0) {
+        setAlerts((currentAlerts) => {
+          const existingIds = new Set(currentAlerts.map((alert) => alert.id));
+          const nextAlerts = notifyAlerts.filter((alert) => !existingIds.has(alert.id));
+          if (nextAlerts.length === 0) {
+            return currentAlerts;
+          }
+          return [...nextAlerts, ...currentAlerts].sort(sortAlertsByTimestamp);
+        });
+      }
     },
     [loadMonitoringState, violationRules],
   );

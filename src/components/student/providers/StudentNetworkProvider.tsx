@@ -10,6 +10,7 @@ import React, {
 } from 'react';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
 import {
+  getHeartbeatEnforcementThresholds,
   getHeartbeatIntervalMs,
   getStudentIntegritySecurityPolicy,
   hasDeviceContinuityMismatch,
@@ -48,6 +49,7 @@ export function StudentNetworkProvider({
   const { state: runtimeState, actions: runtimeActions } = useStudentRuntime();
   const { state: attemptState, actions: attemptActions } = useStudentAttempt();
   const policy = useMemo(() => getStudentIntegritySecurityPolicy(config), [config]);
+  const heartbeatThresholds = useMemo(() => getHeartbeatEnforcementThresholds(config), [config]);
   const [isOnline, setIsOnline] = useState(
     typeof navigator === 'undefined' ? true : navigator.onLine,
   );
@@ -78,7 +80,7 @@ export function StudentNetworkProvider({
     setIsRecovering(false);
     setLastDisconnectAt(timestamp);
     if (policy.pauseOnOffline) {
-      runtimeActions.setBlockingReason('offline');
+      runtimeActions.transitionBlocking('offline', true);
     }
     runtimeActions.setAttemptSyncState('offline');
     await attemptActions.recordNetworkStatus('offline', timestamp);
@@ -112,7 +114,7 @@ export function StudentNetworkProvider({
         'critical',
         'Device continuity check failed after reconnect.',
       );
-      runtimeActions.setBlockingReason('device_mismatch');
+      runtimeActions.transitionBlocking('device_mismatch', true);
       await saveStudentAuditEvent(scheduleId, 'DEVICE_CONTINUITY_FAILED', {
         previousHash,
         nextHash: fingerprint.hash,
@@ -163,15 +165,16 @@ export function StudentNetworkProvider({
               }
             }
 
-            if (runtimeState.blocking.reason === 'syncing_reconnect') {
-              runtimeActions.setBlockingReason(null);
-            }
+            runtimeActions.transitionBlocking('syncing_reconnect', false);
+            runtimeActions.transitionBlocking('offline', false);
+            runtimeActions.transitionBlocking('heartbeat_lost', false);
             runtimeActions.setAttemptSyncState('saved');
             return;
           } catch {
             if (epoch !== recoveryEpochRef.current || !navigator.onLine) {
               return;
             }
+            runtimeActions.transitionBlocking('syncing_reconnect', true);
             runtimeActions.setAttemptSyncState('syncing_reconnect');
             const retryDelayMs = Math.min(10_000, 500 * 2 ** retryAttempt);
             retryAttempt = Math.min(retryAttempt + 1, 20);
@@ -214,6 +217,7 @@ export function StudentNetworkProvider({
       setIsOnline(true);
       setIsRecovering(true);
       setLastReconnectAt(timestamp);
+      runtimeActions.transitionBlocking('syncing_reconnect', true);
       runtimeActions.setAttemptSyncState('syncing_reconnect');
       await attemptActions.recordNetworkStatus('online', timestamp).catch(() => {});
       if (epoch !== recoveryEpochRef.current) {
@@ -266,7 +270,8 @@ export function StudentNetworkProvider({
     }
 
     if (runtimeState.blocking.reason === 'offline') {
-      runtimeActions.setBlockingReason(null);
+      runtimeActions.transitionBlocking('offline', false);
+      runtimeActions.transitionBlocking('heartbeat_lost', false);
       runtimeActions.setAttemptSyncState('syncing_reconnect');
     }
 
@@ -368,7 +373,7 @@ export function StudentNetworkProvider({
           missedHeartbeatsRef.current = 0;
 
           if (runtimeState.blocking.reason === 'heartbeat_lost') {
-            runtimeActions.setBlockingReason(null);
+            runtimeActions.transitionBlocking('heartbeat_lost', false);
           }
         } catch {
           if (cancelled) {
@@ -377,8 +382,7 @@ export function StudentNetworkProvider({
 
           missedHeartbeatsRef.current += 1;
 
-          const warningThreshold = config?.security.heartbeatWarningThreshold ?? 2;
-          const hardBlockThreshold = config?.security.heartbeatHardBlockThreshold ?? 4;
+          const { warningThreshold, hardBlockThreshold } = heartbeatThresholds;
 
           if (missedHeartbeatsRef.current === warningThreshold) {
             void saveStudentAuditEvent(
@@ -399,7 +403,7 @@ export function StudentNetworkProvider({
               'high',
               `Heartbeat delivery failed after ${missedHeartbeatsRef.current} attempts.`,
             );
-            runtimeActions.setBlockingReason('heartbeat_lost');
+            runtimeActions.transitionBlocking('heartbeat_lost', true);
             void attemptActions
               .recordHeartbeat('lost', {
                 reason: 'delivery_failed',
@@ -431,8 +435,7 @@ export function StudentNetworkProvider({
     attemptActions,
     attemptState.attempt,
     attemptState.attemptId,
-    config?.security.heartbeatHardBlockThreshold,
-    config?.security.heartbeatWarningThreshold,
+    heartbeatThresholds,
     isOnline,
     policy,
     runtimeActions,

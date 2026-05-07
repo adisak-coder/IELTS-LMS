@@ -1,10 +1,59 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use uuid::Uuid;
 
 #[cfg(feature = "sqlx")]
 use sqlx::FromRow;
+
+macro_rules! json_wrapper {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+        #[serde(transparent)]
+        pub struct $name(pub Value);
+
+        impl std::ops::Deref for $name {
+            type Target = Value;
+
+            fn deref(&self) -> &Self::Target {
+                &self.0
+            }
+        }
+
+        impl std::ops::DerefMut for $name {
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.0
+            }
+        }
+
+        impl From<Value> for $name {
+            fn from(value: Value) -> Self {
+                Self(value)
+            }
+        }
+
+        impl From<$name> for Value {
+            fn from(value: $name) -> Self {
+                value.0
+            }
+        }
+    };
+}
+
+json_wrapper!(TeacherAssignments);
+json_wrapper!(SubmissionSectionStatuses);
+json_wrapper!(SectionAnswers);
+json_wrapper!(SectionAutoGradingResults);
+json_wrapper!(WritingRubricAssessment);
+json_wrapper!(ReviewAnnotations);
+json_wrapper!(ReviewSectionDrafts);
+json_wrapper!(ReviewDrawings);
+json_wrapper!(ReviewTeacherSummary);
+json_wrapper!(ReviewChecklist);
+json_wrapper!(ResultSectionBands);
+json_wrapper!(ResultListeningSection);
+json_wrapper!(ResultReadingSection);
+json_wrapper!(ResultWritingSections);
+json_wrapper!(ResultSpeakingSection);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "sqlx", derive(FromRow))]
@@ -26,7 +75,7 @@ pub struct GradingSession {
     pub in_progress_reviews: i32,
     pub finalized_reviews: i32,
     pub overdue_reviews: i32,
-    pub assigned_teachers: Value,
+    pub assigned_teachers: TeacherAssignments,
     pub created_at: DateTime<Utc>,
     pub created_by: String,
     pub updated_at: DateTime<Utc>,
@@ -97,7 +146,7 @@ pub struct StudentSubmission {
     pub flag_reason: Option<String>,
     pub is_overdue: bool,
     pub due_date: Option<DateTime<Utc>>,
-    pub section_statuses: Value,
+    pub section_statuses: SubmissionSectionStatuses,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -109,8 +158,8 @@ pub struct SectionSubmission {
     pub id: String,
     pub submission_id: String,
     pub section: String,
-    pub answers: Value,
-    pub auto_grading_results: Option<Value>,
+    pub answers: SectionAnswers,
+    pub auto_grading_results: Option<SectionAutoGradingResults>,
     pub grading_status: SectionGradingStatus,
     pub reviewed_by: Option<String>,
     pub reviewed_at: Option<DateTime<Utc>>,
@@ -131,8 +180,8 @@ pub struct WritingTaskSubmission {
     pub prompt: String,
     pub student_text: String,
     pub word_count: i32,
-    pub rubric_assessment: Option<Value>,
-    pub annotations: Value,
+    pub rubric_assessment: Option<WritingRubricAssessment>,
+    pub annotations: ReviewAnnotations,
     pub overall_feedback: Option<String>,
     pub student_visible_notes: Option<String>,
     pub grading_status: SectionGradingStatus,
@@ -152,14 +201,14 @@ pub struct ReviewDraft {
     pub student_id: String,
     pub teacher_id: String,
     pub release_status: ReleaseStatus,
-    pub section_drafts: Value,
-    pub annotations: Value,
-    pub drawings: Value,
+    pub section_drafts: ReviewSectionDrafts,
+    pub annotations: ReviewAnnotations,
+    pub drawings: ReviewDrawings,
     pub overall_feedback: Option<String>,
     pub student_visible_notes: Option<String>,
     pub internal_notes: Option<String>,
-    pub teacher_summary: Value,
-    pub checklist: Value,
+    pub teacher_summary: ReviewTeacherSummary,
+    pub checklist: ReviewChecklist,
     pub has_unsaved_changes: bool,
     pub last_auto_save_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -216,12 +265,12 @@ pub struct StudentResult {
     pub released_by: Option<String>,
     pub scheduled_release_date: Option<DateTime<Utc>>,
     pub overall_band: f64,
-    pub section_bands: Value,
-    pub listening_result: Option<Value>,
-    pub reading_result: Option<Value>,
-    pub writing_results: Value,
-    pub speaking_result: Option<Value>,
-    pub teacher_summary: Value,
+    pub section_bands: ResultSectionBands,
+    pub listening_result: Option<ResultListeningSection>,
+    pub reading_result: Option<ResultReadingSection>,
+    pub writing_results: ResultWritingSections,
+    pub speaking_result: Option<ResultSpeakingSection>,
+    pub teacher_summary: ReviewTeacherSummary,
     pub version: i32,
     pub previous_version_id: Option<String>,
     pub revision_reason: Option<String>,
@@ -255,14 +304,17 @@ pub enum MediaAssetStatus {
 #[cfg(feature = "sqlx")]
 mod sqlx_text_enums {
     use super::{
-        GradingSessionStatus, MediaAssetStatus, OverallGradingStatus, ReleaseStatus, ReviewAction,
-        SectionGradingStatus,
+        GradingSessionStatus, MediaAssetStatus, OverallGradingStatus, ReleaseStatus,
+        ResultListeningSection, ResultReadingSection, ResultSectionBands, ResultSpeakingSection,
+        ResultWritingSections, ReviewAction, ReviewAnnotations, ReviewChecklist, ReviewDrawings,
+        ReviewSectionDrafts, ReviewTeacherSummary, SectionAnswers, SectionAutoGradingResults,
+        SectionGradingStatus, SubmissionSectionStatuses, TeacherAssignments,
+        WritingRubricAssessment,
     };
 
     use sqlx::{
         decode::Decode, encode::Encode, error::BoxDynError, mysql::MySqlTypeInfo, MySql, Type,
     };
-
     fn invalid_enum_value(name: &str, value: &str) -> BoxDynError {
         format!("invalid {name} value: {value}").into()
     }
@@ -356,6 +408,49 @@ mod sqlx_text_enums {
         Orphaned => "orphaned",
         Deleted => "deleted",
     });
+
+    macro_rules! impl_json_wrapper_type {
+        ($ty:ty) => {
+            impl Type<MySql> for $ty {
+                fn type_info() -> MySqlTypeInfo {
+                    <serde_json::Value as Type<MySql>>::type_info()
+                }
+
+                fn compatible(ty: &MySqlTypeInfo) -> bool {
+                    <serde_json::Value as Type<MySql>>::compatible(ty)
+                }
+            }
+
+            impl<'q> Encode<'q, MySql> for $ty {
+                fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+                    <serde_json::Value as Encode<MySql>>::encode_by_ref(&self.0, buf)
+                }
+            }
+
+            impl<'r> Decode<'r, MySql> for $ty {
+                fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+                    let json = <serde_json::Value as Decode<MySql>>::decode(value)?;
+                    Ok(Self(json))
+                }
+            }
+        };
+    }
+
+    impl_json_wrapper_type!(TeacherAssignments);
+    impl_json_wrapper_type!(SubmissionSectionStatuses);
+    impl_json_wrapper_type!(SectionAnswers);
+    impl_json_wrapper_type!(SectionAutoGradingResults);
+    impl_json_wrapper_type!(WritingRubricAssessment);
+    impl_json_wrapper_type!(ReviewAnnotations);
+    impl_json_wrapper_type!(ReviewSectionDrafts);
+    impl_json_wrapper_type!(ReviewDrawings);
+    impl_json_wrapper_type!(ReviewTeacherSummary);
+    impl_json_wrapper_type!(ReviewChecklist);
+    impl_json_wrapper_type!(ResultSectionBands);
+    impl_json_wrapper_type!(ResultListeningSection);
+    impl_json_wrapper_type!(ResultReadingSection);
+    impl_json_wrapper_type!(ResultWritingSections);
+    impl_json_wrapper_type!(ResultSpeakingSection);
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -447,14 +542,14 @@ pub struct ResultsAnalytics {
 pub struct SaveReviewDraftRequest {
     pub teacher_id: String,
     pub release_status: Option<ReleaseStatus>,
-    pub section_drafts: Value,
-    pub annotations: Value,
-    pub drawings: Value,
+    pub section_drafts: ReviewSectionDrafts,
+    pub annotations: ReviewAnnotations,
+    pub drawings: ReviewDrawings,
     pub overall_feedback: Option<String>,
     pub student_visible_notes: Option<String>,
     pub internal_notes: Option<String>,
-    pub teacher_summary: Value,
-    pub checklist: Value,
+    pub teacher_summary: ReviewTeacherSummary,
+    pub checklist: ReviewChecklist,
     pub has_unsaved_changes: bool,
     pub revision: Option<i32>,
 }

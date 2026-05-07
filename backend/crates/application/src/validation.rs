@@ -1575,7 +1575,11 @@ mod tests {
         });
 
         let result = validate_exam_content(&content, &config);
-        assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+        assert!(
+            result.errors.is_empty(),
+            "unexpected errors: {:?}",
+            result.errors
+        );
     }
 
     #[test]
@@ -1615,6 +1619,10 @@ mod tests {
         });
 
         let result = validate_exam_content(&content, &config);
-        assert!(result.errors.is_empty(), "unexpected errors: {:?}", result.errors);
+        assert!(
+            result.errors.is_empty(),
+            "unexpected errors: {:?}",
+            result.errors
+        );
     }
 }

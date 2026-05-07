@@ -1,6 +1,7 @@
 import type { AuditActionType, SessionAuditLog } from '../types';
 import { backendPost } from './backendBridge';
-import { tryBuildAttemptAuthorizationHeader } from './studentAttemptRepository';
+import { tryBuildAttemptAuthorizationHeader } from './attemptCredentialAdapter';
+import { studentSessionTransport } from './studentSessionTransport';
 
 const auditActions = new Set<AuditActionType>([
   'PRECHECK_COMPLETED',
@@ -58,7 +59,7 @@ export async function saveStudentAuditEvent(
   };
 
   void backendPost(
-    `/v1/student/sessions/${sessionId}/audit`,
+    studentSessionTransport.paths.audit(sessionId),
     {
       actionType: log.actionType,
       clientTimestamp: log.timestamp,

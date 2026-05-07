@@ -37,4 +37,15 @@ describe('user-source', () => {
 
     expect(() => loadUsersFromFile(file, 2)).toThrow(/Duplicate email/);
   });
+
+  it('rejects duplicate email case-insensitively', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-runner-'));
+    const file = path.join(dir, 'users.json');
+    fs.writeFileSync(file, JSON.stringify([
+      { userId: 'u1', email: 'Dup@Test.Local', password: 'p1' },
+      { userId: 'u2', email: 'dup@test.local', password: 'p2' },
+    ]));
+
+    expect(() => loadUsersFromFile(file, 2)).toThrow(/Duplicate email/);
+  });
 });

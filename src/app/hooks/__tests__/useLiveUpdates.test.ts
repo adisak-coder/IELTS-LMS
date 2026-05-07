@@ -37,7 +37,7 @@ describe('useLiveUpdates', () => {
   beforeEach(() => {
     MockWebSocket.instances = [];
     vi.useFakeTimers();
-    // @ts-expect-error test shim
+    // @ts-expect-error test shim: replace browser WebSocket with deterministic mock implementation.
     globalThis.WebSocket = MockWebSocket;
   });
 

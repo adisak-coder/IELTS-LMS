@@ -113,6 +113,7 @@ export function useSplitPaneResize({
 
   return {
     handleDrag,
+    leftWidth,
     splitPaneStyle,
     workspaceRef,
   };

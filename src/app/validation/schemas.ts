@@ -84,7 +84,7 @@ export const sessionSchemas = {
     id: commonSchemas.id,
     studentId: commonSchemas.id,
     name: commonSchemas.nonEmptyString,
-    email: commonSchemas.email.optional(),
+    email: commonSchemas.email,
     scheduleId: commonSchemas.id,
     status: z.enum(['active', 'warned', 'paused', 'terminated', 'idle', 'connecting']),
     currentSection: z.enum(['listening', 'reading', 'writing', 'speaking']),

@@ -10,8 +10,6 @@ import React, {
   type ReactNode,
 } from 'react';
 import {
-  countAnsweredQuestions,
-  countQuestionSlots,
   getEnabledModules,
   getFirstQuestionIdForModule,
   getStudentQuestionsForModule,
@@ -21,7 +19,6 @@ import type { ExamState, ModuleType, Violation, ViolationSeverity, QuestionAnswe
 import type { ExamSessionRuntime, RuntimeStatus } from '../../../types/domain';
 import type {
   AttemptSyncState,
-  StudentAnswerValue,
   StudentAttempt,
 } from '../../../types/studentAttempt';
 import {
@@ -29,8 +26,15 @@ import {
   withStudentObservabilityDimensions,
 } from '../../../utils/studentObservability';
 import { isRuntimeStructurallyCompleted } from './verifiedTerminalState';
+import {
+  createBlockingMachineState,
+  syncProctorBlockingMachine,
+  transitionBlockingMachine,
+  type BlockingMachineState,
+  type ManagedBlockingReason,
+} from './blockingStateMachine';
 
-export type ExamPhase = 'pre-check' | 'lobby' | 'exam' | 'post-exam';
+export type ExamPhase = 'pre-check' | 'lobby' | 'exam' | 'post-exam' | 'submitted';
 export type StudentAnswer = QuestionAnswer;
 export type BlockingReason =
   | 'cohort_paused'
@@ -53,9 +57,6 @@ interface RuntimeReducerState {
   currentSectionExtensionMinutes: number | null;
   elapsedTime: number;
   submittedModules: ModuleType[];
-  answers: Record<string, StudentAnswer | undefined>;
-  writingAnswers: Record<string, string>;
-  flags: Record<string, boolean>;
   waitingForCohortAdvance: boolean;
   violations: Violation[];
   fullscreenViolationCount: number;
@@ -66,6 +67,7 @@ interface RuntimeReducerState {
     BlockingReason,
     'cohort_paused' | 'not_started' | 'waiting_for_runtime' | 'waiting_for_advance' | null
   > | null;
+  blockingMachine: BlockingMachineState;
   attemptSyncState: AttemptSyncState;
 }
 
@@ -92,9 +94,6 @@ interface RuntimeActions {
   setCurrentQuestionId: (id: string | null) => void;
   setTimeRemaining: (time: number) => void;
   resetElapsedTime: () => void;
-  setAnswer: (questionId: string, answer: StudentAnswer) => void;
-  setWritingAnswer: (taskId: string, text: string) => void;
-  toggleFlag: (questionId: string) => void;
   submitModule: () => void;
   startExam: () => void;
   addViolation: (
@@ -107,7 +106,7 @@ interface RuntimeActions {
   clearViolations: () => void;
   pauseExam: () => void;
   terminateExam: () => void;
-  setBlockingReason: (reason: RuntimeReducerState['blockingReasonOverride']) => void;
+  transitionBlocking: (reason: ManagedBlockingReason, active?: boolean) => void;
   setAttemptSyncState: (state: AttemptSyncState) => void;
 }
 
@@ -151,18 +150,6 @@ type RuntimeAction =
       runtimeBacked: boolean;
       runtimeSnapshot: ExamSessionRuntime | null;
       runtimeFirstQuestionId: string | null;
-      hydrateAnswerFields: boolean;
-      reconcileTarget:
-        | {
-            answers: string[];
-            answerSlots: Array<{
-              questionId: string;
-              slotIndex: number;
-            }>;
-            writingAnswers: string[];
-            flags: string[];
-          }
-        | null;
     }
   | { type: 'set_phase'; phase: ExamPhase }
   | { type: 'set_current_module'; module: ModuleType; firstQuestionId: string | null }
@@ -170,9 +157,6 @@ type RuntimeAction =
   | { type: 'set_time_remaining'; time: number }
   | { type: 'reset_elapsed_time' }
   | { type: 'tick' }
-  | { type: 'set_answer'; questionId: string; answer: StudentAnswer }
-  | { type: 'set_writing_answer'; taskId: string; text: string }
-  | { type: 'toggle_flag'; questionId: string }
   | { type: 'start_exam'; firstModule: ModuleType; firstQuestionId: string | null; durationSeconds: number }
   | {
       type: 'submit_module';
@@ -193,10 +177,7 @@ type RuntimeAction =
     }
   | { type: 'clear_violations' }
   | { type: 'terminate_exam' }
-  | {
-      type: 'set_blocking_reason';
-      reason: RuntimeReducerState['blockingReasonOverride'];
-    }
+  | { type: 'transition_blocking'; reason: ManagedBlockingReason; active: boolean }
   | { type: 'set_attempt_sync_state'; state: AttemptSyncState };
 
 function countFullscreenViolations(violations: Violation[]) {
@@ -399,6 +380,9 @@ function createInitialRuntimeState(
   const nonRuntimeSectionDurationSeconds = Number.isFinite(nonRuntimeSectionDurationMinutes)
     ? Math.max(0, nonRuntimeSectionDurationMinutes * 60)
     : 0;
+  const blockingMachine = createBlockingMachineState(
+    attemptSnapshot?.proctorStatus === 'paused' ? 'proctor_paused' : null,
+  );
 
   return {
     phase: initialPhase,
@@ -414,16 +398,14 @@ function createInitialRuntimeState(
       : null,
     elapsedTime: 0,
     submittedModules: [],
-    answers: attemptSnapshot?.answers ?? {},
-    writingAnswers: attemptSnapshot?.writingAnswers ?? {},
-    flags: attemptSnapshot?.flags ?? {},
     waitingForCohortAdvance: false,
     violations: attemptSnapshot?.violations ?? [],
     fullscreenViolationCount: countFullscreenViolations(attemptSnapshot?.violations ?? []),
     proctorStatus: attemptSnapshot?.proctorStatus ?? 'active',
     proctorNote: attemptSnapshot?.proctorNote ?? null,
     submittedAt: attemptSnapshot?.submittedAt ?? null,
-    blockingReasonOverride: null,
+    blockingReasonOverride: blockingMachine.current,
+    blockingMachine,
     attemptSyncState: attemptSnapshot?.recovery.syncState ?? 'idle',
   };
 }
@@ -457,56 +439,6 @@ function mergeViolations(snapshot: Violation[], local: Violation[]): Violation[]
   }
 
   return merged;
-}
-
-function applyTargetedRecordHydration<T>(
-  local: Record<string, T>,
-  snapshot: Record<string, T>,
-  keys: string[],
-): Record<string, T> {
-  if (keys.length === 0) {
-    return local;
-  }
-
-  const dedupedKeys = [...new Set(keys)];
-  const next = { ...local };
-  for (const key of dedupedKeys) {
-    if (Object.prototype.hasOwnProperty.call(snapshot, key)) {
-      next[key] = snapshot[key] as T;
-    }
-  }
-  return next;
-}
-
-function applyTargetedAnswerSlotHydration(
-  local: Record<string, StudentAnswer | undefined>,
-  snapshot: Record<string, StudentAnswer | undefined>,
-  slots: Array<{ questionId: string; slotIndex: number }>,
-): Record<string, StudentAnswer | undefined> {
-  if (slots.length === 0) {
-    return local;
-  }
-
-  const next = { ...local };
-  const dedupedSlots = new Map<string, { questionId: string; slotIndex: number }>();
-  for (const slot of slots) {
-    dedupedSlots.set(`${slot.questionId}:${slot.slotIndex}`, slot);
-  }
-
-  for (const { questionId, slotIndex } of dedupedSlots.values()) {
-    const snapshotValue = snapshot[questionId];
-    if (!Array.isArray(snapshotValue) || slotIndex >= snapshotValue.length) {
-      continue;
-    }
-
-    const localValue = next[questionId];
-    const merged = Array.isArray(localValue) ? [...localValue] : [];
-    const snapshotSlotValue = snapshotValue[slotIndex];
-    merged[slotIndex] = typeof snapshotSlotValue === 'string' ? snapshotSlotValue : '';
-    next[questionId] = merged;
-  }
-
-  return next;
 }
 
 function runtimeReducer(
@@ -576,6 +508,10 @@ function runtimeReducer(
       const nextProctorNote = action.snapshot.proctorNote ?? null;
       const mergedViolations = mergeViolations(action.snapshot.violations, state.violations);
       const nextSubmittedAt = state.submittedAt ?? action.snapshot.submittedAt ?? null;
+      const nextBlockingMachine = syncProctorBlockingMachine(
+        state.blockingMachine,
+        nextProctorStatus,
+      );
       const terminalVerified =
         nextProctorStatus === 'terminated' ||
         Boolean(nextSubmittedAt) ||
@@ -596,6 +532,7 @@ function runtimeReducer(
         state.proctorStatus === nextProctorStatus &&
         state.proctorNote === nextProctorNote &&
         state.submittedAt === nextSubmittedAt &&
+        state.blockingReasonOverride === nextBlockingMachine.current &&
         JSON.stringify(state.violations) === JSON.stringify(mergedViolations)
       ) {
         return state;
@@ -609,6 +546,8 @@ function runtimeReducer(
         proctorStatus: nextProctorStatus,
         proctorNote: nextProctorNote,
         submittedAt: nextSubmittedAt,
+        blockingMachine: nextBlockingMachine,
+        blockingReasonOverride: nextBlockingMachine.current,
       };
     }
     case 'hydrate_attempt': {
@@ -645,47 +584,20 @@ function runtimeReducer(
             : 'post-exam'
           : action.snapshot.phase;
       const mergedViolations = mergeViolations(action.snapshot.violations, state.violations);
-      const nextAnswers = action.hydrateAnswerFields
-        ? action.reconcileTarget
-          ? applyTargetedAnswerSlotHydration(
-              applyTargetedRecordHydration(
-                state.answers,
-                action.snapshot.answers,
-                action.reconcileTarget.answers,
-              ),
-              action.snapshot.answers,
-              action.reconcileTarget.answerSlots,
-            )
-          : action.snapshot.answers
-        : state.answers;
-      const nextWritingAnswers = action.hydrateAnswerFields
-        ? action.reconcileTarget
-          ? applyTargetedRecordHydration(
-              state.writingAnswers,
-              action.snapshot.writingAnswers,
-              action.reconcileTarget.writingAnswers,
-            )
-          : action.snapshot.writingAnswers
-        : state.writingAnswers;
-      const nextFlags = action.hydrateAnswerFields
-        ? action.reconcileTarget
-          ? applyTargetedRecordHydration(state.flags, action.snapshot.flags, action.reconcileTarget.flags)
-          : action.snapshot.flags
-        : state.flags;
-      const answerFieldsEquivalent =
-        JSON.stringify(state.answers) === JSON.stringify(nextAnswers) &&
-        JSON.stringify(state.writingAnswers) === JSON.stringify(nextWritingAnswers) &&
-        JSON.stringify(state.flags) === JSON.stringify(nextFlags);
+      const nextBlockingMachine = syncProctorBlockingMachine(
+        state.blockingMachine,
+        action.snapshot.proctorStatus,
+      );
 
       if (
         state.phase === nextPhase &&
         state.currentModule === nextCurrentModule &&
         state.currentQuestionId === nextCurrentQuestionId &&
-        answerFieldsEquivalent &&
         JSON.stringify(state.violations) === JSON.stringify(mergedViolations) &&
         state.proctorStatus === action.snapshot.proctorStatus &&
         state.proctorNote === action.snapshot.proctorNote &&
         state.submittedAt === nextSubmittedAt &&
+        state.blockingReasonOverride === nextBlockingMachine.current &&
         state.attemptSyncState === action.snapshot.recovery.syncState
       ) {
         return state;
@@ -696,14 +608,13 @@ function runtimeReducer(
         phase: nextPhase,
         currentModule: nextCurrentModule,
         currentQuestionId: nextCurrentQuestionId,
-        answers: nextAnswers,
-        writingAnswers: nextWritingAnswers,
-        flags: nextFlags,
         violations: mergedViolations,
         fullscreenViolationCount: countFullscreenViolations(mergedViolations),
         proctorStatus: action.snapshot.proctorStatus,
         proctorNote: action.snapshot.proctorNote,
         submittedAt: nextSubmittedAt,
+        blockingMachine: nextBlockingMachine,
+        blockingReasonOverride: nextBlockingMachine.current,
         attemptSyncState: action.snapshot.recovery.syncState,
       };
     }
@@ -738,30 +649,6 @@ function runtimeReducer(
         ...state,
         timeRemaining: Math.max(0, state.timeRemaining - 1),
         elapsedTime: state.elapsedTime + 1,
-      };
-    case 'set_answer':
-      return {
-        ...state,
-        answers: {
-          ...state.answers,
-          [action.questionId]: action.answer,
-        },
-      };
-    case 'set_writing_answer':
-      return {
-        ...state,
-        writingAnswers: {
-          ...state.writingAnswers,
-          [action.taskId]: action.text,
-        },
-      };
-    case 'toggle_flag':
-      return {
-        ...state,
-        flags: {
-          ...state.flags,
-          [action.questionId]: !state.flags[action.questionId],
-        },
       };
     case 'start_exam':
       return {
@@ -861,14 +748,21 @@ function runtimeReducer(
         ...state,
         phase: 'post-exam',
       };
-    case 'set_blocking_reason':
-      if (state.blockingReasonOverride === action.reason) {
+    case 'transition_blocking': {
+      const nextBlockingMachine = transitionBlockingMachine(
+        state.blockingMachine,
+        action.reason,
+        action.active,
+      );
+      if (state.blockingReasonOverride === nextBlockingMachine.current) {
         return state;
       }
       return {
         ...state,
-        blockingReasonOverride: action.reason,
+        blockingMachine: nextBlockingMachine,
+        blockingReasonOverride: nextBlockingMachine.current,
       };
+    }
     case 'set_attempt_sync_state':
       if (state.attemptSyncState === action.state) {
         return state;
@@ -956,23 +850,6 @@ export function StudentRuntimeProvider({
       sameAttempt &&
       Boolean(droppedMarker) &&
       droppedMarker !== lastDroppedReconcileMarkerRef.current;
-    const droppedReconcileTarget = shouldForceServerReconcile
-      ? {
-          answers: attemptSnapshot.recovery.lastDroppedMutations?.affectedAnswers ?? [],
-          answerSlots: attemptSnapshot.recovery.lastDroppedMutations?.affectedAnswerSlots ?? [],
-          writingAnswers: attemptSnapshot.recovery.lastDroppedMutations?.affectedWritingAnswers ?? [],
-          flags: attemptSnapshot.recovery.lastDroppedMutations?.affectedFlags ?? [],
-        }
-      : null;
-    const hasDroppedReconcileTarget = Boolean(
-      droppedReconcileTarget &&
-      (
-        droppedReconcileTarget.answers.length > 0 ||
-        droppedReconcileTarget.answerSlots.length > 0 ||
-        droppedReconcileTarget.writingAnswers.length > 0 ||
-        droppedReconcileTarget.flags.length > 0
-      ),
-    );
     const attemptFingerprint = `${attemptSnapshot.id}:${attemptSnapshot.updatedAt}:${droppedMarker ?? ''}`;
     if (lastHydratedAttemptRef.current === attemptFingerprint) {
       return;
@@ -1006,14 +883,6 @@ export function StudentRuntimeProvider({
       runtimeFirstQuestionId: runtimeSnapshot?.currentSectionKey
         ? getFirstQuestionIdForModule(state, runtimeSnapshot.currentSectionKey)
         : null,
-      hydrateAnswerFields:
-        !answerInvariantEnabled ||
-        !sameAttempt ||
-        (shouldForceServerReconcile && hasDroppedReconcileTarget),
-      reconcileTarget:
-        shouldForceServerReconcile && hasDroppedReconcileTarget
-          ? droppedReconcileTarget
-          : null,
     });
   }, [
     answerInvariantEnabled,
@@ -1191,21 +1060,7 @@ export function StudentRuntimeProvider({
         }) ?? runtimeState.timeRemaining
       : runtimeState.timeRemaining
     : undefined;
-  const unansweredSubmissionPolicy = state.config.progression.unansweredSubmissionPolicy ?? 'confirm';
-  const answeredSlots = useMemo(
-    () => countAnsweredQuestions(allQuestions, runtimeState.answers),
-    [allQuestions, runtimeState.answers],
-  );
-  const totalSlots = useMemo(
-    () => countQuestionSlots(allQuestions),
-    [allQuestions],
-  );
-  const hasUnanswered = totalSlots > 0 && answeredSlots < totalSlots;
-  const submitRequiresConfirmation =
-    runtimeState.phase === 'exam' &&
-    (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening') &&
-    hasUnanswered &&
-    unansweredSubmissionPolicy !== 'allow';
+  const submitRequiresConfirmation = false;
 
   const setPhase = useCallback((phase: ExamPhase) => {
     dispatch({ type: 'set_phase', phase });
@@ -1236,18 +1091,6 @@ export function StudentRuntimeProvider({
 
   const resetElapsedTime = useCallback(() => {
     dispatch({ type: 'reset_elapsed_time' });
-  }, []);
-
-  const setAnswer = useCallback((questionId: string, answer: StudentAnswer) => {
-    dispatch({ type: 'set_answer', questionId, answer });
-  }, []);
-
-  const setWritingAnswer = useCallback((taskId: string, text: string) => {
-    dispatch({ type: 'set_writing_answer', taskId, text });
-  }, []);
-
-  const toggleFlag = useCallback((questionId: string) => {
-    dispatch({ type: 'toggle_flag', questionId });
   }, []);
 
   const startExam = useCallback(() => {
@@ -1298,17 +1141,18 @@ export function StudentRuntimeProvider({
   }, []);
 
   const pauseExam = useCallback(() => {
-    dispatch({ type: 'set_blocking_reason', reason: 'proctor_paused' });
+    dispatch({ type: 'transition_blocking', reason: 'proctor_paused', active: true });
   }, []);
 
   const terminateExam = useCallback(() => {
     dispatch({ type: 'terminate_exam' });
   }, []);
 
-  const setBlockingReason = useCallback((
-    reason: RuntimeReducerState['blockingReasonOverride'],
+  const transitionBlocking = useCallback((
+    reason: ManagedBlockingReason,
+    active = true,
   ) => {
-    dispatch({ type: 'set_blocking_reason', reason });
+    dispatch({ type: 'transition_blocking', reason, active });
   }, []);
 
   const setAttemptSyncState = useCallback((nextState: AttemptSyncState) => {
@@ -1332,16 +1176,13 @@ export function StudentRuntimeProvider({
       setCurrentQuestionId,
       setTimeRemaining,
       resetElapsedTime,
-      setAnswer,
-      setWritingAnswer,
-      toggleFlag,
       submitModule,
       startExam,
       addViolation,
       clearViolations,
       pauseExam,
       terminateExam,
-      setBlockingReason,
+      transitionBlocking,
       setAttemptSyncState,
     },
     examState: state,
@@ -1359,20 +1200,17 @@ export function StudentRuntimeProvider({
     runtimeSnapshot,
     runtimeState,
     runtimeStatus,
-    setAnswer,
     setAttemptSyncState,
-    setBlockingReason,
+    transitionBlocking,
     setCurrentModule,
     setCurrentQuestionId,
     setPhase,
     setTimeRemaining,
-    setWritingAnswer,
     startExam,
     state,
     submitModule,
     submitRequiresConfirmation,
     terminateExam,
-    toggleFlag,
   ]);
 
   return <RuntimeContext.Provider value={value}>{children}</RuntimeContext.Provider>;

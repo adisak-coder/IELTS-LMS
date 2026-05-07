@@ -1,5 +1,7 @@
 import type { ExamStatus, StatusTransition } from '../../types/domain';
 
+export type ExamTransitionActorRole = NonNullable<StatusTransition['requireActor']> | 'system';
+
 export const STATUS_TRANSITIONS: StatusTransition[] = [
   { from: 'draft', to: 'draft', allowed: true },
   { from: 'draft', to: 'in_review', allowed: true, requireActor: 'owner' },
@@ -20,9 +22,30 @@ export const STATUS_TRANSITIONS: StatusTransition[] = [
   { from: 'archived', to: 'draft', allowed: true, requireActor: 'admin' },
 ];
 
-export function canTransition(from: ExamStatus, to: ExamStatus): boolean {
-  return STATUS_TRANSITIONS.some((transition) => {
-    return transition.from === from && transition.to === to && transition.allowed;
+export function canTransition(
+  from: ExamStatus,
+  to: ExamStatus,
+  actorRole: ExamTransitionActorRole | null,
+): boolean {
+  const transition = STATUS_TRANSITIONS.find((candidate) => {
+    return candidate.from === from && candidate.to === to;
   });
-}
 
+  if (!transition || !transition.allowed) {
+    return false;
+  }
+
+  if (!transition.requireActor) {
+    return true;
+  }
+
+  if (!actorRole) {
+    return false;
+  }
+
+  if (actorRole === 'system') {
+    return true;
+  }
+
+  return actorRole === transition.requireActor;
+}

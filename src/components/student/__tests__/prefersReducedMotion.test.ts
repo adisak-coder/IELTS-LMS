@@ -4,7 +4,7 @@ import { prefersReducedMotion } from '../prefersReducedMotion';
 describe('prefersReducedMotion', () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    // @ts-expect-error test cleanup
+    // @ts-expect-error test cleanup: remove stubbed optional browser API from jsdom window.
     delete window.matchMedia;
   });
 
@@ -19,4 +19,3 @@ describe('prefersReducedMotion', () => {
     expect(prefersReducedMotion()).toBe(false);
   });
 });
-

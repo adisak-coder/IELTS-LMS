@@ -47,7 +47,7 @@ import {
   mapBackendExamVersion,
   rememberExamRevision,
 } from './backendBridge';
-import { canTransition } from './policies/examStatusTransitions';
+import { canTransition, type ExamTransitionActorRole } from './policies/examStatusTransitions';
 
 /**
  * Generate a slug from a title
@@ -71,6 +71,37 @@ function generateId(prefix: string): string {
  */
 export class ExamLifecycleService {
   constructor(private repository: IExamRepository = examRepository) {}
+
+  private resolveTransitionActorRole(actor: string, owner: string): ExamTransitionActorRole | null {
+    const normalizedActor = actor.trim().toLowerCase();
+    const normalizedOwner = owner.trim().toLowerCase();
+
+    if (!normalizedActor) {
+      return null;
+    }
+
+    if (normalizedActor === 'system') {
+      return 'system';
+    }
+
+    if (normalizedActor === normalizedOwner) {
+      return 'owner';
+    }
+
+    if (normalizedActor.includes('admin')) {
+      return 'admin';
+    }
+
+    if (normalizedActor.includes('review')) {
+      return 'reviewer';
+    }
+
+    if (normalizedActor.includes('builder')) {
+      return 'owner';
+    }
+
+    return null;
+  }
 
   private useBackendBuilder(): boolean {
     // Production path: the default repository is backend-only.
@@ -350,6 +381,7 @@ export class ExamLifecycleService {
     if (!exam) {
       return { success: false, error: 'Exam not found' };
     }
+    const actorRole = this.resolveTransitionActorRole(actor, exam.owner);
 
     if (this.useBackendBuilder()) {
       if (toStatus === 'published') {
@@ -357,7 +389,7 @@ export class ExamLifecycleService {
       }
 
       // Check if transition is allowed before calling the backend.
-      if (!canTransition(exam.status, toStatus)) {
+      if (!canTransition(exam.status, toStatus, actorRole)) {
         return {
           success: false,
           error: `Cannot transition from ${exam.status} to ${toStatus}`,
@@ -389,7 +421,7 @@ export class ExamLifecycleService {
     }
     
     // Check if transition is allowed
-    if (!canTransition(exam.status, toStatus)) {
+    if (!canTransition(exam.status, toStatus, actorRole)) {
       return {
         success: false,
         error: `Cannot transition from ${exam.status} to ${toStatus}`

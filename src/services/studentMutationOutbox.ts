@@ -30,12 +30,12 @@ export type PendingMutationFlushKind = 'objective' | 'writing';
 export function getMutationCoalesceKey(mutation: StudentAttemptMutation): string | null {
   switch (mutation.type) {
     case 'answer': {
-      const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
+      const questionId = mutation.payload.questionId;
       if (!(typeof questionId === 'string' && questionId.trim())) {
         return null;
       }
 
-      const slotIndex = (mutation.payload as { slotIndex?: unknown } | undefined)?.slotIndex;
+      const slotIndex = mutation.payload.slotIndex;
       if (typeof slotIndex === 'number' && Number.isInteger(slotIndex) && slotIndex >= 0) {
         return `answer:${questionId}:slot:${slotIndex}`;
       }
@@ -43,11 +43,11 @@ export function getMutationCoalesceKey(mutation: StudentAttemptMutation): string
       return `answer:${questionId}`;
     }
     case 'writing_answer': {
-      const taskId = (mutation.payload as { taskId?: unknown } | undefined)?.taskId;
+      const taskId = mutation.payload.taskId;
       return typeof taskId === 'string' && taskId.trim() ? `writing_answer:${taskId}` : null;
     }
     case 'flag': {
-      const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
+      const questionId = mutation.payload.questionId;
       return typeof questionId === 'string' && questionId.trim() ? `flag:${questionId}` : null;
     }
     case 'position':
@@ -179,7 +179,7 @@ function shouldDebounceAnswerDurability(mutation: StudentAttemptMutation): boole
   if (mutation.type !== 'answer') {
     return false;
   }
-  const interactionType = (mutation.payload as { interactionType?: unknown } | undefined)?.interactionType;
+  const interactionType = mutation.payload.interactionType;
   return interactionType !== 'discrete';
 }
 

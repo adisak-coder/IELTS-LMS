@@ -8,7 +8,7 @@ import {
   StudentSubmission, SectionSubmission, WritingTaskSubmission, ReviewDraft,
   StudentResult,
   RubricAssessment, ReleaseStatus, GradingChecklist,
-  WritingAnnotation, DrawingAnnotation, CommentBankItem
+  WritingAnnotation, DrawingAnnotation, CommentBankItem, WritingAnswers
 } from '../../types/grading';
 import { gradingService } from '../../services/gradingService';
 import { gradingRepository } from '../../services/gradingRepository';
@@ -33,6 +33,8 @@ export interface StudentReviewWorkspaceProps {
 }
 
 type WritingPrintSlot = 'task1' | 'task2';
+type WritingBandKey = 'taskResponseBand' | 'coherenceBand' | 'lexicalBand' | 'grammarBand';
+type WritingNotesKey = 'taskResponseNotes' | 'coherenceNotes' | 'lexicalNotes' | 'grammarNotes';
 
 const getWritingPrintSlot = (taskId: string): WritingPrintSlot | null => {
   const normalized = taskId.trim().toLowerCase();
@@ -44,6 +46,22 @@ const getWritingPrintSlot = (taskId: string): WritingPrintSlot | null => {
   }
   return null;
 };
+
+type WritingTaskEntry = WritingAnswers['tasks'][number];
+const writingCriterionDefs: Array<{ key: WritingBandKey; label: string; notesKey: WritingNotesKey }> = [
+  { key: 'taskResponseBand', label: 'Task Response', notesKey: 'taskResponseNotes' },
+  { key: 'coherenceBand', label: 'Coherence & Cohesion', notesKey: 'coherenceNotes' },
+  { key: 'lexicalBand', label: 'Lexical Resource', notesKey: 'lexicalNotes' },
+  { key: 'grammarBand', label: 'Grammar', notesKey: 'grammarNotes' },
+];
+
+function isWritingTaskEntry(value: unknown): value is WritingTaskEntry {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Partial<WritingTaskEntry>).taskId === 'string'
+  );
+}
 
 export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace({ 
   submissionId, 
@@ -184,6 +202,20 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             }
           };
           setReviewDraft(initializedDraft);
+        }
+      }
+
+      setSectionsLoading(true);
+      try {
+        const sectionsData = await gradingRepository.getSectionSubmissionsBySubmissionId(submissionId);
+        if (seq !== submissionLoadSeq.current) return;
+        setSectionSubmissions(sectionsData);
+      } catch (error) {
+        if (seq !== submissionLoadSeq.current) return;
+        setSectionsError(error instanceof Error ? error.message : 'Failed to load section answers.');
+      } finally {
+        if (seq === submissionLoadSeq.current) {
+          setSectionsLoading(false);
         }
       }
 
@@ -502,13 +534,13 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     }
 
     const writingSection = getSectionSubmission('writing');
-    const sectionAnswers = (writingSection?.answers as unknown) as Record<string, unknown> | null;
-    const tasks = sectionAnswers && typeof sectionAnswers === 'object' ? (sectionAnswers['tasks'] as unknown) : null;
+    const sectionAnswers = writingSection?.answers;
+    const tasks =
+      sectionAnswers?.type === 'writing' && Array.isArray(sectionAnswers.tasks)
+        ? sectionAnswers.tasks
+        : null;
     if (Array.isArray(tasks)) {
-      const match = tasks.find(
-        (entry): entry is { taskId?: unknown; text?: unknown } =>
-          Boolean(entry) && typeof entry === 'object' && (entry as any).taskId === taskId,
-      );
+      const match = tasks.find((entry) => isWritingTaskEntry(entry) && entry.taskId === taskId);
       const text = match?.text;
       if (typeof text === 'string') {
         return text;
@@ -545,9 +577,16 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
   const currentWritingPrompt = currentWritingTaskId ? htmlToPlainText(getWritingPrompt(currentWritingTaskId)) : '';
   const currentWritingText = currentWritingTaskId ? htmlToPlainText(getWritingResponseText(currentWritingTaskId)) : '';
   const currentWritingTaskSubmission = currentWritingTaskId ? getWritingTaskSubmission(currentWritingTaskId) : null;
-  const currentWritingAssessment = currentWritingTaskId
-    ? (reviewDraft?.sectionDrafts as any)?.writing?.[currentWritingTaskId]
-    : undefined;
+  const currentWritingAssessment = useMemo(() => {
+    if (!currentWritingTaskId) {
+      return undefined;
+    }
+    const writingSlot = getWritingPrintSlot(currentWritingTaskId);
+    if (!writingSlot) {
+      return undefined;
+    }
+    return reviewDraft?.sectionDrafts.writing?.[writingSlot];
+  }, [currentWritingTaskId, reviewDraft]);
   const currentWritingAnnotationCount = currentWritingTaskId
     ? reviewDraft?.annotations.filter((annotation) => annotation.taskId === currentWritingTaskId).length ?? 0
     : 0;
@@ -650,7 +689,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
 
     writingTasks.forEach((task) => {
       const slot = task.taskId === 'task2' ? 'task2' : 'task1';
-      const rubric = (reviewDraft.sectionDrafts as any)?.writing?.[task.taskId];
+      const rubric = reviewDraft.sectionDrafts.writing?.[slot];
       const taskText = htmlToPlainText(getWritingResponseText(task.taskId));
       results[slot] = {
         taskId: task.taskId,
@@ -1250,12 +1289,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
             
             {activeSection === 'writing' && currentWritingTaskId && (
               <div className="space-y-4">
-                {[
-                  { key: 'taskResponseBand', label: 'Task Response', notesKey: 'taskResponseNotes' },
-                  { key: 'coherenceBand', label: 'Coherence & Cohesion', notesKey: 'coherenceNotes' },
-                  { key: 'lexicalBand', label: 'Lexical Resource', notesKey: 'lexicalNotes' },
-                  { key: 'grammarBand', label: 'Grammar', notesKey: 'grammarNotes' }
-                ].map((criterion) => (
+                {writingCriterionDefs.map((criterion) => (
                   <div key={criterion.key} className="space-y-2">
                     <label className="text-sm font-medium text-gray-700">
                       {criterion.label}
@@ -1267,11 +1301,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
                       step="0.5"
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                       placeholder="0-9"
-                      value={
-                        ((reviewDraft?.sectionDrafts as any)?.writing?.[activeTask]?.[
-                          criterion.key as keyof RubricAssessment
-                        ] as number | undefined) ?? ''
-                      }
+                      value={currentWritingAssessment?.[criterion.key] ?? ''}
                       onChange={(e) => updateRubricAssessment('writing', {
                         [criterion.key]: parseFloat(e.target.value) || 0
                       }, activeTask)}
@@ -1280,11 +1310,7 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
                       className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none"
                       rows={2}
                       placeholder="Notes..."
-                      value={
-                        ((reviewDraft?.sectionDrafts as any)?.writing?.[activeTask]?.[
-                          criterion.notesKey as keyof RubricAssessment
-                        ] as string | undefined) ?? ''
-                      }
+                      value={currentWritingAssessment?.[criterion.notesKey] ?? ''}
                       onChange={(e) => updateRubricAssessment('writing', {
                         [criterion.notesKey]: e.target.value
                       }, activeTask)}

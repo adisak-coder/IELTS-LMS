@@ -5,6 +5,9 @@ import {
   mapBackendRuntime,
   mapBackendSchedule,
 } from '../../services/backendBridge';
+import {
+  studentSessionTransport,
+} from '../../services/studentSessionTransport';
 import type { StudentAttempt } from '../../types/studentAttempt';
 import { liveQueryPolicy, queryKeys, staticQueryPolicy } from './queryClient';
 
@@ -28,32 +31,15 @@ export type BackendStudentLiveSessionContext = {
   degradedLiveMode?: boolean | undefined;
 };
 
-function appendCandidateId(endpoint: string, candidateId: string) {
-  const query = new URLSearchParams({ candidateId });
-  return `${endpoint}?${query.toString()}`;
-}
-
-export function buildStudentSessionEndpoint(scheduleId: string, candidateId: string) {
-  return appendCandidateId(`/v1/student/sessions/${scheduleId}`, candidateId);
-}
-
-export function buildStudentStaticSessionEndpoint(scheduleId: string, candidateId: string) {
-  return appendCandidateId(`/v1/student/sessions/${scheduleId}/static`, candidateId);
-}
-
-export function buildStudentLiveSessionEndpoint(scheduleId: string, candidateId: string) {
-  return appendCandidateId(`/v1/student/sessions/${scheduleId}/live`, candidateId);
-}
-
 export function fetchStudentStaticSession(scheduleId: string, candidateId: string) {
   return backendGet<BackendStudentStaticSessionContext>(
-    buildStudentStaticSessionEndpoint(scheduleId, candidateId),
+    studentSessionTransport.paths.staticSession(scheduleId, candidateId),
   );
 }
 
 export function fetchStudentLiveSession(scheduleId: string, candidateId: string) {
   return backendGet<BackendStudentLiveSessionContext>(
-    buildStudentLiveSessionEndpoint(scheduleId, candidateId),
+    studentSessionTransport.paths.liveSession(scheduleId, candidateId),
   );
 }
 

@@ -103,8 +103,8 @@ describe('student attempt normalization', () => {
 
     const normalized = normalizeStudentAttempt(attempt);
 
-    expect(normalized.candidateName).toBe('Candidate W250334');
-    expect(normalized.candidateEmail).toBe('W250334@example.com');
+    expect(normalized.candidateName).toBe('Unknown Candidate');
+    expect(normalized.candidateEmail).toBe('');
     expect(normalized.proctorNote).toBe(null);
     expect(normalized.integrity).toEqual(
       expect.objectContaining({
@@ -122,4 +122,3 @@ describe('student attempt normalization', () => {
     );
   });
 });
-

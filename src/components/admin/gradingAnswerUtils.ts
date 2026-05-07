@@ -2,11 +2,14 @@ import type {
   StudentQuestionDescriptor,
 } from '../../services/examAdapterService';
 import { getQuestionAnswer } from '../../services/examAdapterService';
+import type { StudentAnswerValue } from '../../types/answers';
 import { normalizeAnswerForMatching, resolveAcceptedAnswers } from '../../utils/acceptedAnswers';
 
 type UnknownRecord = Record<string, unknown>;
 
-export function extractObjectiveAnswerMap(sectionAnswers: unknown): Record<string, unknown> {
+export function extractObjectiveAnswerMap(
+  sectionAnswers: unknown,
+): Record<string, StudentAnswerValue | undefined> {
   if (!sectionAnswers || typeof sectionAnswers !== 'object') {
     return {};
   }
@@ -14,7 +17,7 @@ export function extractObjectiveAnswerMap(sectionAnswers: unknown): Record<strin
   const payload = sectionAnswers as UnknownRecord;
   const candidate = payload['answers'];
   if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
-    return candidate as Record<string, unknown>;
+    return candidate as Record<string, StudentAnswerValue | undefined>;
   }
 
   return {};
@@ -255,7 +258,7 @@ function getAcceptedAnswersForDescriptor(descriptor: StudentQuestionDescriptor):
 
 export function getStudentAnswerDisplay(
   descriptor: StudentQuestionDescriptor,
-  answerMap: Record<string, unknown>,
+  answerMap: Record<string, StudentAnswerValue | undefined>,
 ): string {
   const value = getQuestionAnswer(descriptor, answerMap);
   const { block } = descriptor;
@@ -294,7 +297,7 @@ function normalizedSetFromUnknown(value: unknown): Set<string> {
 
 export function isStudentAnswerCorrect(
   descriptor: StudentQuestionDescriptor,
-  answerMap: Record<string, unknown>,
+  answerMap: Record<string, StudentAnswerValue | undefined>,
 ): boolean | null {
   const correct = getCorrectAnswerValue(descriptor);
   const student = getQuestionAnswer(descriptor, answerMap);

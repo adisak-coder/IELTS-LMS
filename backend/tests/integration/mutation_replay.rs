@@ -13,8 +13,8 @@ use ielts_backend_application::{
 };
 use ielts_backend_domain::{
     attempt::{
-        MutationEnvelope, StudentBootstrapRequest, StudentMutationBatchRequest,
-        StudentSubmitRequest,
+        MutationCommand, MutationEnvelope, MutationType, StudentBootstrapRequest,
+        StudentMutationBatchRequest, StudentSubmitRequest,
     },
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
     schedule::CreateScheduleRequest,
@@ -31,6 +31,14 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0010_auth_security.sql",
     "0015_operation_write_hardening.sql",
 ];
+
+fn command(mutation_type: MutationType, payload: serde_json::Value) -> MutationCommand {
+    serde_json::from_value(json!({
+        "mutationType": mutation_type.as_str(),
+        "payload": payload
+    }))
+    .expect("valid mutation command")
+}
 
 #[tokio::test]
 async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
@@ -70,17 +78,21 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                         id: "m1".to_owned(),
                         seq: 1,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
-                        mutation_type: "answer".to_owned(),
+                        command: command(
+                            MutationType::Answer,
+                            json!({"questionId": "q1", "value": "A"}),
+                        ),
                         base_revision: None,
-                        payload: json!({"questionId": "q1", "value": "A"}),
                     },
                     MutationEnvelope {
                         id: "m2".to_owned(),
                         seq: 2,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 5).unwrap(),
-                        mutation_type: "writing_answer".to_owned(),
+                        command: command(
+                            MutationType::WritingAnswer,
+                            json!({"taskId": "task-1", "value": "Draft 1"}),
+                        ),
                         base_revision: None,
-                        payload: json!({"taskId": "task-1", "value": "Draft 1"}),
                     },
                 ],
             },
@@ -109,17 +121,21 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                         id: "m3".to_owned(),
                         seq: 3,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
-                        mutation_type: "answer".to_owned(),
+                        command: command(
+                            MutationType::Answer,
+                            json!({"questionId": "q1", "value": "B"}),
+                        ),
                         base_revision: None,
-                        payload: json!({"questionId": "q1", "value": "B"}),
                     },
                     MutationEnvelope {
                         id: "m4".to_owned(),
                         seq: 4,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 5).unwrap(),
-                        mutation_type: "flag".to_owned(),
+                        command: command(
+                            MutationType::Flag,
+                            json!({"questionId": "q1", "value": true}),
+                        ),
                         base_revision: None,
-                        payload: json!({"questionId": "q1", "value": true}),
                     },
                 ],
             },
@@ -147,9 +163,11 @@ async fn mutation_batches_replay_in_sequence_and_reject_overlapping_ranges() {
                     id: "m-overlap".to_owned(),
                     seq: 4,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 12, 0).unwrap(),
-                    mutation_type: "answer".to_owned(),
+                    command: command(
+                        MutationType::Answer,
+                        json!({"questionId": "q1", "value": "C"}),
+                    ),
                     base_revision: None,
-                    payload: json!({"questionId": "q1", "value": "C"}),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -207,13 +225,15 @@ async fn operation_mutations_reject_stale_revision_and_preserve_field_scope() {
                     id: "op-1".to_owned(),
                     seq: 1,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
-                    mutation_type: "SetScalar".to_owned(),
+                    command: command(
+                        MutationType::SetScalar,
+                        json!({
+                            "baseRevision": 0,
+                            "questionId": "q1",
+                            "value": "ALPHA",
+                        }),
+                    ),
                     base_revision: None,
-                    payload: json!({
-                        "baseRevision": 0,
-                        "questionId": "q1",
-                        "value": "ALPHA",
-                    }),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -237,13 +257,15 @@ async fn operation_mutations_reject_stale_revision_and_preserve_field_scope() {
                     id: "op-stale".to_owned(),
                     seq: 2,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 5).unwrap(),
-                    mutation_type: "SetScalar".to_owned(),
+                    command: command(
+                        MutationType::SetScalar,
+                        json!({
+                            "baseRevision": 0,
+                            "questionId": "q1",
+                            "value": "STALE",
+                        }),
+                    ),
                     base_revision: None,
-                    payload: json!({
-                        "baseRevision": 0,
-                        "questionId": "q1",
-                        "value": "STALE",
-                    }),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -275,13 +297,15 @@ async fn operation_mutations_reject_stale_revision_and_preserve_field_scope() {
                     id: "op-2".to_owned(),
                     seq: 2,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
-                    mutation_type: "SetScalar".to_owned(),
+                    command: command(
+                        MutationType::SetScalar,
+                        json!({
+                            "baseRevision": 1,
+                            "questionId": "q2",
+                            "value": "BRAVO",
+                        }),
+                    ),
                     base_revision: None,
-                    payload: json!({
-                        "baseRevision": 1,
-                        "questionId": "q2",
-                        "value": "BRAVO",
-                    }),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -338,13 +362,15 @@ async fn operation_mutations_with_idempotency_key_are_deterministic_and_do_not_d
             id: "op-idempotent-1".to_owned(),
             seq: 1,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
-            mutation_type: "SetScalar".to_owned(),
+            command: command(
+                MutationType::SetScalar,
+                json!({
+                    "baseRevision": 0,
+                    "questionId": "q1",
+                    "value": "ALPHA",
+                }),
+            ),
             base_revision: None,
-            payload: json!({
-                "baseRevision": 0,
-                "questionId": "q1",
-                "value": "ALPHA",
-            }),
         }],
     };
 
@@ -417,13 +443,15 @@ async fn idempotency_hash_mismatch_rejects_conflict_without_partial_writes() {
             id: "op-hash-1".to_owned(),
             seq: 1,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 20, 0).unwrap(),
-            mutation_type: "SetScalar".to_owned(),
+            command: command(
+                MutationType::SetScalar,
+                json!({
+                    "baseRevision": 0,
+                    "questionId": "q1",
+                    "value": "ALPHA",
+                }),
+            ),
             base_revision: None,
-            payload: json!({
-                "baseRevision": 0,
-                "questionId": "q1",
-                "value": "ALPHA",
-            }),
         }],
     };
     service
@@ -444,13 +472,15 @@ async fn idempotency_hash_mismatch_rejects_conflict_without_partial_writes() {
             id: "op-hash-2".to_owned(),
             seq: 2,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 20, 5).unwrap(),
-            mutation_type: "SetScalar".to_owned(),
+            command: command(
+                MutationType::SetScalar,
+                json!({
+                    "baseRevision": 1,
+                    "questionId": "q1",
+                    "value": "BRAVO",
+                }),
+            ),
             base_revision: None,
-            payload: json!({
-                "baseRevision": 1,
-                "questionId": "q1",
-                "value": "BRAVO",
-            }),
         }],
     };
     let err = service
@@ -576,14 +606,16 @@ async fn operation_set_slot_persists_mutation_and_answer_slot_rows() {
                     id: "slot-1".to_owned(),
                     seq: 1,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 30, 0).unwrap(),
-                    mutation_type: "SetSlot".to_owned(),
+                    command: command(
+                        MutationType::SetSlot,
+                        json!({
+                            "baseRevision": 0,
+                            "questionId": "q-slot-1",
+                            "slotIndex": 1,
+                            "value": "second-value",
+                        }),
+                    ),
                     base_revision: None,
-                    payload: json!({
-                        "baseRevision": 0,
-                        "questionId": "q-slot-1",
-                        "slotIndex": 1,
-                        "value": "second-value",
-                    }),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -648,13 +680,15 @@ async fn parallel_retries_for_same_operation_do_not_create_duplicate_mutation_id
             id: "parallel-dup-1".to_owned(),
             seq: 1,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 40, 0).unwrap(),
-            mutation_type: "SetScalar".to_owned(),
+            command: command(
+                MutationType::SetScalar,
+                json!({
+                    "baseRevision": 0,
+                    "questionId": "q1",
+                    "value": "ALPHA",
+                }),
+            ),
             base_revision: None,
-            payload: json!({
-                "baseRevision": 0,
-                "questionId": "q1",
-                "value": "ALPHA",
-            }),
         }],
     };
 

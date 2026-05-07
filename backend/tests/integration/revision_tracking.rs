@@ -11,7 +11,10 @@ use ielts_backend_application::{
     scheduling::SchedulingService,
 };
 use ielts_backend_domain::{
-    attempt::{MutationEnvelope, StudentBootstrapRequest, StudentMutationBatchRequest},
+    attempt::{
+        MutationCommand, MutationEnvelope, MutationType, StudentBootstrapRequest,
+        StudentMutationBatchRequest,
+    },
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
     schedule::CreateScheduleRequest,
 };
@@ -27,6 +30,14 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0010_auth_security.sql",
     "0015_operation_write_hardening.sql",
 ];
+
+fn command(mutation_type: MutationType, payload: serde_json::Value) -> MutationCommand {
+    serde_json::from_value(json!({
+        "mutationType": mutation_type.as_str(),
+        "payload": payload
+    }))
+    .expect("valid mutation command")
+}
 
 #[tokio::test]
 async fn revision_increments_and_mutations_record_applied_revision() {
@@ -67,17 +78,21 @@ async fn revision_increments_and_mutations_record_applied_revision() {
                         id: "m1".to_owned(),
                         seq: 1,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
-                        mutation_type: "answer".to_owned(),
+                        command: command(
+                            MutationType::Answer,
+                            json!({"questionId": "q1", "value": "A"}),
+                        ),
                         base_revision: None,
-                        payload: json!({"questionId": "q1", "value": "A"}),
                     },
                     MutationEnvelope {
                         id: "m2".to_owned(),
                         seq: 2,
                         timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 5).unwrap(),
-                        mutation_type: "writing_answer".to_owned(),
+                        command: command(
+                            MutationType::WritingAnswer,
+                            json!({"taskId": "task-1", "value": "Draft 1"}),
+                        ),
                         base_revision: None,
-                        payload: json!({"taskId": "task-1", "value": "Draft 1"}),
                     },
                 ],
             },
@@ -113,9 +128,11 @@ async fn revision_increments_and_mutations_record_applied_revision() {
                     id: "m3".to_owned(),
                     seq: 3,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
-                    mutation_type: "answer".to_owned(),
+                    command: command(
+                        MutationType::Answer,
+                        json!({"questionId": "q2", "value": "B"}),
+                    ),
                     base_revision: None,
-                    payload: json!({"questionId": "q2", "value": "B"}),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -178,9 +195,11 @@ async fn mutation_batches_accept_batch_local_sequences_and_are_idempotent_by_mut
                     id: "m1".to_owned(),
                     seq: 1,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
-                    mutation_type: "answer".to_owned(),
+                    command: command(
+                        MutationType::Answer,
+                        json!({"questionId": "q1", "value": "A"}),
+                    ),
                     base_revision: None,
-                    payload: json!({"questionId": "q1", "value": "A"}),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -189,7 +208,9 @@ async fn mutation_batches_accept_batch_local_sequences_and_are_idempotent_by_mut
         .await
         .expect("apply first batch");
     assert_eq!(first.server_accepted_through_seq, 1);
-    let first_attempt = first.attempt.expect("full mutation response includes attempt");
+    let first_attempt = first
+        .attempt
+        .expect("full mutation response includes attempt");
     assert_eq!(first_attempt.revision, 1);
 
     // Second batch reuses a batch-local sequence (starts at 1 again). This must still be accepted.
@@ -204,9 +225,11 @@ async fn mutation_batches_accept_batch_local_sequences_and_are_idempotent_by_mut
                     id: "m2".to_owned(),
                     seq: 1,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
-                    mutation_type: "answer".to_owned(),
+                    command: command(
+                        MutationType::Answer,
+                        json!({"questionId": "q2", "value": "B"}),
+                    ),
                     base_revision: None,
-                    payload: json!({"questionId": "q2", "value": "B"}),
                 }],
             },
             MutationBatchResponseMode::Full,
@@ -215,7 +238,9 @@ async fn mutation_batches_accept_batch_local_sequences_and_are_idempotent_by_mut
         .await
         .expect("apply second batch");
     assert_eq!(second.server_accepted_through_seq, 2);
-    let second_attempt = second.attempt.expect("full mutation response includes attempt");
+    let second_attempt = second
+        .attempt
+        .expect("full mutation response includes attempt");
     assert_eq!(second_attempt.revision, 2);
     assert_eq!(second_attempt.answers["q1"], "A");
     assert_eq!(second_attempt.answers["q2"], "B");
@@ -252,9 +277,11 @@ async fn mutation_batches_accept_batch_local_sequences_and_are_idempotent_by_mut
                     id: "m2".to_owned(),
                     seq: 1,
                     timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 5).unwrap(),
-                    mutation_type: "answer".to_owned(),
+                    command: command(
+                        MutationType::Answer,
+                        json!({"questionId": "q2", "value": "B"}),
+                    ),
                     base_revision: None,
-                    payload: json!({"questionId": "q2", "value": "B"}),
                 }],
             },
             MutationBatchResponseMode::Full,

@@ -147,16 +147,18 @@ export function ProctoringProvider({
       };
       runtimeActions.addViolation(type, severity, message, violationId, timestamp);
       attemptActions.persistViolation(violation);
+      return { violationId, timestamp };
     };
     
     // Check severity thresholds
     if (severity === 'critical') {
       // Always terminate on critical
-      recordViolation();
+      const { violationId } = recordViolation();
       void saveStudentAuditEvent(
         scheduleId,
         'VIOLATION_DETECTED',
         {
+          violationId,
           severity,
           message,
           violationType: type,
@@ -171,11 +173,12 @@ export function ProctoringProvider({
     if (severity === 'high') {
       const highLimit = thresholds?.highLimit ?? 2;
       if (violationCountsRef.current.high >= highLimit) {
-        recordViolation();
+        const { violationId } = recordViolation();
         void saveStudentAuditEvent(
           scheduleId,
           'VIOLATION_DETECTED',
           {
+            violationId,
             severity,
             message,
             violationType: type,
@@ -197,11 +200,12 @@ export function ProctoringProvider({
     if (severity === 'medium') {
       const mediumLimit = thresholds?.mediumLimit ?? config.progression.warningThreshold ?? 3;
       if (violationCountsRef.current.medium >= mediumLimit) {
-        recordViolation();
+        const { violationId } = recordViolation();
         void saveStudentAuditEvent(
           scheduleId,
           'VIOLATION_DETECTED',
           {
+            violationId,
             severity,
             message,
             violationType: type,
@@ -218,11 +222,12 @@ export function ProctoringProvider({
     if (severity === 'low') {
       const lowLimit = thresholds?.lowLimit ?? 5;
       if (violationCountsRef.current.low >= lowLimit) {
-        recordViolation();
+        const { violationId } = recordViolation();
         void saveStudentAuditEvent(
           scheduleId,
           'VIOLATION_DETECTED',
           {
+            violationId,
             severity,
             message,
             violationType: type,
@@ -237,11 +242,12 @@ export function ProctoringProvider({
     }
     
     // Default: just log the violation
-    recordViolation();
+    const { violationId } = recordViolation();
     void saveStudentAuditEvent(
       scheduleId,
       'VIOLATION_DETECTED',
       {
+        violationId,
         severity,
         message,
         violationType: type,

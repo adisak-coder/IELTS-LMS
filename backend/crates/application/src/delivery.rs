@@ -1,7 +1,8 @@
 use chrono::{DateTime, Utc};
 use ielts_backend_domain::{
     attempt::{
-        MutationEnvelope, StudentAttempt, StudentBootstrapRequest, StudentHeartbeatRequest,
+        AttemptPhase, HeartbeatEventType, ModuleType, MutationCommand, MutationEnvelope,
+        MutationType, StudentAttempt, StudentBootstrapRequest, StudentHeartbeatRequest,
         StudentMutationBatchRequest, StudentMutationBatchResponse, StudentPrecheckRequest,
         StudentSessionContext, StudentSubmitRequest, StudentSubmitResponse,
     },
@@ -11,7 +12,9 @@ use ielts_backend_domain::{
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
     auth::sha256_hex,
+    config::AppConfig,
     idempotency::{IdempotencyRecord, IdempotencyRepository},
+    live_mode::LiveModeService,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
@@ -20,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
 
+use crate::auth::{AuthService, AuthenticatedSession};
 use crate::scheduling::SchedulingService;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +31,7 @@ pub enum DeliveryConflictReason {
     ObjectiveLocked,
     SectionMismatch,
     AttemptProctorBlocked,
+    BaseRevisionMismatch,
     AttemptSubmitted,
     FinalFlushRequired,
     FinalPayloadHashMismatch,
@@ -38,6 +43,7 @@ impl DeliveryConflictReason {
             DeliveryConflictReason::ObjectiveLocked => "OBJECTIVE_LOCKED",
             DeliveryConflictReason::SectionMismatch => "SECTION_MISMATCH",
             DeliveryConflictReason::AttemptProctorBlocked => "ATTEMPT_PROCTOR_BLOCKED",
+            DeliveryConflictReason::BaseRevisionMismatch => "BASE_REVISION_MISMATCH",
             DeliveryConflictReason::AttemptSubmitted => "ATTEMPT_SUBMITTED",
             DeliveryConflictReason::FinalFlushRequired => "FINAL_FLUSH_REQUIRED",
             DeliveryConflictReason::FinalPayloadHashMismatch => "FINAL_PAYLOAD_HASH_MISMATCH",
@@ -108,11 +114,23 @@ impl DeliveryError {
 
 pub struct DeliveryService {
     pool: MySqlPool,
+    auth_service: Option<AuthService>,
 }
 
 impl DeliveryService {
     pub fn new(pool: MySqlPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            auth_service: None,
+        }
+    }
+
+    pub fn with_auth(pool: MySqlPool, config: AppConfig) -> Self {
+        let auth_service = AuthService::new(pool.clone(), config);
+        Self {
+            pool,
+            auth_service: Some(auth_service),
+        }
     }
 
     pub fn with_runtime_tuning(
@@ -123,6 +141,23 @@ impl DeliveryService {
         _heartbeat_min_write_interval_secs: u64,
     ) -> Self {
         Self::new(pool)
+    }
+
+    pub fn with_auth_runtime_tuning(
+        pool: MySqlPool,
+        config: AppConfig,
+        _idempotency_usable_hours: i64,
+        _submit_idempotency_usable_hours: i64,
+        _violation_idempotency_usable_hours: i64,
+        _heartbeat_min_write_interval_secs: u64,
+    ) -> Self {
+        Self::with_auth(pool, config)
+    }
+
+    fn auth_service(&self) -> Result<&AuthService, DeliveryError> {
+        self.auth_service
+            .as_ref()
+            .ok_or_else(|| DeliveryError::Internal("Auth service is not configured.".to_owned()))
     }
 
     pub async fn get_session_context(
@@ -152,14 +187,43 @@ impl DeliveryService {
             None
         };
 
+        let degraded_live_mode = LiveModeService::new(self.pool.clone())
+            .snapshot(true, Some(schedule_id))
+            .await
+            .map(|state| state.degraded)
+            .map_err(DeliveryError::Database)?;
+
         Ok(StudentSessionContext {
             schedule,
             version,
             runtime,
             attempt,
             attempt_credential: None,
-            degraded_live_mode: false,
+            degraded_live_mode,
         })
+    }
+
+    pub async fn get_session_context_with_attempt_credential(
+        &self,
+        schedule_id: Uuid,
+        wcode: Option<String>,
+        student_key: Option<String>,
+        candidate_id: Option<String>,
+        principal: &AuthenticatedSession,
+        client_session_id: Option<String>,
+    ) -> Result<StudentSessionContext, DeliveryError> {
+        let mut session = self
+            .get_session_context(schedule_id, wcode, student_key, candidate_id)
+            .await?;
+        self.attach_attempt_credential(
+            schedule_id,
+            &mut session,
+            principal,
+            client_session_id,
+            "clientSessionId is required to refresh attempt credentials.",
+        )
+        .await?;
+        Ok(session)
     }
 
     pub async fn get_static_session_context(
@@ -217,7 +281,7 @@ impl DeliveryService {
             )
             .await?;
 
-        let mut integrity = ensure_object(attempt.integrity.clone());
+        let mut integrity = ensure_object(attempt.integrity.clone().into());
         integrity.insert("preCheck".to_owned(), req.pre_check);
         integrity.insert(
             "deviceFingerprintHash".to_owned(),
@@ -234,7 +298,12 @@ impl DeliveryService {
             Value::String("idle".to_owned()),
         );
 
-        let phase = determine_phase(runtime.as_ref(), true, attempt.submitted_at.is_some());
+        let phase = determine_phase(
+            runtime.as_ref(),
+            true,
+            attempt.submitted_at.is_some(),
+            Some(attempt.phase),
+        );
 
         let updated = self
             .update_attempt(
@@ -242,13 +311,13 @@ impl DeliveryService {
                 phase,
                 attempt.current_module.clone(),
                 attempt.current_question_id.clone(),
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-                attempt.violations_snapshot.clone(),
+                attempt.answers.clone().into(),
+                attempt.writing_answers.clone().into(),
+                attempt.flags.clone().into(),
+                attempt.violations_snapshot.clone().into(),
                 Value::Object(integrity),
                 merge_recovery(
-                    attempt.recovery.clone(),
+                    attempt.recovery.clone().into(),
                     json!({
                         "lastRecoveredAt": Value::Null,
                         "lastPersistedAt": Value::Null,
@@ -311,7 +380,8 @@ impl DeliveryService {
 
         let has_precheck = attempt
             .integrity
-            .get("preCheck")
+            .pre_check
+            .as_ref()
             .and_then(|value| value.get("completedAt"))
             .and_then(Value::as_str)
             .is_some();
@@ -319,37 +389,30 @@ impl DeliveryService {
             runtime.as_ref(),
             has_precheck,
             attempt.submitted_at.is_some(),
+            Some(attempt.phase),
         );
         let client_session_id_value = Value::String(req.client_session_id.to_string());
 
-        let needs_client_session_id_in_integrity = attempt
-            .integrity
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .is_none();
+        let needs_client_session_id_in_integrity = attempt.integrity.client_session_id.is_none();
         let next_integrity = if needs_client_session_id_in_integrity {
-            let mut integrity = ensure_object(attempt.integrity.clone());
+            let mut integrity = ensure_object(attempt.integrity.clone().into());
             integrity.insert(
                 "clientSessionId".to_owned(),
                 client_session_id_value.clone(),
             );
             Value::Object(integrity)
         } else {
-            attempt.integrity.clone()
+            attempt.integrity.clone().into()
         };
 
-        let needs_client_session_id_in_recovery = attempt
-            .recovery
-            .get("clientSessionId")
-            .and_then(Value::as_str)
-            .is_none();
+        let needs_client_session_id_in_recovery = attempt.recovery.client_session_id.is_none();
         let next_recovery = if needs_client_session_id_in_recovery {
             merge_recovery(
-                attempt.recovery.clone(),
+                attempt.recovery.clone().into(),
                 json!({ "clientSessionId": req.client_session_id }),
             )
         } else {
-            attempt.recovery.clone()
+            attempt.recovery.clone().into()
         };
 
         let attempt = if attempt.phase != phase
@@ -361,10 +424,10 @@ impl DeliveryService {
                 phase,
                 attempt.current_module.clone(),
                 attempt.current_question_id.clone(),
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-                attempt.violations_snapshot.clone(),
+                attempt.answers.clone().into(),
+                attempt.writing_answers.clone().into(),
+                attempt.flags.clone().into(),
+                attempt.violations_snapshot.clone().into(),
                 next_integrity,
                 next_recovery,
                 attempt.final_submission.clone(),
@@ -381,8 +444,63 @@ impl DeliveryService {
             runtime,
             attempt: Some(attempt),
             attempt_credential: None,
-            degraded_live_mode: false,
+            degraded_live_mode: LiveModeService::new(self.pool.clone())
+                .snapshot(true, Some(schedule_id))
+                .await
+                .map(|state| state.degraded)
+                .map_err(DeliveryError::Database)?,
         })
+    }
+
+    pub async fn bootstrap_with_attempt_credential(
+        &self,
+        schedule_id: Uuid,
+        req: StudentBootstrapRequest,
+        principal: &AuthenticatedSession,
+    ) -> Result<StudentSessionContext, DeliveryError> {
+        let client_session_id = Some(req.client_session_id.clone());
+        let mut session = self.bootstrap(schedule_id, req).await?;
+        self.attach_attempt_credential(
+            schedule_id,
+            &mut session,
+            principal,
+            client_session_id,
+            "clientSessionId is required to issue attempt credentials.",
+        )
+        .await?;
+        Ok(session)
+    }
+
+    async fn attach_attempt_credential(
+        &self,
+        schedule_id: Uuid,
+        session: &mut StudentSessionContext,
+        principal: &AuthenticatedSession,
+        client_session_id: Option<String>,
+        missing_client_session_message: &str,
+    ) -> Result<(), DeliveryError> {
+        let attempt = session.attempt.as_ref().ok_or(DeliveryError::NotFound)?;
+        let fallback_client_session_id = attempt.integrity.client_session_id.clone();
+        let client_session_id = client_session_id
+            .or(fallback_client_session_id)
+            .ok_or_else(|| DeliveryError::Validation(missing_client_session_message.to_owned()))?;
+
+        let token = self
+            .auth_service()?
+            .issue_attempt_token(
+                principal,
+                schedule_id.to_string(),
+                attempt.id.clone(),
+                client_session_id,
+                None,
+                None,
+            )
+            .await
+            .map_err(|err| {
+                DeliveryError::Internal(format!("Unable to issue attempt token: {err}"))
+            })?;
+        session.attempt_credential = Some(token);
+        Ok(())
     }
 
     #[tracing::instrument(
@@ -451,13 +569,8 @@ impl DeliveryService {
         .bind(schedule_id.to_string())
         .fetch_optional(tx.as_mut())
         .await?;
-        let proctor_status: Option<String> =
-            sqlx::query_scalar("SELECT proctor_status FROM student_attempts WHERE id = ?")
-                .bind(&req.attempt_id)
-                .fetch_optional(tx.as_mut())
-                .await?;
         let objective_mutation_gate =
-            objective_mutation_gate(runtime_gate.as_ref(), proctor_status.as_deref());
+            objective_mutation_gate(runtime_gate.as_ref(), Some(attempt.proctor_status));
         let active_section_key = runtime_gate
             .as_ref()
             .and_then(|gate| gate.current_section_key.as_deref());
@@ -494,18 +607,19 @@ impl DeliveryService {
             .build_query_as::<ExistingMutationIdentityRow>()
             .fetch_all(tx.as_mut())
             .await?;
-        let existing_by_id: HashMap<String, (String, Value)> = existing_identities
+        let existing_by_id: HashMap<String, (MutationType, Value)> = existing_identities
             .into_iter()
             .map(|row| (row.client_mutation_id, (row.mutation_type, row.payload)))
             .collect();
 
-        let mut answers = attempt.answers.clone();
-        let mut writing_answers = attempt.writing_answers.clone();
-        let mut flags = attempt.flags.clone();
-        let mut violations_snapshot = attempt.violations_snapshot.clone();
+        let mut answers: Value = attempt.answers.clone().into();
+        let mut writing_answers: Value = attempt.writing_answers.clone().into();
+        let mut flags: Value = attempt.flags.clone().into();
+        let mut violations_snapshot: Value = attempt.violations_snapshot.clone().into();
         let has_precheck = attempt
             .integrity
-            .get("preCheck")
+            .pre_check
+            .as_ref()
             .and_then(|value| value.get("completedAt"))
             .and_then(Value::as_str)
             .is_some();
@@ -513,19 +627,20 @@ impl DeliveryService {
             runtime_gate.as_ref(),
             has_precheck,
             attempt.submitted_at.is_some(),
-            attempt.phase.as_str(),
+            attempt.phase,
         );
         let mut current_module = active_section_key
-            .map(ToOwned::to_owned)
+            .and_then(ModuleType::from_section_key)
             .unwrap_or_else(|| attempt.current_module.clone());
         let mut current_question_id = attempt.current_question_id.clone();
-        let mut recovery = attempt.recovery.clone();
+        let mut recovery: Value = attempt.recovery.clone().into();
 
         let mut new_mutations: Vec<&MutationEnvelope> = Vec::new();
         for mutation in &req.mutations {
+            let mutation_type = mutation.mutation_type();
+            let payload_json = mutation.payload_json();
             if let Some((existing_type, existing_payload)) = existing_by_id.get(&mutation.id) {
-                if existing_type != &mutation.mutation_type || existing_payload != &mutation.payload
-                {
+                if existing_type != &mutation_type || existing_payload != &payload_json {
                     return Err(DeliveryError::Validation(
                         "Mutation id already exists with different contents.".to_owned(),
                     ));
@@ -612,10 +727,10 @@ impl DeliveryService {
             .bind(&req.attempt_id)
             .bind(schedule_id.to_string())
             .bind(&req.client_session_id)
-            .bind(&mutation.mutation_type)
+            .bind(mutation.mutation_type())
             .bind(&mutation.id)
             .bind(next_seq)
-            .bind(&mutation.payload)
+            .bind(mutation.payload_json())
             .bind(mutation.timestamp)
             .bind(attempt.revision + 1)
             .execute(tx.as_mut())
@@ -657,11 +772,14 @@ impl DeliveryService {
                 .fetch_one(tx.as_mut())
                 .await?;
 
-        let mut mutation_types: HashSet<String> = HashSet::new();
+        let mut mutation_types: HashSet<MutationType> = HashSet::new();
         for mutation in &new_mutations {
-            mutation_types.insert(mutation.mutation_type.clone());
+            mutation_types.insert(mutation.mutation_type());
         }
-        let mut mutation_types: Vec<String> = mutation_types.into_iter().collect();
+        let mut mutation_types: Vec<String> = mutation_types
+            .into_iter()
+            .map(|mutation_type| mutation_type.as_str().to_owned())
+            .collect();
         mutation_types.sort();
 
         let seq_from = Some(existing_max_seq.saturating_add(1));
@@ -738,15 +856,15 @@ impl DeliveryService {
         }
 
         let now = Utc::now();
-        let mut integrity = ensure_object(attempt.integrity.clone());
+        let mut integrity = ensure_object(attempt.integrity.clone().into());
         integrity.insert(
             "lastHeartbeatAt".to_owned(),
             Value::String(now.to_rfc3339()),
         );
         integrity.insert(
             "lastHeartbeatStatus".to_owned(),
-            Value::String(match req.event_type.as_str() {
-                "disconnect" | "lost" => "lost".to_owned(),
+            Value::String(match req.event_type {
+                HeartbeatEventType::Disconnect | HeartbeatEventType::Lost => "lost".to_owned(),
                 _ => "ok".to_owned(),
             }),
         );
@@ -754,13 +872,16 @@ impl DeliveryService {
             "clientSessionId".to_owned(),
             Value::String(req.client_session_id.to_string()),
         );
-        if req.event_type == "disconnect" || req.event_type == "lost" {
+        if matches!(
+            req.event_type,
+            HeartbeatEventType::Disconnect | HeartbeatEventType::Lost
+        ) {
             integrity.insert(
                 "lastDisconnectAt".to_owned(),
                 Value::String(now.to_rfc3339()),
             );
         }
-        if req.event_type == "reconnect" {
+        if req.event_type == HeartbeatEventType::Reconnect {
             integrity.insert(
                 "lastReconnectAt".to_owned(),
                 Value::String(now.to_rfc3339()),
@@ -773,23 +894,23 @@ impl DeliveryService {
                 attempt.phase.clone(),
                 attempt.current_module.clone(),
                 attempt.current_question_id.clone(),
-                attempt.answers.clone(),
-                attempt.writing_answers.clone(),
-                attempt.flags.clone(),
-                attempt.violations_snapshot.clone(),
+                attempt.answers.clone().into(),
+                attempt.writing_answers.clone().into(),
+                attempt.flags.clone().into(),
+                attempt.violations_snapshot.clone().into(),
                 Value::Object(integrity),
-                attempt.recovery.clone(),
+                attempt.recovery.clone().into(),
                 attempt.final_submission.clone(),
                 attempt.submitted_at,
             )
             .await?;
 
-        if req.event_type != "heartbeat" {
-            let action_type = match req.event_type.as_str() {
-                "disconnect" => "NETWORK_DISCONNECTED",
-                "reconnect" => "NETWORK_RECONNECTED",
-                "lost" => "HEARTBEAT_LOST",
-                _ => "STUDENT_NETWORK",
+        if req.event_type != HeartbeatEventType::Heartbeat {
+            let action_type = match req.event_type {
+                HeartbeatEventType::Disconnect => "NETWORK_DISCONNECTED",
+                HeartbeatEventType::Reconnect => "NETWORK_RECONNECTED",
+                HeartbeatEventType::Lost => "HEARTBEAT_LOST",
+                HeartbeatEventType::Heartbeat => "STUDENT_NETWORK",
             };
             sqlx::query(
                 r#"
@@ -813,7 +934,7 @@ impl DeliveryService {
             .await?;
         }
 
-        if req.event_type != "heartbeat" {
+        if req.event_type != HeartbeatEventType::Heartbeat {
             sqlx::query(
                 r#"
                 INSERT INTO student_heartbeat_events (
@@ -825,7 +946,7 @@ impl DeliveryService {
             .bind(Uuid::new_v4().to_string())
             .bind(&updated.id)
             .bind(schedule_id.to_string())
-            .bind(&req.event_type)
+            .bind(req.event_type)
             .bind(&req.payload)
             .bind(req.client_timestamp)
             .execute(&self.pool)
@@ -885,7 +1006,7 @@ impl DeliveryService {
             return Ok(response);
         }
 
-        if !matches!(attempt.phase.as_str(), "exam" | "post-exam") {
+        if !matches!(attempt.phase, AttemptPhase::Exam | AttemptPhase::PostExam) {
             return Err(DeliveryError::conflict(
                 "Attempt cannot be submitted before the exam starts.".to_owned(),
             ));
@@ -943,6 +1064,28 @@ impl DeliveryService {
             return Ok(response);
         }
 
+        if let Some(last_seen_revision) = req.last_seen_revision {
+            if attempt.revision != last_seen_revision {
+                return Err(DeliveryError::Conflict {
+                    message: "Attempt revision is stale.".to_owned(),
+                    reason: Some(DeliveryConflictReason::BaseRevisionMismatch),
+                    latest_revision: Some(attempt.revision),
+                    server_accepted_through_seq: None,
+                    active_session_id: None,
+                });
+            }
+        }
+
+        if req.client_final_seq.is_none()
+            && req.server_accepted_through_seq.is_none()
+            && req.final_answer_patch.is_none()
+        {
+            return Err(DeliveryError::conflict_reason(
+                DeliveryConflictReason::FinalFlushRequired,
+                "Submit requires final flush metadata (seq values or final patch).",
+            ));
+        }
+
         let version = self
             .load_version(attempt.published_version_id.clone())
             .await?;
@@ -967,17 +1110,64 @@ impl DeliveryService {
             )));
         }
 
+        let mut final_answers = req
+            .answers
+            .clone()
+            .unwrap_or_else(|| attempt.answers.clone().into());
+        let mut final_writing_answers = req
+            .writing_answers
+            .clone()
+            .unwrap_or_else(|| attempt.writing_answers.clone().into());
+        let mut final_flags = req
+            .flags
+            .clone()
+            .unwrap_or_else(|| attempt.flags.clone().into());
+
+        if let Some(final_patch) = req.final_answer_patch.as_ref() {
+            apply_final_answer_patch(
+                final_patch,
+                &mut final_answers,
+                &mut final_writing_answers,
+                &mut final_flags,
+            )?;
+        }
+
+        if let Some(expected_hash) = req.final_client_snapshot_hash.as_deref() {
+            let canonical = serde_json::to_string(&json!({
+                "answers": final_answers,
+                "writingAnswers": final_writing_answers,
+                "flags": final_flags
+            }))
+            .map_err(|err| {
+                DeliveryError::Internal(format!(
+                    "Failed to serialize final snapshot for hash verification: {err}"
+                ))
+            })?;
+            let computed_hash = sha256_hex(&canonical);
+            if computed_hash != expected_hash {
+                return Err(DeliveryError::conflict_reason(
+                    DeliveryConflictReason::FinalPayloadHashMismatch,
+                    "Final payload hash mismatch.",
+                ));
+            }
+        }
+
         let now = Utc::now();
-        let submission_id = format!("submission-{}", Uuid::new_v4().simple());
+        let submission_id = req
+            .submission_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| format!("submission-{}", Uuid::new_v4().simple()));
         let final_submission = json!({
             "submissionId": submission_id,
             "submittedAt": now,
-            "answers": attempt.answers,
-            "writingAnswers": attempt.writing_answers,
-            "flags": attempt.flags
+            "answers": final_answers,
+            "writingAnswers": final_writing_answers,
+            "flags": final_flags
         });
         let recovery = merge_recovery(
-            attempt.recovery.clone(),
+            attempt.recovery.clone().into(),
             json!({
                 "lastPersistedAt": now,
                 "pendingMutationCount": 0,
@@ -998,7 +1188,7 @@ impl DeliveryService {
             WHERE id = ?
             "#,
         )
-        .bind("post-exam")
+        .bind(AttemptPhase::PostExam)
         .bind(recovery)
         .bind(&final_submission)
         .bind(now)
@@ -1083,7 +1273,7 @@ impl DeliveryService {
         let registration = self
             .load_registration_by_student_key(schedule.id.clone(), student_key)
             .await?;
-        let phase = determine_phase(runtime, false, false);
+        let phase = determine_phase(runtime, false, false, None);
         let current_module = first_enabled_module(&version.config_snapshot);
         let phase_for_insert = phase.clone();
         let current_module_for_insert = current_module.clone();
@@ -1172,8 +1362,8 @@ impl DeliveryService {
     async fn update_attempt(
         &self,
         attempt_id: String,
-        phase: String,
-        current_module: String,
+        phase: AttemptPhase,
+        current_module: ModuleType,
         current_question_id: Option<String>,
         answers: Value,
         writing_answers: Value,
@@ -1501,10 +1691,12 @@ pub(crate) async fn auto_submit_schedule_attempts_in_tx(
             "writingAnswers": attempt.writing_answers,
             "flags": attempt.flags,
             "completionReason": completion_reason,
-            "autoSubmission": true
+            "autoSubmission": true,
+            "proctorStatus": attempt.proctor_status.as_str(),
+            "submissionPolicy": "forced_auto_submit"
         });
         let recovery = merge_recovery(
-            attempt.recovery.clone(),
+            attempt.recovery.clone().into(),
             json!({
                 "lastPersistedAt": now,
                 "pendingMutationCount": 0,
@@ -1525,7 +1717,7 @@ pub(crate) async fn auto_submit_schedule_attempts_in_tx(
             WHERE id = ?
             "#,
         )
-        .bind("post-exam")
+        .bind(AttemptPhase::PostExam)
         .bind(recovery)
         .bind(&final_submission)
         .bind(now)
@@ -1578,10 +1770,12 @@ pub(crate) async fn force_finalize_attempt_if_pending(
         "writingAnswers": attempt.writing_answers,
         "flags": attempt.flags,
         "completionReason": completion_reason,
-        "autoSubmission": true
+        "autoSubmission": true,
+        "proctorStatus": attempt.proctor_status.as_str(),
+        "submissionPolicy": "forced_auto_submit"
     });
     let recovery = merge_recovery(
-        attempt.recovery.clone(),
+        attempt.recovery.clone().into(),
         json!({
             "lastPersistedAt": now,
             "pendingMutationCount": 0,
@@ -1602,7 +1796,7 @@ pub(crate) async fn force_finalize_attempt_if_pending(
         WHERE id = ?
         "#,
     )
-    .bind("post-exam")
+    .bind(AttemptPhase::PostExam)
     .bind(recovery)
     .bind(&final_submission)
     .bind(now)
@@ -1651,39 +1845,51 @@ fn determine_phase(
     runtime: Option<&ExamSessionRuntime>,
     has_precheck: bool,
     submitted: bool,
-) -> String {
+    previous_phase: Option<AttemptPhase>,
+) -> AttemptPhase {
     if submitted {
-        return "post-exam".to_owned();
+        return AttemptPhase::PostExam;
     }
 
     match runtime.map(|snapshot| snapshot.status.clone()) {
         Some(
             ielts_backend_domain::schedule::RuntimeStatus::Live
             | ielts_backend_domain::schedule::RuntimeStatus::Paused,
-        ) => "exam".to_owned(),
+        ) => AttemptPhase::Exam,
         Some(
             ielts_backend_domain::schedule::RuntimeStatus::Completed
             | ielts_backend_domain::schedule::RuntimeStatus::Cancelled,
-        ) => "post-exam".to_owned(),
-        _ if has_precheck => "lobby".to_owned(),
-        _ => "pre-check".to_owned(),
+        ) => {
+            if previous_phase == Some(AttemptPhase::Exam) {
+                AttemptPhase::Exam
+            } else {
+                AttemptPhase::PostExam
+            }
+        }
+        _ if has_precheck => AttemptPhase::Lobby,
+        _ => AttemptPhase::PreCheck,
     }
 }
 
-fn first_enabled_module(config_snapshot: &Value) -> String {
-    for module in ["listening", "reading", "writing", "speaking"] {
+fn first_enabled_module(config_snapshot: &Value) -> ModuleType {
+    for (section_key, module) in [
+        ("listening", ModuleType::Listening),
+        ("reading", ModuleType::Reading),
+        ("writing", ModuleType::Writing),
+        ("speaking", ModuleType::Speaking),
+    ] {
         if config_snapshot
             .get("sections")
-            .and_then(|sections| sections.get(module))
+            .and_then(|sections| sections.get(section_key))
             .and_then(|section| section.get("enabled"))
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            return module.to_owned();
+            return module;
         }
     }
 
-    "listening".to_owned()
+    ModuleType::Listening
 }
 
 fn validate_batch_sequences(mutations: &[MutationEnvelope]) -> Result<(), DeliveryError> {
@@ -1756,7 +1962,7 @@ struct RuntimeGateRow {
 #[derive(sqlx::FromRow)]
 struct ExistingMutationIdentityRow {
     client_mutation_id: String,
-    mutation_type: String,
+    mutation_type: MutationType,
     payload: Value,
 }
 
@@ -1784,15 +1990,28 @@ impl ObjectiveMutationGate {
 
 fn objective_mutation_gate(
     runtime: Option<&RuntimeGateRow>,
-    proctor_status: Option<&str>,
+    proctor_status: Option<ielts_backend_domain::attempt::ProctorStatus>,
 ) -> ObjectiveMutationGate {
-    // Mutation batches are treated as "always persist" input from clients.
-    //
-    // We still *observe* runtime/proctor state in telemetry and derived phase, but we
-    // do not reject objective/writing/flag mutations based on server-side lifecycle
-    // gating. This avoids client-side dead-ends (e.g., late reconnects or clock skew)
-    // where the student is blocked from continuing and their answers are not saved.
-    let _ = (runtime, proctor_status);
+    if matches!(
+        proctor_status,
+        Some(ielts_backend_domain::attempt::ProctorStatus::Paused)
+            | Some(ielts_backend_domain::attempt::ProctorStatus::Terminated)
+    ) {
+        return ObjectiveMutationGate::block(DeliveryConflictReason::AttemptProctorBlocked);
+    }
+
+    if let Some(runtime) = runtime {
+        if runtime.waiting_for_next_section {
+            return ObjectiveMutationGate::block(DeliveryConflictReason::ObjectiveLocked);
+        }
+        if matches!(
+            runtime.status.as_str(),
+            "paused" | "completed" | "cancelled"
+        ) {
+            return ObjectiveMutationGate::block(DeliveryConflictReason::ObjectiveLocked);
+        }
+    }
+
     ObjectiveMutationGate::allow()
 }
 
@@ -1800,25 +2019,23 @@ fn derive_authoritative_phase(
     runtime_gate: Option<&RuntimeGateRow>,
     has_precheck: bool,
     submitted: bool,
-    previous_phase: &str,
-) -> String {
+    previous_phase: AttemptPhase,
+) -> AttemptPhase {
     if submitted {
-        return "post-exam".to_owned();
+        return AttemptPhase::PostExam;
     }
 
     match runtime_gate.map(|gate| gate.status.as_str()) {
-        Some("live" | "paused") => "exam".to_owned(),
+        Some("live" | "paused") => AttemptPhase::Exam,
         Some("completed" | "cancelled") => {
-            // If the attempt is still in "exam" (e.g. client reconnect / late mutations),
-            // keep it as exam so subsequent mutations can continue to apply cleanly.
-            if previous_phase == "exam" {
-                "exam".to_owned()
+            if previous_phase == AttemptPhase::Exam {
+                AttemptPhase::Exam
             } else {
-                "post-exam".to_owned()
+                AttemptPhase::PostExam
             }
         }
-        _ if has_precheck => "lobby".to_owned(),
-        _ => "pre-check".to_owned(),
+        _ if has_precheck => AttemptPhase::Lobby,
+        _ => AttemptPhase::PreCheck,
     }
 }
 
@@ -2086,8 +2303,7 @@ fn index_block(
                             }
                         }
                         register_section(sections, question_id, section_key)?;
-                        constraints
-                            .insert(question_id.to_owned(), AnswerConstraint::Enum(allowed));
+                        constraints.insert(question_id.to_owned(), AnswerConstraint::Enum(allowed));
                     }
                     return Ok(());
                 }
@@ -2368,33 +2584,35 @@ fn apply_mutation(
     writing_answers: &mut Value,
     flags: &mut Value,
     violations_snapshot: &mut Value,
-    _phase: &mut String,
-    _current_module: &mut String,
+    _phase: &mut AttemptPhase,
+    _current_module: &mut ModuleType,
     current_question_id: &mut Option<String>,
     recovery: &mut Value,
 ) -> Result<bool, DeliveryError> {
-    match mutation.mutation_type.as_str() {
-        "answer" => {
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            // Always accept/persist objective mutations; do not block on server lifecycle/section.
-            let _ = objective_mutation_gate;
+    match &mutation.command {
+        MutationCommand::Answer(payload)
+        | MutationCommand::SetScalar(payload)
+        | MutationCommand::SetChoice(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let question_id = payload.question_id.clone();
             if !answer_schema.constraints.contains_key(&question_id) {
                 tracing::warn!(
                     mutation_id = %mutation.id,
-                    mutation_type = "answer",
+                    mutation_type = mutation.mutation_type().as_str(),
                     question_id = %question_id,
                     "mutation references unknown questionId; accepting but ignoring apply"
                 );
                 return Ok(false);
             }
             enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            let value = mutation
-                .payload
-                .get("value")
-                .ok_or_else(|| {
-                    DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
-                })?
-                .clone();
+            let value = payload.value.clone();
             let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
                 DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
             })?;
@@ -2404,10 +2622,102 @@ fn apply_mutation(
             *answers = Value::Object(set_value(next_answers, question_id, value));
             Ok(true)
         }
-        "writing_answer" => {
-            let task_id = required_string(&mutation.payload, "taskId")?;
-            // Always accept/persist writing mutations; do not block on server lifecycle/section.
-            let _ = (objective_mutation_gate, active_section_key);
+        MutationCommand::ClearScalar(payload) | MutationCommand::ClearChoice(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let question_id = payload.question_id.clone();
+            if !answer_schema.constraints.contains_key(&question_id) {
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = mutation.mutation_type().as_str(),
+                    question_id = %question_id,
+                    "mutation references unknown questionId; accepting but ignoring apply"
+                );
+                return Ok(false);
+            }
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
+                DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
+            })?;
+            validate_answer_value(constraint, &Value::Null)?;
+            let next_answers = ensure_object(std::mem::take(answers));
+            *current_question_id = Some(question_id.clone());
+            *answers = Value::Object(set_value(next_answers, question_id, Value::Null));
+            Ok(true)
+        }
+        MutationCommand::SetSlot(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let question_id = payload.question_id.clone();
+            if !answer_schema.constraints.contains_key(&question_id) {
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = mutation.mutation_type().as_str(),
+                    question_id = %question_id,
+                    "mutation references unknown questionId; accepting but ignoring apply"
+                );
+                return Ok(false);
+            }
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let slot_index = usize::try_from(payload.slot_index).unwrap_or(usize::MAX);
+            let value = payload.value.clone();
+            let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
+                DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
+            })?;
+            set_array_slot_answer(answers, &question_id, slot_index, value, constraint)?;
+            *current_question_id = Some(question_id);
+            Ok(true)
+        }
+        MutationCommand::ClearSlot(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let question_id = payload.question_id.clone();
+            if !answer_schema.constraints.contains_key(&question_id) {
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = mutation.mutation_type().as_str(),
+                    question_id = %question_id,
+                    "mutation references unknown questionId; accepting but ignoring apply"
+                );
+                return Ok(false);
+            }
+            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            let slot_index = usize::try_from(payload.slot_index).unwrap_or(usize::MAX);
+            let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
+                DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
+            })?;
+            set_array_slot_answer(answers, &question_id, slot_index, Value::Null, constraint)?;
+            *current_question_id = Some(question_id);
+            Ok(true)
+        }
+        MutationCommand::WritingAnswer(payload) | MutationCommand::SetEssayText(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let task_id = payload.task_id.clone();
             if !writing_task_ids.contains(&task_id) {
                 tracing::warn!(
                     mutation_id = %mutation.id,
@@ -2417,13 +2727,15 @@ fn apply_mutation(
                 );
                 return Ok(false);
             }
-            let value = mutation
-                .payload
-                .get("value")
-                .ok_or_else(|| {
-                    DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
-                })?
-                .clone();
+            if let Some(active_section_key) = active_section_key {
+                if active_section_key != "writing" {
+                    return Err(DeliveryError::conflict_reason(
+                        DeliveryConflictReason::SectionMismatch,
+                        "Mutation belongs to an inactive section.",
+                    ));
+                }
+            }
+            let value = payload.value.clone();
             if !matches!(value, Value::String(_) | Value::Null) {
                 return Err(DeliveryError::Validation(
                     "Writing answers must be a string (or null).".to_owned(),
@@ -2434,10 +2746,48 @@ fn apply_mutation(
             *writing_answers = Value::Object(set_value(next_writing_answers, task_id, value));
             Ok(true)
         }
-        "flag" => {
-            let question_id = required_string(&mutation.payload, "questionId")?;
-            // Always accept/persist flag mutations; do not block on server lifecycle/section.
-            let _ = objective_mutation_gate;
+        MutationCommand::ClearEssayText(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let task_id = payload.task_id.clone();
+            if !writing_task_ids.contains(&task_id) {
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = mutation.mutation_type().as_str(),
+                    task_id = %task_id,
+                    "mutation references unknown taskId; accepting but ignoring apply"
+                );
+                return Ok(false);
+            }
+            if let Some(active_section_key) = active_section_key {
+                if active_section_key != "writing" {
+                    return Err(DeliveryError::conflict_reason(
+                        DeliveryConflictReason::SectionMismatch,
+                        "Mutation belongs to an inactive section.",
+                    ));
+                }
+            }
+            let next_writing_answers = ensure_object(std::mem::take(writing_answers));
+            *current_question_id = Some(task_id.clone());
+            *writing_answers = Value::Object(set_value(next_writing_answers, task_id, Value::Null));
+            Ok(true)
+        }
+        MutationCommand::Flag(payload) => {
+            if !objective_mutation_gate.allowed {
+                return Err(DeliveryError::conflict_reason(
+                    objective_mutation_gate
+                        .reason
+                        .unwrap_or(DeliveryConflictReason::ObjectiveLocked),
+                    "Objective mutations are currently locked.",
+                ));
+            }
+            let question_id = payload.question_id.clone();
             if !answer_schema.sections.contains_key(&question_id) {
                 tracing::warn!(
                     mutation_id = %mutation.id,
@@ -2448,55 +2798,18 @@ fn apply_mutation(
                 return Ok(false);
             }
             enforce_section_membership(active_section_key, &question_id, answer_schema)?;
-            let value = mutation
-                .payload
-                .get("value")
-                .ok_or_else(|| {
-                    DeliveryError::Validation("Mutation payload is missing `value`.".to_owned())
-                })?
-                .clone();
-            let flag_value = value.as_bool().ok_or_else(|| {
+            let flag_value = payload.value.as_bool().ok_or_else(|| {
                 DeliveryError::Validation("Flag values must be boolean.".to_owned())
             })?;
             let next_flags = ensure_object(std::mem::take(flags));
             *flags = Value::Object(set_value(next_flags, question_id, Value::Bool(flag_value)));
             Ok(true)
         }
-        "position" => {
+        MutationCommand::Position(payload) => {
             // Client position is telemetry only. Never treat it as authoritative state.
-            let next_phase = required_string(&mutation.payload, "phase")?;
-            match next_phase.as_str() {
-                "pre-check" | "lobby" | "exam" | "post-exam" => {}
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "Invalid `phase` value in position mutation.".to_owned(),
-                    ));
-                }
-            }
-            let next_module = required_string(&mutation.payload, "currentModule")?;
-            match next_module.as_str() {
-                "listening" | "reading" | "writing" | "speaking" => {}
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "Invalid `currentModule` value in position mutation.".to_owned(),
-                    ));
-                }
-            }
-
-            let next_question_id = mutation
-                .payload
-                .get("currentQuestionId")
-                .cloned()
-                .unwrap_or(Value::Null);
-            let parsed_question_id = match next_question_id {
-                Value::Null => None,
-                Value::String(value) => Some(value),
-                _ => {
-                    return Err(DeliveryError::Validation(
-                        "`currentQuestionId` must be a string or null.".to_owned(),
-                    ));
-                }
-            };
+            let next_phase = payload.phase;
+            let next_module = payload.current_module;
+            let parsed_question_id = payload.current_question_id.clone();
             if let Some(ref value) = parsed_question_id {
                 let known_objective = answer_schema.sections.contains_key(value);
                 let known_writing = writing_task_ids.contains(value);
@@ -2523,17 +2836,13 @@ fn apply_mutation(
             );
             Ok(true)
         }
-        "violation" => {
+        MutationCommand::Violation(payload) => {
             // Payloads vary; apply only when the client includes an authoritative snapshot.
-            if let Some(snapshot) = mutation.payload.get("violations") {
-                if snapshot.is_array() {
-                    *violations_snapshot =
-                        merge_violations_snapshot(violations_snapshot, snapshot, 500)?;
-                } else {
-                    return Err(DeliveryError::Validation(
-                        "`violations` must be an array when present.".to_owned(),
-                    ));
-                }
+            if let Some(snapshot) = payload.violations.as_ref() {
+                let snapshot =
+                    serde_json::to_value(snapshot).unwrap_or_else(|_| Value::Array(Vec::new()));
+                *violations_snapshot =
+                    merge_violations_snapshot(violations_snapshot, &snapshot, 500)?;
             } else {
                 tracing::warn!(
                     mutation_id = %mutation.id,
@@ -2542,15 +2851,69 @@ fn apply_mutation(
             }
             Ok(true)
         }
-        other => {
+        MutationCommand::Precheck(_)
+        | MutationCommand::Network(_)
+        | MutationCommand::Heartbeat(_)
+        | MutationCommand::DeviceFingerprint(_)
+        | MutationCommand::Sync(_) => {
             tracing::warn!(
                 mutation_id = %mutation.id,
-                mutation_type = other,
-                "unrecognized mutation type; stored but not applied"
+                mutation_type = mutation.mutation_type().as_str(),
+                "mutation type is accepted as telemetry only; stored but not applied"
             );
             Ok(false)
         }
     }
+}
+
+fn apply_final_answer_patch(
+    patch: &Value,
+    answers: &mut Value,
+    writing_answers: &mut Value,
+    flags: &mut Value,
+) -> Result<(), DeliveryError> {
+    let Some(patch_map) = patch.as_object() else {
+        return Err(DeliveryError::Validation(
+            "finalAnswerPatch must be a JSON object.".to_owned(),
+        ));
+    };
+
+    if let Some(next_answers) = patch_map.get("answers") {
+        if !next_answers.is_object() {
+            return Err(DeliveryError::Validation(
+                "finalAnswerPatch.answers must be an object.".to_owned(),
+            ));
+        }
+        *answers = merge_object_values(answers, next_answers);
+    }
+    if let Some(next_writing_answers) = patch_map.get("writingAnswers") {
+        if !next_writing_answers.is_object() {
+            return Err(DeliveryError::Validation(
+                "finalAnswerPatch.writingAnswers must be an object.".to_owned(),
+            ));
+        }
+        *writing_answers = merge_object_values(writing_answers, next_writing_answers);
+    }
+    if let Some(next_flags) = patch_map.get("flags") {
+        if !next_flags.is_object() {
+            return Err(DeliveryError::Validation(
+                "finalAnswerPatch.flags must be an object.".to_owned(),
+            ));
+        }
+        *flags = merge_object_values(flags, next_flags);
+    }
+
+    Ok(())
+}
+
+fn merge_object_values(base: &Value, patch: &Value) -> Value {
+    let mut merged = ensure_object(base.clone());
+    if let Some(patch_map) = patch.as_object() {
+        for (key, value) in patch_map {
+            merged.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(merged)
 }
 
 fn merge_recovery(existing: Value, patch: Value) -> Value {
@@ -2567,17 +2930,40 @@ fn ensure_object(value: Value) -> Map<String, Value> {
     value.as_object().cloned().unwrap_or_default()
 }
 
-fn required_string(payload: &Value, field: &str) -> Result<String, DeliveryError> {
-    payload
-        .get(field)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| DeliveryError::Validation(format!("Mutation payload is missing `{field}`.")))
-}
-
 fn set_value(mut object: Map<String, Value>, key: String, value: Value) -> Map<String, Value> {
     object.insert(key, value);
     object
+}
+
+fn set_array_slot_answer(
+    answers: &mut Value,
+    question_id: &str,
+    slot_index: usize,
+    slot_value: Value,
+    constraint: &AnswerConstraint,
+) -> Result<(), DeliveryError> {
+    let mut next_answers = ensure_object(std::mem::take(answers));
+    let existing_value = next_answers
+        .remove(question_id)
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+    let mut array = match existing_value {
+        Value::Array(values) => values,
+        Value::Null => Vec::new(),
+        _ => {
+            return Err(DeliveryError::Validation(
+                "Slot mutation requires an array-backed answer field.".to_owned(),
+            ));
+        }
+    };
+    while array.len() <= slot_index {
+        array.push(Value::Null);
+    }
+    array[slot_index] = slot_value;
+    let updated_value = Value::Array(array);
+    validate_answer_value(constraint, &updated_value)?;
+    next_answers.insert(question_id.to_owned(), updated_value);
+    *answers = Value::Object(next_answers);
+    Ok(())
 }
 
 fn enforce_section_membership(
@@ -2585,9 +2971,6 @@ fn enforce_section_membership(
     question_id: &str,
     answer_schema: &AnswerSchema,
 ) -> Result<(), DeliveryError> {
-    // Section membership is best-effort validation only. We keep the "unknown question"
-    // validation, but we do not reject mutations when the runtime has moved on or the
-    // client is out of sync with server-side section state.
     let expected = answer_schema
         .sections
         .get(question_id)
@@ -2597,12 +2980,12 @@ fn enforce_section_membership(
         })?;
     if let Some(active_section_key) = active_section_key {
         if expected != active_section_key {
-            tracing::warn!(
-                question_id = question_id,
-                expected_section_key = expected,
-                active_section_key = active_section_key,
-                "mutation section mismatch; accepting mutation anyway"
-            );
+            return Err(DeliveryError::conflict_reason(
+                DeliveryConflictReason::SectionMismatch,
+                format!(
+                    "Mutation section mismatch for question `{question_id}` (expected `{expected}`, active `{active_section_key}`)."
+                ),
+            ));
         }
     }
     Ok(())
@@ -2651,6 +3034,7 @@ fn violation_timestamp_key(value: &Value) -> i128 {
 mod tests {
     use super::*;
     use chrono::TimeZone;
+    use ielts_backend_domain::attempt::MutationCommand;
     use ielts_backend_domain::schedule::RuntimeStatus;
     use serde_json::json;
 
@@ -2679,40 +3063,90 @@ mod tests {
         }
     }
 
-    #[test]
-    fn determine_phase_follows_lifecycle_progression() {
-        assert_eq!(determine_phase(None, false, false), "pre-check");
-        assert_eq!(determine_phase(None, true, false), "lobby");
-
-        let live = runtime_with_status(RuntimeStatus::Live);
-        assert_eq!(determine_phase(Some(&live), false, false), "exam");
-
-        let paused = runtime_with_status(RuntimeStatus::Paused);
-        assert_eq!(determine_phase(Some(&paused), true, false), "exam");
-
-        let completed = runtime_with_status(RuntimeStatus::Completed);
-        assert_eq!(determine_phase(Some(&completed), true, false), "post-exam");
-
-        assert_eq!(determine_phase(None, true, true), "post-exam");
+    fn command(mutation_type: MutationType, payload: Value) -> MutationCommand {
+        serde_json::from_value(json!({
+            "mutationType": mutation_type.as_str(),
+            "payload": payload
+        }))
+        .expect("valid mutation command")
     }
 
     #[test]
-    fn objective_mutations_are_allowed_regardless_of_runtime_or_proctor_state() {
+    fn determine_phase_follows_lifecycle_progression() {
+        assert_eq!(
+            determine_phase(None, false, false, None),
+            AttemptPhase::PreCheck
+        );
+        assert_eq!(
+            determine_phase(None, true, false, None),
+            AttemptPhase::Lobby
+        );
+
+        let live = runtime_with_status(RuntimeStatus::Live);
+        assert_eq!(
+            determine_phase(Some(&live), false, false, None),
+            AttemptPhase::Exam
+        );
+
+        let paused = runtime_with_status(RuntimeStatus::Paused);
+        assert_eq!(
+            determine_phase(Some(&paused), true, false, None),
+            AttemptPhase::Exam
+        );
+
+        let completed = runtime_with_status(RuntimeStatus::Completed);
+        assert_eq!(
+            determine_phase(Some(&completed), true, false, Some(AttemptPhase::Exam)),
+            AttemptPhase::Exam
+        );
+        assert_eq!(
+            determine_phase(Some(&completed), true, false, Some(AttemptPhase::Lobby)),
+            AttemptPhase::PostExam
+        );
+
+        assert_eq!(
+            determine_phase(None, true, true, None),
+            AttemptPhase::PostExam
+        );
+    }
+
+    #[test]
+    fn objective_mutation_gate_blocks_when_runtime_or_proctor_disallow() {
         let base = RuntimeGateRow {
             status: "paused".to_owned(),
             actual_end_at: None,
             current_section_key: Some("reading".to_owned()),
             waiting_for_next_section: false,
         };
-        assert!(objective_mutation_gate(Some(&base), None).allowed);
+        let paused_gate = objective_mutation_gate(
+            Some(&base),
+            Some(ielts_backend_domain::attempt::ProctorStatus::Active),
+        );
+        assert!(!paused_gate.allowed);
+        assert_eq!(
+            paused_gate.reason,
+            Some(DeliveryConflictReason::ObjectiveLocked)
+        );
 
         let live = RuntimeGateRow {
             status: "live".to_owned(),
             ..base
         };
-        assert!(objective_mutation_gate(Some(&live), None).allowed);
+        let live_gate = objective_mutation_gate(
+            Some(&live),
+            Some(ielts_backend_domain::attempt::ProctorStatus::Active),
+        );
+        assert!(live_gate.allowed);
 
-        assert!(objective_mutation_gate(Some(&live), Some("paused")).allowed);
+        let blocked_by_proctor = objective_mutation_gate(
+            Some(&live),
+            Some(ielts_backend_domain::attempt::ProctorStatus::Paused),
+        );
+        assert!(!blocked_by_proctor.allowed);
+        assert_eq!(
+            blocked_by_proctor.reason,
+            Some(DeliveryConflictReason::AttemptProctorBlocked)
+        );
     }
 
     #[test]
@@ -2721,9 +3155,11 @@ mod tests {
             id: "m1".to_owned(),
             seq: 1,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-            mutation_type: "answer".to_owned(),
+            command: command(
+                MutationType::Answer,
+                json!({"questionId": "q1", "value": "A"}),
+            ),
             base_revision: None,
-            payload: json!({"questionId": "q1", "value": "A"}),
         };
 
         let empty = MutationEnvelope {
@@ -2767,8 +3203,8 @@ mod tests {
         let mut writing_answers = json!({});
         let mut flags = json!({});
         let mut violations_snapshot = json!([]);
-        let mut phase = "exam".to_owned();
-        let mut current_module = "reading".to_owned();
+        let mut phase = AttemptPhase::Exam;
+        let mut current_module = ModuleType::Reading;
         let mut current_question_id = None;
         let mut recovery = json!({});
 
@@ -2777,9 +3213,11 @@ mod tests {
                 id: "m1".to_owned(),
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-                mutation_type: "answer".to_owned(),
+                command: command(
+                    MutationType::Answer,
+                    json!({"questionId": "q1", "value": "A"})
+                ),
                 base_revision: None,
-                payload: json!({"questionId": "q1", "value": "A"}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -2805,9 +3243,11 @@ mod tests {
                 id: "m2".to_owned(),
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 5).unwrap(),
-                mutation_type: "writing_answer".to_owned(),
+                command: command(
+                    MutationType::WritingAnswer,
+                    json!({"taskId": "task-1", "value": "Draft 1"}),
+                ),
                 base_revision: None,
-                payload: json!({"taskId": "task-1", "value": "Draft 1"}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -2833,9 +3273,11 @@ mod tests {
                 id: "m3".to_owned(),
                 seq: 3,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 10).unwrap(),
-                mutation_type: "flag".to_owned(),
+                command: command(
+                    MutationType::Flag,
+                    json!({"questionId": "q1", "value": true})
+                ),
                 base_revision: None,
-                payload: json!({"questionId": "q1", "value": true}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -2862,9 +3304,11 @@ mod tests {
             id: "m".to_owned(),
             seq: 0,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-            mutation_type: "answer".to_owned(),
+            command: command(
+                MutationType::Answer,
+                json!({"questionId": "q1", "value": "A"}),
+            ),
             base_revision: None,
-            payload: json!({"questionId": "q1", "value": "A"}),
         };
         let mut a = base.clone();
         a.seq = 2;
@@ -2885,8 +3329,8 @@ mod tests {
         let mut writing_answers = json!({});
         let mut flags = json!({});
         let mut violations_snapshot = json!([]);
-        let mut phase = "pre-check".to_owned();
-        let mut current_module = "listening".to_owned();
+        let mut phase = AttemptPhase::PreCheck;
+        let mut current_module = ModuleType::Listening;
         let mut current_question_id = None;
         let mut recovery = json!({});
 
@@ -2895,9 +3339,11 @@ mod tests {
                 id: "m-pos".to_owned(),
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-                mutation_type: "position".to_owned(),
+                command: command(
+                    MutationType::Position,
+                    json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q1"}),
+                ),
                 base_revision: None,
-                payload: json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q1"}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -2914,8 +3360,8 @@ mod tests {
         )
         .expect("apply position"));
 
-        assert_eq!(phase, "pre-check");
-        assert_eq!(current_module, "listening");
+        assert_eq!(phase, AttemptPhase::PreCheck);
+        assert_eq!(current_module, ModuleType::Listening);
         assert_eq!(current_question_id, None);
         assert_eq!(recovery["clientPosition"]["phase"], "exam");
         assert_eq!(recovery["clientPosition"]["currentModule"], "reading");
@@ -2934,8 +3380,8 @@ mod tests {
         let mut writing_answers = json!({});
         let mut flags = json!({"q1": true});
         let mut violations_snapshot = json!([]);
-        let mut phase = "exam".to_owned();
-        let mut current_module = "reading".to_owned();
+        let mut phase = AttemptPhase::Exam;
+        let mut current_module = ModuleType::Reading;
         let mut current_question_id = Some("q1".to_owned());
         let mut recovery = json!({});
 
@@ -2944,9 +3390,11 @@ mod tests {
                 id: "m-unknown-answer".to_owned(),
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-                mutation_type: "answer".to_owned(),
+                command: command(
+                    MutationType::Answer,
+                    json!({"questionId": "q2", "value": "B"}),
+                ),
                 base_revision: None,
-                payload: json!({"questionId": "q2", "value": "B"}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -2971,9 +3419,11 @@ mod tests {
                 id: "m-unknown-flag".to_owned(),
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
-                mutation_type: "flag".to_owned(),
+                command: command(
+                    MutationType::Flag,
+                    json!({"questionId": "q2", "value": false}),
+                ),
                 base_revision: None,
-                payload: json!({"questionId": "q2", "value": false}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -2997,9 +3447,11 @@ mod tests {
                 id: "m-unknown-writing".to_owned(),
                 seq: 3,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 2).unwrap(),
-                mutation_type: "writing_answer".to_owned(),
+                command: command(
+                    MutationType::WritingAnswer,
+                    json!({"taskId": "task-unknown", "value": "Draft"}),
+                ),
                 base_revision: None,
-                payload: json!({"taskId": "task-unknown", "value": "Draft"}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -3023,9 +3475,11 @@ mod tests {
                 id: "m-unknown-position".to_owned(),
                 seq: 4,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 3).unwrap(),
-                mutation_type: "position".to_owned(),
+                command: command(
+                    MutationType::Position,
+                    json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q2"}),
+                ),
                 base_revision: None,
-                payload: json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q2"}),
             },
             &answer_schema,
             &writing_task_ids,
@@ -3062,8 +3516,8 @@ mod tests {
         let mut writing_answers = json!({});
         let mut flags = json!({});
         let mut violations_snapshot = json!([]);
-        let mut phase = "exam".to_owned();
-        let mut current_module = "reading".to_owned();
+        let mut phase = AttemptPhase::Exam;
+        let mut current_module = ModuleType::Reading;
         let mut current_question_id = Some("sentence-1:blank-1".to_owned());
         let mut recovery = json!({});
 
@@ -3072,13 +3526,15 @@ mod tests {
                 id: "m-pos-slot".to_owned(),
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
-                mutation_type: "position".to_owned(),
+                command: command(
+                    MutationType::Position,
+                    json!({
+                        "phase": "exam",
+                        "currentModule": "reading",
+                        "currentQuestionId": "sentence-1:blank-1"
+                    }),
+                ),
                 base_revision: None,
-                payload: json!({
-                    "phase": "exam",
-                    "currentModule": "reading",
-                    "currentQuestionId": "sentence-1:blank-1"
-                }),
             },
             &answer_schema,
             &writing_task_ids,
@@ -3100,12 +3556,14 @@ mod tests {
                 id: "m-flag-slot".to_owned(),
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
-                mutation_type: "flag".to_owned(),
+                command: command(
+                    MutationType::Flag,
+                    json!({
+                        "questionId": "sentence-1:blank-1",
+                        "value": true
+                    }),
+                ),
                 base_revision: None,
-                payload: json!({
-                    "questionId": "sentence-1:blank-1",
-                    "value": true
-                }),
             },
             &answer_schema,
             &writing_task_ids,
@@ -3127,6 +3585,118 @@ mod tests {
             "sentence-1:blank-1",
         );
         assert_eq!(flags["sentence-1:blank-1"], true);
+    }
+
+    #[test]
+    fn apply_mutation_supports_command_style_set_and_clear_operations() {
+        let answer_schema = AnswerSchema {
+            constraints: HashMap::from_iter([
+                (
+                    "sentence-1".to_owned(),
+                    AnswerConstraint::ArrayText { max_len: 2 },
+                ),
+                (
+                    "q1".to_owned(),
+                    AnswerConstraint::Enum(
+                        ["A", "B", "C"]
+                            .into_iter()
+                            .map(|value| value.to_owned())
+                            .collect(),
+                    ),
+                ),
+            ]),
+            sections: HashMap::from_iter([
+                ("sentence-1".to_owned(), "reading".to_owned()),
+                ("q1".to_owned(), "reading".to_owned()),
+            ]),
+        };
+        let writing_task_ids: HashSet<String> = ["task1".to_owned()].into_iter().collect();
+        let mut answers = json!({});
+        let mut writing_answers = json!({});
+        let mut flags = json!({});
+        let mut violations_snapshot = json!([]);
+        let mut phase = AttemptPhase::Exam;
+        let mut current_module = ModuleType::Reading;
+        let mut current_question_id = None;
+        let mut recovery = json!({});
+
+        assert!(apply_mutation(
+            &MutationEnvelope {
+                id: "m-slot".to_owned(),
+                seq: 1,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+                command: command(
+                    MutationType::SetSlot,
+                    json!({"questionId": "sentence-1", "slotIndex": 1, "value": "fox"}),
+                ),
+                base_revision: None,
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("reading"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("set slot"));
+        assert_eq!(answers["sentence-1"][1], "fox");
+
+        assert!(apply_mutation(
+            &MutationEnvelope {
+                id: "m-choice".to_owned(),
+                seq: 2,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
+                command: command(
+                    MutationType::SetChoice,
+                    json!({"questionId": "q1", "value": "B"})
+                ),
+                base_revision: None,
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("reading"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("set choice"));
+        assert_eq!(answers["q1"], "B");
+
+        assert!(apply_mutation(
+            &MutationEnvelope {
+                id: "m-clear-essay".to_owned(),
+                seq: 3,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 2).unwrap(),
+                command: command(MutationType::ClearEssayText, json!({"taskId": "task1"})),
+                base_revision: None,
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("writing"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("clear essay"));
+        assert_eq!(writing_answers["task1"], Value::Null);
     }
 
     #[test]
@@ -3323,5 +3893,24 @@ mod tests {
         let completion = compute_answer_completion(&schema, &answers);
         assert_eq!(completion.total_slots, 1 + 2 + 2 + 3);
         assert_eq!(completion.answered_slots, 1 + 1 + 1 + 1);
+    }
+
+    #[test]
+    fn mutation_command_deserialization_rejects_missing_required_fields() {
+        let parsed: Result<MutationCommand, _> = serde_json::from_value(json!({
+            "mutationType": "SetSlot",
+            "payload": { "questionId": "q1" }
+        }));
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn mutation_command_deserialization_accepts_telemetry_mutations() {
+        let parsed: MutationCommand = serde_json::from_value(json!({
+            "mutationType": "network",
+            "payload": { "status": "online", "rttMs": 24 }
+        }))
+        .expect("shape accepted");
+        assert!(matches!(parsed, MutationCommand::Network(_)));
     }
 }

@@ -525,6 +525,18 @@ describe('useProctorRouteController backend mode', () => {
         createdAt: '2026-01-01T09:00:00.000Z',
         createdBy: 'Admin',
       },
+      {
+        id: 'rule-notify',
+        scheduleId: 'sched-1',
+        triggerType: 'violation_count',
+        threshold: 1,
+        specificViolationType: null,
+        specificSeverity: null,
+        action: 'notify_proctor',
+        isEnabled: true,
+        createdAt: '2026-01-01T09:00:00.000Z',
+        createdBy: 'Admin',
+      },
     ];
 
     const summaries = [
@@ -561,7 +573,7 @@ describe('useProctorRouteController backend mode', () => {
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
       expect(result.current.sessions).toHaveLength(1);
-      expect(result.current.violationRules).toHaveLength(3);
+      expect(result.current.violationRules).toHaveLength(4);
     });
 
     await act(async () => {
@@ -578,6 +590,9 @@ describe('useProctorRouteController backend mode', () => {
     expect(pauseSpy).toHaveBeenCalledWith('attempt-1', 'system');
     expect(terminateSpy).toHaveBeenCalledTimes(1);
     expect(terminateSpy).toHaveBeenCalledWith('attempt-1', 'system');
+    await waitFor(() => {
+      expect(result.current.alerts.some((alert) => alert.type === 'RULE_NOTIFY_PROCTOR')).toBe(true);
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(fetchMock).toHaveBeenNthCalledWith(

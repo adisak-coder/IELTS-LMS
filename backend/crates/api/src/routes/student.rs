@@ -9,12 +9,16 @@ use ielts_backend_application::delivery::{
     DeliveryConflictReason, DeliveryError, DeliveryService, MutationBatchResponseMode,
 };
 use ielts_backend_domain::attempt::{
-    MutationEnvelope, StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
+    HeartbeatEventType, MutationCommand, MutationEnvelope, QuestionIdMutationPayload,
+    QuestionSlotIdMutationPayload, QuestionSlotValueMutationPayload, QuestionValueMutationPayload,
+    StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
     StudentHeartbeatResponse, StudentLiveSessionContext, StudentMutationBatchRequest,
     StudentMutationBatchResponse, StudentPrecheckRequest, StudentSessionContext,
     StudentSessionQuery, StudentStaticSessionContext, StudentSubmitRequest, StudentSubmitResponse,
+    TaskIdMutationPayload, TaskValueMutationPayload,
 };
 use ielts_backend_domain::auth::UserRole;
+use ielts_backend_domain::schedule::AuditActionType;
 use serde_json::{json, Value};
 use sqlx::query_scalar;
 use std::time::Instant;
@@ -32,8 +36,9 @@ use crate::{
 };
 
 fn delivery_service(state: &AppState) -> DeliveryService {
-    DeliveryService::with_runtime_tuning(
+    DeliveryService::with_auth_runtime_tuning(
         state.db_pool(),
+        state.config.clone(),
         state.config.retention_idempotency_usable_hours,
         state.config.retention_idempotency_submit_usable_hours,
         state.config.retention_idempotency_violation_usable_hours,
@@ -64,55 +69,25 @@ pub async fn get_student_session(
         None
     };
 
-    let mut session = service
-        .get_session_context(schedule_id, wcode, access.legacy_student_key.clone(), None)
-        .await?;
-
-    if query.refresh_attempt_credential.unwrap_or(false) {
-        let attempt = session.attempt.as_ref().ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "NOT_FOUND",
-                "Student attempt not found for this session.",
+    let session = if query.refresh_attempt_credential.unwrap_or(false) {
+        service
+            .get_session_context_with_attempt_credential(
+                schedule_id,
+                wcode,
+                access.legacy_student_key.clone(),
+                None,
+                &ielts_backend_application::auth::AuthenticatedSession {
+                    user: principal.user.clone(),
+                    session: principal.session.clone(),
+                },
+                query.client_session_id.clone(),
             )
-        })?;
-
-        let fallback_client_session_id = attempt
-            .integrity
-            .get("clientSessionId")
-            .and_then(|value| value.as_str())
-            .map(ToOwned::to_owned);
-
-        let client_session_id = query
-            .client_session_id
-            .clone()
-            .or(fallback_client_session_id)
-            .ok_or_else(|| {
-                ApiError::new(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    "VALIDATION_ERROR",
-                    "clientSessionId is required to refresh attempt credentials.",
-                )
-            })?;
-
-        let auth_service = AuthService::new(state.db_pool(), state.config.clone());
-        session.attempt_credential = Some(
-            auth_service
-                .issue_attempt_token(
-                    &ielts_backend_application::auth::AuthenticatedSession {
-                        user: principal.user.clone(),
-                        session: principal.session.clone(),
-                    },
-                    schedule_id.to_string(),
-                    attempt.id.clone(),
-                    client_session_id,
-                    None,
-                    None,
-                )
-                .await
-                .map_err(map_auth_error)?,
-        );
-    }
+            .await?
+    } else {
+        service
+            .get_session_context(schedule_id, wcode, access.legacy_student_key.clone(), None)
+            .await?
+    };
     state
         .telemetry
         .observe_db_operation("delivery.get_session_context", started.elapsed());
@@ -214,14 +189,14 @@ enum ApiMutationCommandPayload {
         #[serde(rename = "questionId")]
         question_id: String,
         #[serde(rename = "slotIndex")]
-        slot_index: i32,
+        slot_index: u32,
         value: String,
     },
     ClearSlot {
         #[serde(rename = "questionId")]
         question_id: String,
         #[serde(rename = "slotIndex")]
-        slot_index: i32,
+        slot_index: u32,
     },
     SetScalar {
         #[serde(rename = "questionId")]
@@ -253,66 +228,57 @@ enum ApiMutationCommandPayload {
 }
 
 impl ApiMutationCommandPayload {
-    fn mutation_type(&self) -> &'static str {
-        match self {
-            Self::SetSlot { .. } => "SetSlot",
-            Self::ClearSlot { .. } => "ClearSlot",
-            Self::SetScalar { .. } => "SetScalar",
-            Self::ClearScalar { .. } => "ClearScalar",
-            Self::SetChoice { .. } => "SetChoice",
-            Self::ClearChoice { .. } => "ClearChoice",
-            Self::SetEssayText { .. } => "SetEssayText",
-            Self::ClearEssayText { .. } => "ClearEssayText",
-        }
-    }
-
-    fn payload(&self, base_revision: i32) -> Value {
+    fn command(&self) -> MutationCommand {
         match self {
             Self::SetSlot {
                 question_id,
                 slot_index,
                 value,
-            } => json!({
-                "baseRevision": base_revision,
-                "questionId": question_id,
-                "slotIndex": slot_index,
-                "value": value
+            } => MutationCommand::SetSlot(QuestionSlotValueMutationPayload {
+                question_id: question_id.clone(),
+                slot_index: *slot_index,
+                value: Value::String(value.clone()),
             }),
             Self::ClearSlot {
                 question_id,
                 slot_index,
-            } => json!({
-                "baseRevision": base_revision,
-                "questionId": question_id,
-                "slotIndex": slot_index
+            } => MutationCommand::ClearSlot(QuestionSlotIdMutationPayload {
+                question_id: question_id.clone(),
+                slot_index: *slot_index,
             }),
-            Self::SetScalar { question_id, value } => json!({
-                "baseRevision": base_revision,
-                "questionId": question_id,
-                "value": value
-            }),
-            Self::ClearScalar { question_id } => json!({
-                "baseRevision": base_revision,
-                "questionId": question_id
-            }),
-            Self::SetChoice { question_id, value } => json!({
-                "baseRevision": base_revision,
-                "questionId": question_id,
-                "value": value
-            }),
-            Self::ClearChoice { question_id } => json!({
-                "baseRevision": base_revision,
-                "questionId": question_id
-            }),
-            Self::SetEssayText { task_id, value } => json!({
-                "baseRevision": base_revision,
-                "taskId": task_id,
-                "value": value
-            }),
-            Self::ClearEssayText { task_id } => json!({
-                "baseRevision": base_revision,
-                "taskId": task_id
-            }),
+            Self::SetScalar { question_id, value } => {
+                MutationCommand::SetScalar(QuestionValueMutationPayload {
+                    question_id: question_id.clone(),
+                    value: Value::String(value.clone()),
+                })
+            }
+            Self::ClearScalar { question_id } => {
+                MutationCommand::ClearScalar(QuestionIdMutationPayload {
+                    question_id: question_id.clone(),
+                })
+            }
+            Self::SetChoice { question_id, value } => {
+                MutationCommand::SetChoice(QuestionValueMutationPayload {
+                    question_id: question_id.clone(),
+                    value: value.clone(),
+                })
+            }
+            Self::ClearChoice { question_id } => {
+                MutationCommand::ClearChoice(QuestionIdMutationPayload {
+                    question_id: question_id.clone(),
+                })
+            }
+            Self::SetEssayText { task_id, value } => {
+                MutationCommand::SetEssayText(TaskValueMutationPayload {
+                    task_id: task_id.clone(),
+                    value: Value::String(value.clone()),
+                })
+            }
+            Self::ClearEssayText { task_id } => {
+                MutationCommand::ClearEssayText(TaskIdMutationPayload {
+                    task_id: task_id.clone(),
+                })
+            }
         }
     }
 }
@@ -428,10 +394,8 @@ pub async fn bootstrap_student_session(
         None
     };
 
-    let client_session_id = req.client_session_id.clone();
-
-    let mut session = service
-        .bootstrap(
+    let session = service
+        .bootstrap_with_attempt_credential(
             schedule_id,
             StudentBootstrapRequest {
                 wcode,
@@ -442,32 +406,12 @@ pub async fn bootstrap_student_session(
                 candidate_email: access.email.clone(),
                 client_session_id: req.client_session_id,
             },
+            &ielts_backend_application::auth::AuthenticatedSession {
+                user: principal.user.clone(),
+                session: principal.session.clone(),
+            },
         )
         .await?;
-    let auth_service = AuthService::new(state.db_pool(), state.config.clone());
-    let attempt = session.attempt.as_ref().ok_or_else(|| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "INTERNAL_ERROR",
-            "Missing student attempt context.",
-        )
-    })?;
-    session.attempt_credential = Some(
-        auth_service
-            .issue_attempt_token(
-                &ielts_backend_application::auth::AuthenticatedSession {
-                    user: principal.user.clone(),
-                    session: principal.session.clone(),
-                },
-                schedule_id.to_string(),
-                attempt.id.clone(),
-                client_session_id,
-                None,
-                None,
-            )
-            .await
-            .map_err(map_auth_error)?,
-    );
     state
         .telemetry
         .observe_db_operation("delivery.bootstrap", started.elapsed());
@@ -556,9 +500,8 @@ pub async fn apply_mutation_batch(
                 id: mutation.mutation_id.clone(),
                 seq: (index + 1) as i64,
                 timestamp: Utc::now(),
-                mutation_type: mutation.command.mutation_type().to_owned(),
+                command: mutation.command.command(),
                 base_revision: Some(mutation.base_revision),
-                payload: mutation.command.payload(mutation.base_revision),
             })
             .collect(),
     };
@@ -652,8 +595,8 @@ pub async fn record_heartbeat(
     let service = delivery_service(&state);
     let started = Instant::now();
     let event_type = req.event_type.clone();
-    let ack_only =
-        event_type == "heartbeat" && query.response_mode != Some(HeartbeatResponseMode::Full);
+    let ack_only = event_type == HeartbeatEventType::Heartbeat
+        && query.response_mode != Some(HeartbeatResponseMode::Full);
     let attempt = service.record_heartbeat(schedule_id, req).await?;
     let runtime = if query.response_mode == Some(HeartbeatResponseMode::Full) {
         service
@@ -667,12 +610,12 @@ pub async fn record_heartbeat(
     state
         .telemetry
         .observe_db_operation("delivery.record_heartbeat", started.elapsed());
-    if event_type != "heartbeat" {
-        let event = match event_type.as_str() {
-            "disconnect" => "network_disconnected",
-            "reconnect" => "network_reconnected",
-            "lost" => "heartbeat_lost",
-            _ => "student_network",
+    if event_type != HeartbeatEventType::Heartbeat {
+        let event = match event_type {
+            HeartbeatEventType::Disconnect => "network_disconnected",
+            HeartbeatEventType::Reconnect => "network_reconnected",
+            HeartbeatEventType::Lost => "heartbeat_lost",
+            HeartbeatEventType::Heartbeat => "student_network",
         };
         state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
             kind: "schedule_alert".to_owned(),
@@ -786,7 +729,7 @@ pub async fn record_audit(
     .await
     .map_err(map_db_error)?;
 
-    if req.action_type == "VIOLATION_DETECTED" {
+    if matches!(req.action_type, AuditActionType::ViolationDetected) {
         let violation_id = violation_business_id_from_payload(&payload_value)?;
         let violation_type = payload_value
             .get("violationType")
@@ -1268,7 +1211,7 @@ mod tests {
         assert_eq!(parsed.mutations.len(), 1);
         let command = &parsed.mutations[0];
         assert_eq!(command.base_revision, 7);
-        assert_eq!(command.command.mutation_type(), "SetSlot");
+        assert_eq!(command.command.mutation_type(), MutationType::SetSlot);
         assert_eq!(
             command.command.payload(command.base_revision),
             json!({

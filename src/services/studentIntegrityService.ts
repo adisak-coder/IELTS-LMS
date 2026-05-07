@@ -53,6 +53,26 @@ function getSecurityConfig(
   return isExamConfig(config) ? config.security : config;
 }
 
+function resolveHeartbeatThresholds(
+  config?: StudentIntegritySecurityPolicy | ExamConfig | ExamConfig['security'] | null,
+): { warningThreshold: number; hardBlockThreshold: number } {
+  const security = getSecurityConfig(config);
+  const policy = getStudentIntegritySecurityPolicy(config);
+  const thresholdOverrides = security as {
+    heartbeatWarningThreshold?: number;
+    heartbeatHardBlockThreshold?: number;
+  } | undefined;
+  const hardBlockThreshold =
+    thresholdOverrides?.heartbeatHardBlockThreshold ?? policy.heartbeatMissThreshold;
+  const warningThreshold =
+    thresholdOverrides?.heartbeatWarningThreshold ?? Math.max(1, hardBlockThreshold - 1);
+
+  return {
+    warningThreshold,
+    hardBlockThreshold,
+  };
+}
+
 export function getStudentIntegritySecurityPolicy(
   config?: StudentIntegritySecurityPolicy | ExamConfig | ExamConfig['security'] | null,
 ): StudentIntegritySecurityPolicy {
@@ -90,7 +110,14 @@ export function getHeartbeatLossTimeoutMs(
   config?: StudentIntegritySecurityPolicy | ExamConfig | ExamConfig['security'] | null,
 ): number {
   const policy = getStudentIntegritySecurityPolicy(config);
-  return policy.heartbeatIntervalSeconds * policy.heartbeatMissThreshold * 1_000;
+  const thresholds = resolveHeartbeatThresholds(config);
+  return policy.heartbeatIntervalSeconds * thresholds.hardBlockThreshold * 1_000;
+}
+
+export function getHeartbeatEnforcementThresholds(
+  config?: StudentIntegritySecurityPolicy | ExamConfig | ExamConfig['security'] | null,
+): { warningThreshold: number; hardBlockThreshold: number } {
+  return resolveHeartbeatThresholds(config);
 }
 
 export function hasDeviceContinuityMismatch(

@@ -249,12 +249,16 @@ export class BackendExamRepository implements IExamRepository {
   async deleteSessionNote(_noteId: string): Promise<void> {}
 
   async getViolationRulesByScheduleId(_scheduleId: string): Promise<ViolationRule[]> {
-    return [];
+    throw new Error('Violation-rule reads through BackendExamRepository are not supported.');
   }
 
-  async saveViolationRule(_rule: ViolationRule): Promise<void> {}
+  async saveViolationRule(_rule: ViolationRule): Promise<void> {
+    throw new Error('Violation-rule persistence through BackendExamRepository is not supported.');
+  }
 
-  async deleteViolationRule(_ruleId: string): Promise<void> {}
+  async deleteViolationRule(_ruleId: string): Promise<void> {
+    throw new Error('Violation-rule deletion through BackendExamRepository is not supported.');
+  }
 
   async migrateFromLegacy(_legacyExams: Exam[]): Promise<ExamEntity[]> {
     return this.getAllExams();

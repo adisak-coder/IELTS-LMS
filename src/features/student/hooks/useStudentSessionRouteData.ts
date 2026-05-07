@@ -10,6 +10,9 @@ import {
   mapBackendSchedule,
 } from '@services/backendBridge';
 import {
+  studentSessionTransport,
+} from '@services/studentSessionTransport';
+import {
   mapBackendStudentAttempt,
   studentAttemptRepository,
 } from '@services/studentAttemptRepository';
@@ -21,11 +24,12 @@ import {
   withStudentObservabilityDimensions,
 } from '../../../utils/studentObservability';
 import {
-  compareFreshnessDimension,
   extractLiveSnapshotFreshness,
   mergeLiveSnapshotFreshness,
   type LiveSnapshotFreshness,
 } from '../liveSnapshotFreshness';
+import { runStudentSessionMachineCommands } from './studentSessionMachineAdapters';
+import { evaluateLiveSnapshotTransition, evaluateLoadTransition } from './studentSessionStateMachine';
 
 const PROFILE_STORAGE_PREFIX = 'ielts-student-profile:';
 const LIVE_SESSION_STATUS_CODE = 200;
@@ -123,21 +127,6 @@ function buildStudentKey(scheduleId: string, candidateId: string) {
   return `student-${scheduleId}-${candidateId}`;
 }
 
-function buildBackendStaticSessionEndpoint(scheduleId: string, candidateId: string) {
-  const query = new URLSearchParams({ candidateId });
-  return `/v1/student/sessions/${scheduleId}/static?${query.toString()}`;
-}
-
-function buildBackendSessionEndpoint(scheduleId: string, candidateId: string) {
-  const query = new URLSearchParams({ candidateId });
-  return `/v1/student/sessions/${scheduleId}?${query.toString()}`;
-}
-
-function buildBackendLiveSessionEndpoint(scheduleId: string, candidateId: string) {
-  const query = new URLSearchParams({ candidateId });
-  return `/v1/student/sessions/${scheduleId}/live?${query.toString()}`;
-}
-
 function loadStoredCandidateProfile(
   scheduleId: string,
   candidateId: string,
@@ -175,8 +164,8 @@ function createCandidateProfile(
 ) {
   return {
     candidateId,
-    candidateName: stored?.candidateName ?? `Candidate ${candidateId}`,
-    candidateEmail: stored?.candidateEmail ?? `${candidateId}@example.com`,
+    candidateName: stored?.candidateName ?? 'Unknown Candidate',
+    candidateEmail: stored?.candidateEmail ?? '',
   };
 }
 
@@ -191,6 +180,31 @@ interface StudentSessionRouteData {
   refreshRuntime: () => Promise<void>;
   retry: () => Promise<void>;
 }
+
+type BackendStaticSession = {
+  schedule: Parameters<typeof mapBackendSchedule>[0];
+  version: Parameters<typeof mapBackendExamVersion>[0];
+  degradedLiveMode?: boolean | undefined;
+};
+
+type BackendLiveSession = {
+  runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
+  attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
+  publishedVersionId?: string | null | undefined;
+  degradedLiveMode?: boolean | undefined;
+};
+
+type LoadedStaticSnapshot = {
+  examState: ExamState;
+  scheduleEntity: ExamSchedule;
+  versionId: string;
+};
+
+type LiveSnapshotApplyDecision = {
+  discardAll: boolean;
+  applyAttempt: boolean;
+  applyRuntime: boolean;
+};
 
 function buildLiveMetricEndpoint(scheduleId: string) {
   return `/v1/student/sessions/${scheduleId}/live`;
@@ -338,7 +352,7 @@ export function useStudentSessionRouteData(
   scheduleId?: string,
   studentId?: string,
 ): StudentSessionRouteData {
-  const { session, status: authStatus } = useAuthSession();
+  const { status: authStatus } = useAuthSession();
   const [answerInvariantRollout, setAnswerInvariantRollout] = useState<StudentAnswerInvariantRollout>(
     buildDefaultAnswerInvariantRollout,
   );
@@ -349,6 +363,7 @@ export function useStudentSessionRouteData(
   const [liveSocketConnected, setLiveSocketConnected] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const loadTransitionRollout = useMemo(buildDefaultAnswerInvariantRollout, []);
   const candidateId = useMemo(() => normalizeWcodeCandidateId(studentId), [studentId]);
   const staticVersionIdRef = useRef<string | null>(null);
   const refreshEpochRef = useRef(0);
@@ -373,7 +388,7 @@ export function useStudentSessionRouteData(
     }
 
     const session = await backendGet<BackendStaticSession>(
-      buildBackendStaticSessionEndpoint(scheduleId, candidateId),
+      studentSessionTransport.paths.staticSession(scheduleId, candidateId),
     );
     const scheduleEntity = mapBackendSchedule(session.schedule);
     const version = mapBackendExamVersion(session.version);
@@ -459,114 +474,39 @@ export function useStudentSessionRouteData(
       live: BackendLiveSession,
       source: 'refresh' | 'load',
     ): LiveSnapshotApplyDecision => {
-      const rollout = resolveAnswerInvariantRollout(live);
-      const rolloutEnabled = rollout.enabled && !rollout.killSwitch;
-      if (applyEpoch !== refreshEpochRef.current) {
-        emitStudentObservabilityMetric(
-          'student_refresh_stale_discard_total',
-          withStudentObservabilityDimensions({
-            scheduleId: scheduleId ?? null,
-            attemptId: live.attempt?.id ?? null,
-            endpoint: scheduleId ? buildLiveMetricEndpoint(scheduleId) : null,
-            statusCode: LIVE_SESSION_STATUS_CODE,
-            reason: 'epoch_superseded',
-            syncState: extractAttemptSyncState(live),
-            source,
-            rolloutCohort: rollout.cohort,
-            answerInvariantEnabled: rolloutEnabled,
-            answerInvariantSource: rollout.source,
-          }),
-        );
-        return {
-          discardAll: true,
-          applyAttempt: false,
-          applyRuntime: false,
-        };
-      }
-
-      const appliedFreshness = appliedFreshnessRef.current;
-      if (!appliedFreshness) {
-        return {
-          discardAll: false,
-          applyAttempt: true,
-          applyRuntime: true,
-        };
-      }
-
-      const attemptOrder = compareFreshnessDimension(incomingFreshness.attempt, appliedFreshness.attempt);
-      const runtimeOrder = compareFreshnessDimension(incomingFreshness.runtime, appliedFreshness.runtime);
-      if (runtimeOrder < 0) {
-        emitStudentObservabilityMetric(
-          'student_runtime_revision_regression_total',
-          withStudentObservabilityDimensions({
-            scheduleId: scheduleId ?? null,
-            attemptId: live.attempt?.id ?? null,
-            endpoint: scheduleId ? buildLiveMetricEndpoint(scheduleId) : null,
-            statusCode: LIVE_SESSION_STATUS_CODE,
-            reason: 'runtime_regressed',
-            syncState: extractAttemptSyncState(live),
-            source,
-            rolloutCohort: rollout.cohort,
-            answerInvariantEnabled: rolloutEnabled,
-            answerInvariantSource: rollout.source,
-          }),
-        );
-      }
-      if (attemptOrder < 0 && runtimeOrder < 0) {
-        const reason =
-          attemptOrder < 0 && runtimeOrder < 0
-            ? 'attempt_and_runtime_regressed'
-            : attemptOrder < 0
-              ? 'attempt_regressed'
-              : 'runtime_regressed';
-        emitStudentObservabilityMetric(
-          'student_refresh_stale_discard_total',
-          withStudentObservabilityDimensions({
-            scheduleId: scheduleId ?? null,
-            attemptId: live.attempt?.id ?? null,
-            endpoint: scheduleId ? buildLiveMetricEndpoint(scheduleId) : null,
-            statusCode: LIVE_SESSION_STATUS_CODE,
-            reason,
-            syncState: extractAttemptSyncState(live),
-            source,
-            rolloutCohort: rollout.cohort,
-            answerInvariantEnabled: rolloutEnabled,
-            answerInvariantSource: rollout.source,
-          }),
-        );
-        return {
-          discardAll: true,
-          applyAttempt: false,
-          applyRuntime: false,
-        };
-      }
-
-      if (attemptOrder < 0 || runtimeOrder < 0) {
-        const reason = attemptOrder < 0 ? 'attempt_regressed' : 'runtime_regressed';
-        emitStudentObservabilityMetric(
-          'student_refresh_stale_discard_total',
-          withStudentObservabilityDimensions({
-            scheduleId: scheduleId ?? null,
-            attemptId: live.attempt?.id ?? null,
-            endpoint: scheduleId ? buildLiveMetricEndpoint(scheduleId) : null,
-            statusCode: LIVE_SESSION_STATUS_CODE,
-            reason,
-            syncState: extractAttemptSyncState(live),
-            source,
-            rolloutCohort: rollout.cohort,
-            answerInvariantEnabled: rolloutEnabled,
-            answerInvariantSource: rollout.source,
-          }),
-        );
-      }
-
-      return {
-        discardAll: false,
-        applyAttempt: attemptOrder >= 0,
-        applyRuntime: runtimeOrder >= 0,
-      };
+      const transition = evaluateLiveSnapshotTransition({
+        applyEpoch,
+        currentEpoch: refreshEpochRef.current,
+        scheduleId: scheduleId ?? null,
+        attemptId: live.attempt?.id ?? null,
+        syncState: extractAttemptSyncState(live),
+        source,
+        rollout: resolveAnswerInvariantRollout(live),
+        incomingFreshness,
+        appliedFreshness: appliedFreshnessRef.current,
+      });
+      runStudentSessionMachineCommands(transition.commands);
+      return transition.decision;
     },
     [scheduleId],
+  );
+
+  const applyLoadTransition = useCallback(
+    (source: 'load' | 'retry', event: { type: 'requested' } | { type: 'succeeded' } | { type: 'failed'; error: string }) => {
+      const transition = evaluateLoadTransition(
+        {
+          scheduleId: scheduleId ?? null,
+          attemptId: null,
+          source,
+          rollout: loadTransitionRollout,
+        },
+        event,
+      );
+      runStudentSessionMachineCommands(transition.commands);
+      setIsLoading(transition.decision.isLoading);
+      setError(transition.decision.error);
+    },
+    [loadTransitionRollout, scheduleId],
   );
 
   const refreshBackendSessionSnapshot = useCallback(async () => {
@@ -582,11 +522,15 @@ export function useStudentSessionRouteData(
       scheduleEntity = loaded?.scheduleEntity ?? null;
     }
 
-    let live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+    let live = await backendGet<BackendLiveSession>(
+      studentSessionTransport.paths.liveSession(scheduleId, candidateId),
+    );
     const reloadedStatic = await maybeRebootstrapStaticOnVersionMismatch(live);
     if (reloadedStatic) {
       scheduleEntity = reloadedStatic.scheduleEntity;
-      live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+      live = await backendGet<BackendLiveSession>(
+        studentSessionTransport.paths.liveSession(scheduleId, candidateId),
+      );
     }
 
     const incomingFreshness = extractLiveSnapshotFreshness(live);
@@ -734,7 +678,9 @@ export function useStudentSessionRouteData(
     debounceMs: 0,
     onConnected: () => {
       setLiveSocketConnected(true);
-      void refreshBackendSessionSnapshot();
+      if (state) {
+        void refreshBackendSessionSnapshot();
+      }
     },
     onDisconnected: () => {
       setLiveSocketConnected(false);
@@ -755,10 +701,9 @@ export function useStudentSessionRouteData(
     }
   }, [authStatus, candidateId, error, scheduleId]);
 
-  const loadStudentData = useCallback(async () => {
+  const loadStudentData = useCallback(async (source: 'load' | 'retry' = 'load') => {
     if (!scheduleId) {
-      setError('Schedule ID not found');
-      setIsLoading(false);
+      applyLoadTransition(source, { type: 'failed', error: 'Schedule ID not found' });
       return;
     }
 
@@ -766,8 +711,7 @@ export function useStudentSessionRouteData(
       return;
     }
 
-    setIsLoading(true);
-    setError(null);
+    applyLoadTransition(source, { type: 'requested' });
 
     try {
       if (!candidateId || !isWcodeCandidateId(candidateId)) {
@@ -778,52 +722,28 @@ export function useStudentSessionRouteData(
         throw new Error('Student identity not found');
       }
 
-      const session = await backendGet<{
-        schedule: Parameters<typeof mapBackendSchedule>[0];
-        version: Parameters<typeof mapBackendExamVersion>[0];
-        runtime?: Parameters<typeof mapBackendRuntime>[0] | null | undefined;
-        attempt?: Parameters<typeof mapBackendStudentAttempt>[0] | null | undefined;
-      }>(buildBackendSessionEndpoint(scheduleId, candidateId));
-      const scheduleEntity = mapBackendSchedule(session.schedule);
-      const version = mapBackendExamVersion(session.version);
-      const diagramSnapshotDiagnostics = collectPublishedDiagramSnapshotIssues(version.contentSnapshot);
-      if (diagramSnapshotDiagnostics.missingImageUrlCount > 0) {
-        console.warn('[student-session] published version has DIAGRAM_LABELING blocks without imageUrl', {
-          routeScheduleId: scheduleId,
-          scheduleId: scheduleEntity.id,
-          publishedVersionId: scheduleEntity.publishedVersionId,
-          loadedVersionId: version.id,
-          totalDiagramBlocks: diagramSnapshotDiagnostics.totalDiagramBlocks,
-          missingImageUrlCount: diagramSnapshotDiagnostics.missingImageUrlCount,
-          missingUsableImageCount: diagramSnapshotDiagnostics.missingUsableImageCount,
-          missingBlocks: diagramSnapshotDiagnostics.missingBlocks,
-        });
+      const staticSnapshot = await loadStaticSessionSnapshot();
+      if (!staticSnapshot) {
+        throw new Error('Failed to load static session snapshot');
       }
-      const examState = hydrateExamState({
-        ...version.contentSnapshot,
-        config: version.configSnapshot,
-      } satisfies ExamState);
+      let loadedStatic: LoadedStaticSnapshot = staticSnapshot;
 
-      let loadedStatic: LoadedStaticSnapshot = {
-        examState,
-        scheduleEntity,
-        versionId: version.id,
-      };
-      setSchedule(scheduleEntity);
-      setState(examState);
-      staticVersionIdRef.current = version.id;
-
-      let live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+      let live = await backendGet<BackendLiveSession>(
+        studentSessionTransport.paths.liveSession(scheduleId, candidateId),
+      );
       const reloadedStatic = await maybeRebootstrapStaticOnVersionMismatch(live);
       if (reloadedStatic) {
         loadedStatic = reloadedStatic;
-        live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
+        live = await backendGet<BackendLiveSession>(
+          studentSessionTransport.paths.liveSession(scheduleId, candidateId),
+        );
       }
 
       const applyEpoch = ++refreshEpochRef.current;
       const incomingFreshness = extractLiveSnapshotFreshness(live);
       const applyDecision = evaluateLiveSnapshotApply(incomingFreshness, applyEpoch, live, 'load');
       if (applyDecision.discardAll) {
+        applyLoadTransition(source, { type: 'succeeded' });
         return;
       }
 
@@ -860,6 +780,7 @@ export function useStudentSessionRouteData(
               answerInvariantSource: rollout.source,
             }),
           );
+          applyLoadTransition(source, { type: 'succeeded' });
           return;
         }
         setAttemptSnapshot(reconciledAttempt);
@@ -875,6 +796,7 @@ export function useStudentSessionRouteData(
               applyRuntime: applyDecision.applyRuntime,
             },
           );
+          applyLoadTransition(source, { type: 'succeeded' });
           return;
         }
 
@@ -897,12 +819,15 @@ export function useStudentSessionRouteData(
         applyAttempt: applyDecision.applyAttempt,
         applyRuntime: applyDecision.applyRuntime,
       });
+      applyLoadTransition(source, { type: 'succeeded' });
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : 'Failed to load exam data');
-    } finally {
-      setIsLoading(false);
+      applyLoadTransition(source, {
+        type: 'failed',
+        error: loadError instanceof Error ? loadError.message : 'Failed to load exam data',
+      });
     }
   }, [
+    applyLoadTransition,
     authStatus,
     candidateId,
     evaluateLiveSnapshotApply,
@@ -916,7 +841,7 @@ export function useStudentSessionRouteData(
   ]);
 
   useEffect(() => {
-    void loadStudentData();
+    void loadStudentData('load');
   }, [loadStudentData]);
 
   const pollIntervalMs = runtimeSnapshot?.status === 'live'
@@ -950,6 +875,6 @@ export function useStudentSessionRouteData(
     schedule,
     state,
     refreshRuntime: refreshBackendSessionSnapshot,
-    retry: loadStudentData,
+    retry: () => loadStudentData('retry'),
   };
 }

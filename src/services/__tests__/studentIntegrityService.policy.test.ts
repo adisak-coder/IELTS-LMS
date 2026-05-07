@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDefaultConfig } from '../../constants/examDefaults';
 import {
   buildStudentHeartbeatEvent,
+  getHeartbeatEnforcementThresholds,
   getHeartbeatIntervalMs,
   getHeartbeatLossTimeoutMs,
   getStudentIntegritySecurityPolicy,
@@ -15,7 +16,7 @@ describe('student integrity policy', () => {
     config.security.heartbeatMissThreshold = undefined;
 
     expect(getHeartbeatIntervalMs(config)).toBe(15_000);
-    expect(getHeartbeatLossTimeoutMs(config)).toBe(45_000);
+    expect(getHeartbeatLossTimeoutMs(config)).toBe(60_000);
   });
 
   it('respects security overrides when provided', () => {
@@ -34,6 +35,19 @@ describe('student integrity policy', () => {
     expect(policy.bufferAnswersOffline).toBe(false);
     expect(policy.requireDeviceContinuityOnReconnect).toBe(false);
     expect(policy.allowSafariWithAcknowledgement).toBe(false);
+  });
+
+  it('derives heartbeat enforcement thresholds from a single policy source', () => {
+    const config = createDefaultConfig('Academic', 'Academic');
+    config.security.heartbeatMissThreshold = 5;
+    config.security.heartbeatWarningThreshold = undefined;
+    config.security.heartbeatHardBlockThreshold = undefined;
+
+    expect(getHeartbeatLossTimeoutMs(config)).toBe(75_000);
+    expect(getHeartbeatEnforcementThresholds(config)).toEqual({
+      warningThreshold: 4,
+      hardBlockThreshold: 5,
+    });
   });
 
   it('detects device continuity mismatches', () => {
@@ -66,4 +80,3 @@ describe('student integrity policy', () => {
     expect(event.id.startsWith('heartbeat-')).toBe(true);
   });
 });
-

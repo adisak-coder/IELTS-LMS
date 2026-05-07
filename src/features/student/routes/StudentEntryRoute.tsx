@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useAuthSession } from '../../auth/authSession';
 import { studentAttemptRepository } from '@services/studentAttemptRepository';
+import { commonSchemas } from '@app/validation/validateApiResponse';
 
 interface EntryFormData {
   wcode: string;
@@ -17,7 +18,7 @@ function validateWcode(wcode: string): boolean {
 }
 
 function validateEmail(email: string): boolean {
-  return /^[^@]+@[^@]+\.[^@]+$/.test(email);
+  return commonSchemas.email.safeParse(email).success;
 }
 
 function loadLastWcode(scheduleId: string): string | null {

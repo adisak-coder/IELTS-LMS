@@ -38,6 +38,21 @@ function jsonResponse(data: unknown) {
   });
 }
 
+function jsonErrorResponse(message: string, status = 400) {
+  return new Response(
+    JSON.stringify({
+      success: false,
+      error: {
+        message,
+      },
+    }),
+    {
+      status,
+      headers: { 'content-type': 'application/json' },
+    },
+  );
+}
+
 function createDeferredResponse() {
   let resolve: ((response: Response) => void) | null = null;
   const promise = new Promise<Response>((resolver) => {
@@ -163,7 +178,7 @@ function buildRuntime() {
   };
 }
 
-function buildAttempt(publishedVersionId = 'ver-1') {
+function buildAttempt(publishedVersionId = 'ver-1'): Parameters<typeof mapBackendStudentAttempt>[0] {
   return {
     id: 'attempt-1',
     scheduleId: 'sched-1',
@@ -203,6 +218,47 @@ function buildAttempt(publishedVersionId = 'ver-1') {
     createdAt: '2026-01-01T09:00:00.000Z',
     updatedAt: '2026-01-01T09:00:00.000Z',
     revision: 1,
+  } as Parameters<typeof mapBackendStudentAttempt>[0];
+}
+
+function buildLiveSessionContext(
+  attempt: any,
+  publishedVersionId = 'ver-1',
+  runtimeOverrides?: any,
+): any {
+  return {
+    runtime: {
+      ...buildRuntime(),
+      ...(runtimeOverrides ?? {}),
+    },
+    attempt,
+    publishedVersionId,
+    degradedLiveMode: false,
+  };
+}
+
+function buildBootstrapContext(attempt: any): any {
+  return {
+    attempt,
+    attemptCredential: {
+      attemptToken: 'attempt-token-1',
+      expiresAt: '2026-01-01T12:00:00.000Z',
+    },
+  };
+}
+
+function buildSessionContext(
+  attempt: any,
+  publishedVersionId = 'ver-1',
+  runtimeOverrides?: any,
+): any {
+  return {
+    ...buildStaticSessionContext(publishedVersionId),
+    ...buildLiveSessionContext(attempt, publishedVersionId, runtimeOverrides),
+    attemptCredential: {
+      attemptToken: 'attempt-token-1',
+      expiresAt: '2026-01-01T12:00:00.000Z',
+    },
   };
 }
 
@@ -305,6 +361,13 @@ describe('useStudentSessionRouteData backend mode', () => {
       '/api/v1/student/sessions/sched-1/bootstrap',
       expect.objectContaining({ method: 'POST' }),
     );
+    const bootstrapRequest = fetchMock.mock.calls[2]?.[1] as RequestInit | undefined;
+    const bootstrapBody = JSON.parse(String(bootstrapRequest?.body ?? '{}')) as {
+      candidateName?: string;
+      candidateEmail?: string;
+    };
+    expect(bootstrapBody.candidateName).toBe('Unknown Candidate');
+    expect(bootstrapBody.candidateEmail).toBe('');
     expect(
       fetchMock.mock.calls.some(
         ([url]) => url === '/api/v1/student/sessions/sched-1?candidateId=W250334',
@@ -382,7 +445,7 @@ describe('useStudentSessionRouteData backend mode', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
 
-    resolveSession?.(buildAuthSession());
+    (resolveSession as ((session: AuthSession | null) => void) | null)?.(buildAuthSession());
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenNthCalledWith(
@@ -406,6 +469,101 @@ describe('useStudentSessionRouteData backend mode', () => {
         '/api/v1/student/sessions/sched-1/bootstrap',
         expect.objectContaining({ method: 'POST' }),
       );
+    });
+  });
+
+  it('keeps initial backend load parity for schedule, state, runtime, and attempt snapshots', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/v1/student/sessions/sched-1?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildSessionContext(buildAttempt())));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/static?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildStaticSessionContext()));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildLiveSessionContext(buildAttempt())));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/bootstrap') {
+        return Promise.resolve(jsonResponse(buildBootstrapContext(buildAttempt())));
+      }
+      return Promise.resolve(jsonResponse(buildSessionContext(buildAttempt())));
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+    });
+
+    expect(result.current.schedule).toMatchObject({
+      id: 'sched-1',
+      examTitle: 'Mock Exam',
+    });
+    expect(result.current.state?.title).toBe('Mock Exam');
+    expect(result.current.runtimeSnapshot).toMatchObject({
+      scheduleId: 'sched-1',
+      status: 'live',
+      currentSectionKey: 'reading',
+    });
+    expect(result.current.attemptSnapshot).toMatchObject({
+      id: 'attempt-1',
+      candidateId: 'W250334',
+      scheduleId: 'sched-1',
+    });
+  });
+
+  it('recovers from transient backend load failure when retry is invoked', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
+
+    let failMode = true;
+    const fetchMock = vi.fn((url: string) => {
+      if (failMode) {
+        return Promise.resolve(jsonErrorResponse('Transient backend outage'));
+      }
+      if (url === '/api/v1/student/sessions/sched-1?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildSessionContext(buildAttempt())));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/static?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildStaticSessionContext()));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildLiveSessionContext(buildAttempt())));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/bootstrap') {
+        return Promise.resolve(jsonResponse(buildBootstrapContext(buildAttempt())));
+      }
+      return Promise.resolve(jsonResponse(buildSessionContext(buildAttempt())));
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).not.toBeNull();
+    });
+
+    failMode = false;
+
+    await act(async () => {
+      await result.current.retry();
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(result.current.runtimeSnapshot?.currentSectionKey).toBe('reading');
+      expect(result.current.attemptSnapshot?.id).toBe('attempt-1');
     });
   });
 
@@ -677,10 +835,12 @@ describe('useStudentSessionRouteData backend mode', () => {
     });
 
     expect(
-      fetchMock.mock.calls.some(([url, init]) => {
+      fetchMock.mock.calls.some((call) => {
+        const url = String(call[0]);
+        const init = (call as unknown[])[1] as { method?: string } | undefined;
         return (
           url === '/api/v1/student/sessions/sched-1/bootstrap' &&
-          (init as { method?: string } | undefined)?.method === 'POST'
+          init?.method === 'POST'
         );
       }),
     ).toBe(false);

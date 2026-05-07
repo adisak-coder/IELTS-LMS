@@ -31,7 +31,7 @@ import { useStudentRuntime } from './providers/StudentRuntimeProvider';
 import { useStudentUI } from './providers/StudentUIProvider';
 import { isRuntimeStructurallyCompleted, isVerifiedTerminalStudentState } from './providers/verifiedTerminalState';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
-import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
+import type { StudentAnswerMutationMeta, StudentAnswerValue } from '../../types/studentAttempt';
 
 function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['blocking']['reason']) {
   switch (reason) {
@@ -141,6 +141,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     () => `attempt:${attemptState.attempt?.id ?? 'unknown'}`,
     [attemptState.attempt?.id],
   );
+  const attemptAnswers = attemptState.attempt?.answers ?? {};
+  const attemptWritingAnswers = attemptState.attempt?.writingAnswers ?? {};
+  const attemptFlags = attemptState.attempt?.flags ?? {};
   const clearHighlights = useCallback(() => {
     clearStudentHighlights(highlightNamespace);
   }, [highlightNamespace]);
@@ -162,9 +165,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   } as React.CSSProperties;
   const autoSubmitFingerprintRef = useRef<string | null>(null);
   const runtimeStateRef = useRef(runtimeState);
-  const latestAnswersRef = useRef(runtimeState.answers);
-  const liveObjectiveAnswersRef = useRef(runtimeState.answers);
-  const liveWritingAnswersRef = useRef(runtimeState.writingAnswers);
+  const latestAnswersRef = useRef(attemptAnswers);
+  const liveObjectiveAnswersRef = useRef(attemptAnswers);
+  const liveWritingAnswersRef = useRef(attemptWritingAnswers);
   const viewportLockForExamSessionRef = useRef<boolean | null>(null);
   const lockedViewportHeightRef = useRef<number | null>(null);
   const moduleSubmitInFlightRef = useRef<Promise<void> | null>(null);
@@ -217,24 +220,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     });
   }, []);
   const reconcileLiveAnswerCacheNow = useCallback(() => {
-    const objectiveAnswers = liveObjectiveAnswersRef.current;
-    const writingAnswers = liveWritingAnswersRef.current;
-    const runtimeNow = runtimeStateRef.current;
-
-    latestAnswersRef.current = objectiveAnswers;
-
-    for (const [questionId, value] of Object.entries(objectiveAnswers)) {
-      if (runtimeNow.answers[questionId] !== value) {
-        runtimeActions.setAnswer(questionId, value);
-      }
-    }
-
-    for (const [taskId, value] of Object.entries(writingAnswers)) {
-      if (runtimeNow.writingAnswers[taskId] !== value) {
-        runtimeActions.setWritingAnswer(taskId, value);
-      }
-    }
-  }, [runtimeActions]);
+    latestAnswersRef.current = liveObjectiveAnswersRef.current;
+  }, []);
   const latestPendingWarning = useMemo(() => {
     const warnings =
       attemptState.attempt?.violations.filter((violation) => violation.type === 'PROCTOR_WARNING') ??
@@ -269,10 +256,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
 
   useEffect(() => {
     runtimeStateRef.current = runtimeState;
-    latestAnswersRef.current = runtimeState.answers;
-    liveObjectiveAnswersRef.current = runtimeState.answers;
-    liveWritingAnswersRef.current = runtimeState.writingAnswers;
-  }, [runtimeState]);
+    latestAnswersRef.current = attemptAnswers;
+    liveObjectiveAnswersRef.current = attemptAnswers;
+    liveWritingAnswersRef.current = attemptWritingAnswers;
+  }, [attemptAnswers, attemptWritingAnswers, runtimeState]);
 
   useEffect(() => {
     if (effectivePhase !== 'exam') {
@@ -317,12 +304,17 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
           writingDraftCommitRef.current?.();
           const flushed = await attemptActions.flushPending();
           if (flushed) {
-            runtimeActions.setBlockingReason(null);
+            runtimeActions.transitionBlocking('syncing_reconnect', false);
+            runtimeActions.transitionBlocking('offline', false);
             runtimeActions.submitModule();
             return;
           }
 
-          runtimeActions.setBlockingReason(navigator.onLine ? null : 'offline');
+          if (!navigator.onLine) {
+            runtimeActions.transitionBlocking('offline', true);
+          } else {
+            runtimeActions.transitionBlocking('syncing_reconnect', true);
+          }
 
           const backoffMs = Math.min(30_000, 1_000 * 2 ** attemptIndex);
           attemptIndex += 1;
@@ -743,6 +735,16 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     }
   };
 
+  const answeredCount = countAnsweredQuestions(runtimeState.allQuestions, attemptAnswers);
+  const totalQuestions = countQuestionSlots(runtimeState.allQuestions);
+  const unansweredSubmissionPolicy = examState.config.progression.unansweredSubmissionPolicy ?? 'confirm';
+  const submitRequiresConfirmation =
+    effectivePhase === 'exam' &&
+    (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening') &&
+    totalQuestions > 0 &&
+    answeredCount < totalQuestions &&
+    unansweredSubmissionPolicy !== 'allow';
+
   const performModuleSubmit = async () => {
     if (runtimeState.runtimeBacked) {
       const fingerprint = `manual:${runtimeState.currentModule}`;
@@ -757,7 +759,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   };
 
   const handleModuleSubmit = async () => {
-    if (runtimeState.submitRequiresConfirmation) {
+    if (submitRequiresConfirmation) {
       uiActions.setShowSubmitConfirm(true);
       return;
     }
@@ -846,7 +848,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
 
   const handleAnswerChange = (
     questionId: string,
-    answer: Parameters<typeof runtimeActions.setAnswer>[1],
+    answer: StudentAnswerValue,
     meta?: StudentAnswerMutationMeta,
   ) => {
     if (runtimeState.blocking.reason === 'storage_unavailable') {
@@ -896,7 +898,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       ...liveObjectiveAnswersRef.current,
       [questionId]: resolvedAnswer,
     };
-    runtimeActions.setAnswer(questionId, resolvedAnswer);
     attemptActions.persistAnswer(questionId, resolvedAnswer, meta);
   };
 
@@ -904,13 +905,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     if (runtimeState.blocking.reason === 'storage_unavailable') {
       return;
     }
-    const nextFlagged = !runtimeState.flags[questionId];
-    runtimeActions.toggleFlag(questionId);
+    const nextFlagged = !attemptFlags[questionId];
     attemptActions.persistFlag(questionId, nextFlagged);
   };
 
   const registerLiveObjectiveAnswer = useCallback(
-    (questionId: string, value: Parameters<typeof runtimeActions.setAnswer>[1]) => {
+    (questionId: string, value: StudentAnswerValue) => {
       liveObjectiveAnswersRef.current = {
         ...liveObjectiveAnswersRef.current,
         [questionId]: value,
@@ -934,17 +934,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       ...liveWritingAnswersRef.current,
       [taskId]: text,
     };
-    runtimeActions.setWritingAnswer(taskId, text);
     attemptActions.persistWritingAnswer(taskId, text);
   };
 
   const registerWritingDraftCommit = useCallback((commitDraft: (() => void) | null) => {
     writingDraftCommitRef.current = commitDraft;
   }, []);
-
-  const answeredCount = countAnsweredQuestions(runtimeState.allQuestions, runtimeState.answers);
-  const totalQuestions = countQuestionSlots(runtimeState.allQuestions);
-  const unansweredSubmissionPolicy = examState.config.progression.unansweredSubmissionPolicy ?? 'confirm';
 
   const blockingOverlay =
     runtimeState.blocking.active && blockingCopy ? (
@@ -1182,11 +1177,11 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         {runtimeState.currentModule === 'reading' ? (
           <StudentReading
             state={examState}
-            answers={runtimeState.answers}
+            answers={attemptAnswers}
             onAnswerChange={handleAnswerChange}
             currentQuestionId={runtimeState.currentQuestionId}
             onNavigate={runtimeActions.setCurrentQuestionId}
-            flags={runtimeState.flags}
+            flags={attemptFlags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
             contentZoom={uiState.accessibilitySettings.zoom}
@@ -1207,11 +1202,11 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         {runtimeState.currentModule === 'listening' ? (
           <StudentListening
             state={examState}
-            answers={runtimeState.answers}
+            answers={attemptAnswers}
             onAnswerChange={handleAnswerChange}
             currentQuestionId={runtimeState.currentQuestionId}
             onNavigate={runtimeActions.setCurrentQuestionId}
-            flags={runtimeState.flags}
+            flags={attemptFlags}
             onToggleFlag={handleFlagToggle}
             tabletMode={tabletMode}
             contentZoom={uiState.accessibilitySettings.zoom}
@@ -1232,7 +1227,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         {runtimeState.currentModule === 'writing' ? (
           <StudentWriting
             state={examState}
-            writingAnswers={runtimeState.writingAnswers}
+            writingAnswers={attemptWritingAnswers}
             onWritingChange={handleWritingChange}
             onSubmit={handleModuleSubmit}
             currentQuestionId={runtimeState.currentQuestionId}
@@ -1264,8 +1259,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
           questions={runtimeState.allQuestions}
           currentQuestionId={runtimeState.currentQuestionId}
           onNavigate={runtimeActions.setCurrentQuestionId}
-          answers={runtimeState.answers}
-          flags={runtimeState.flags}
+          answers={attemptAnswers}
+          flags={attemptFlags}
           onToggleFlag={handleFlagToggle}
           onSubmit={handleModuleSubmit}
           showSubmitButton={showSubmitControls}
@@ -1276,8 +1271,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       {uiState.showNavigator ? (
         <QuestionNavigator
           questions={runtimeState.allQuestions}
-          answers={runtimeState.answers}
-          flags={runtimeState.flags}
+          answers={attemptAnswers}
+          flags={attemptFlags}
           currentQuestionId={runtimeState.currentQuestionId}
           onNavigate={(id) => {
             runtimeActions.setCurrentQuestionId(id);
@@ -1391,7 +1386,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         onConfirm={confirmModuleSubmit}
         answeredCount={answeredCount}
         totalQuestions={totalQuestions}
-        flaggedCount={Object.values(runtimeState.flags).filter(Boolean).length}
+        flaggedCount={Object.values(attemptFlags).filter(Boolean).length}
         timeRemaining={runtimeState.displayTimeRemaining}
         unansweredSubmissionPolicy={unansweredSubmissionPolicy}
       />

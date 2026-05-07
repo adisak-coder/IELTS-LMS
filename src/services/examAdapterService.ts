@@ -14,7 +14,6 @@ import type {
   ModuleType,
   MultiMCQBlock,
   NoteCompletionQuestion,
-  QuestionAnswer,
   QuestionBlock,
   SentenceCompletionQuestion,
   ShortAnswerQuestion,
@@ -24,6 +23,7 @@ import type {
   MCQOption,
 } from '../types';
 import type { ExamEntity, ExamStatus } from '../types/domain';
+import type { StudentAnswerValue } from '../types/answers';
 import type { IExamRepository } from './examRepository';
 import {
   buildSpeakingRubric,
@@ -56,14 +56,10 @@ function readNonEmptyString(value: unknown): string | null {
 }
 
 function normalizeDiagramImageUrl(block: DiagramLabelingBlock): DiagramLabelingBlock {
-  const imageFallbackSource = block as DiagramLabelingBlock & {
-    imageSrc?: unknown;
-    assetUrl?: unknown;
-  };
   const normalizedImageUrl =
     readNonEmptyString(block.imageUrl) ??
-    readNonEmptyString(imageFallbackSource.imageSrc) ??
-    readNonEmptyString(imageFallbackSource.assetUrl) ??
+    readNonEmptyString(block.imageSrc) ??
+    readNonEmptyString(block.assetUrl) ??
     '';
 
   if (normalizedImageUrl === block.imageUrl) {
@@ -94,8 +90,7 @@ function normalizeMcqOptions(options: unknown, idPrefix: string): MCQOption[] {
 function normalizeSingleMcqBlock(block: SingleMCQBlock): SingleMCQBlock {
   const legacyStem = readNonEmptyString(block.stem) ?? '';
   const legacyOptions = normalizeMcqOptions(block.options, block.id);
-  const blockWithQuestions = block as SingleMCQBlock & { questions?: unknown };
-  const rawQuestions = Array.isArray(blockWithQuestions.questions) ? blockWithQuestions.questions : [];
+  const rawQuestions = Array.isArray(block.questions) ? block.questions : [];
 
   const normalizedQuestions = rawQuestions.map((question, questionIndex) => {
     const questionValue = question as Partial<SingleMCQQuestion> | undefined;
@@ -215,6 +210,7 @@ export async function adaptExamEntityToLegacyExam(
     title: entity.title,
     type: entity.type,
     status: LEGACY_STATUS_MAP[entity.status],
+    workflowStatus: entity.status,
     author: entity.owner,
     lastModified: entity.updatedAt,
     createdAt: entity.createdAt,
@@ -519,7 +515,7 @@ export function getFirstQuestionIdForModule(
 
 export function countAnsweredQuestions(
   questions: StudentQuestionDescriptor[],
-  answers: Record<string, unknown>,
+  answers: Record<string, StudentAnswerValue | undefined>,
 ): number {
   return questions.reduce((count, question) => {
     return count + getAnsweredSlotCount(question, answers);
@@ -573,8 +569,8 @@ export function getQuestionNumberLabel(
 
 export function getQuestionAnswer(
   question: StudentQuestionDescriptor,
-  answers: Record<string, unknown>,
-): unknown {
+  answers: Record<string, StudentAnswerValue | undefined>,
+): StudentAnswerValue | undefined {
   const answer = answers[question.answerKey];
 
   if (question.answerIndex === undefined) {
@@ -590,7 +586,7 @@ export function getQuestionAnswer(
 
 export function getAnsweredSlotCount(
   question: StudentQuestionDescriptor,
-  answers: Record<string, unknown>,
+  answers: Record<string, StudentAnswerValue | undefined>,
 ): number {
   const answer = getQuestionAnswer(question, answers);
 
@@ -607,14 +603,14 @@ export function getAnsweredSlotCount(
 
 export function isQuestionAnswered(
   question: StudentQuestionDescriptor,
-  answers: Record<string, unknown>,
+  answers: Record<string, StudentAnswerValue | undefined>,
 ): boolean {
   return getAnsweredSlotCount(question, answers) > 0;
 }
 
 export function isQuestionFullyAnswered(
   question: StudentQuestionDescriptor,
-  answers: Record<string, unknown>,
+  answers: Record<string, StudentAnswerValue | undefined>,
 ): boolean {
   if (question.isMulti) {
     return getAnsweredSlotCount(question, answers) >= question.correctCount;

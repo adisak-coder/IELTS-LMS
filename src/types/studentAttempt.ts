@@ -1,11 +1,6 @@
 import type { ModuleType, StudentStatus, Violation } from '../types';
-
-export type StudentAnswerValue = 
-  | string // For text answers, single MCQ selection, matching
-  | string[] // For multi-select MCQ
-  | 'T' | 'F' | 'NG' | 'Y' | 'N' // For TFNG/YNNG questions
-  | null // For cleared answers
-  | undefined; // For unassigned answers
+export type { StudentAnswerValue } from './answers';
+import type { StudentAnswerValue } from './answers';
 
 export interface StudentAnswerMutationMeta {
   interactionType?: 'typing' | 'discrete' | undefined;
@@ -66,10 +61,10 @@ export interface StudentAttempt {
   candidateId: string;
   candidateName: string;
   candidateEmail: string;
-  phase: 'pre-check' | 'lobby' | 'exam' | 'post-exam';
+  phase: 'pre-check' | 'lobby' | 'exam' | 'post-exam' | 'submitted';
   currentModule: ModuleType;
   currentQuestionId: string | null;
-  answers: Record<string, StudentAnswerValue | undefined>;
+  answers: Record<string, StudentAnswerValue>;
   writingAnswers: Record<string, string>;
   flags: Record<string, boolean>;
   violations: Violation[];
@@ -137,14 +132,62 @@ export interface StudentAttemptSeed {
   phase?: StudentAttempt['phase'] | undefined;
 }
 
-export interface StudentAttemptMutation {
+export interface StudentAttemptMutationBase {
   id: string;
   attemptId: string;
   scheduleId: string;
   timestamp: string;
-  type: StudentAttemptMutationType;
-  payload: Record<string, unknown>;
 }
+
+export type StudentAttemptMutationPayloadMap = {
+  answer: {
+    questionId: string;
+    value: StudentAnswerValue;
+    module?: ModuleType | undefined;
+    interactionType?: StudentAnswerMutationMeta['interactionType'] | undefined;
+    slotIndex?: number | undefined;
+    slotId?: string | undefined;
+    slotCount?: number | undefined;
+    slotValue?: string | undefined;
+  };
+  writing_answer: {
+    taskId: string;
+    value: string;
+    module?: ModuleType | undefined;
+  };
+  flag: {
+    questionId: string;
+    value: boolean;
+    module?: ModuleType | undefined;
+  };
+  violation: {
+    violations?: Violation[] | undefined;
+    violationId?: string | undefined;
+    violationType?: string | undefined;
+    changedAreas?: string[] | undefined;
+  } & Record<string, unknown>;
+  position: {
+    currentModule?: ModuleType | undefined;
+    currentQuestionId?: string | null | undefined;
+    phase?: StudentAttempt['phase'] | undefined;
+    changedAreas?: string[] | undefined;
+  } & Record<string, unknown>;
+  precheck: Record<string, unknown>;
+  network: Record<string, unknown>;
+  heartbeat: Record<string, unknown>;
+  device_fingerprint: Record<string, unknown>;
+  sync: Record<string, unknown>;
+};
+
+export type StudentAttemptMutationPayload<TType extends StudentAttemptMutationType> =
+  StudentAttemptMutationPayloadMap[TType];
+
+export type StudentAttemptMutation = {
+  [K in StudentAttemptMutationType]: StudentAttemptMutationBase & {
+    type: K;
+    payload: StudentAttemptMutationPayloadMap[K];
+  };
+}[StudentAttemptMutationType];
 
 export interface StudentHeartbeatEvent {
   id: string;

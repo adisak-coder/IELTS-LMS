@@ -40,6 +40,7 @@ import type {
   StudentAnswerMutationMeta,
   StudentAttempt,
   StudentAttemptMutation,
+  StudentAttemptMutationPayload,
   StudentAttemptMutationType,
   StudentPreCheckResult,
 } from '../../../types/studentAttempt';
@@ -98,14 +99,6 @@ interface StudentAttemptProviderProps {
 type AttemptPatch = Omit<Partial<StudentAttempt>, 'integrity' | 'recovery'> & {
   integrity?: Partial<StudentAttempt['integrity']> | undefined;
   recovery?: Partial<StudentAttempt['recovery']> | undefined;
-};
-
-type ObservedSnapshot = {
-  answers: string;
-  writingAnswers: string;
-  flags: string;
-  violations: string;
-  position: string;
 };
 
 const StudentAttemptContext = createContext<StudentAttemptContextValue | null>(null);
@@ -222,20 +215,6 @@ function mergeAttempt(attempt: StudentAttempt, patch: AttemptPatch): StudentAtte
   };
 }
 
-function createObservedSnapshot(attempt: StudentAttempt | null): ObservedSnapshot {
-  return {
-    answers: JSON.stringify(attempt?.answers ?? {}),
-    writingAnswers: JSON.stringify(attempt?.writingAnswers ?? {}),
-    flags: JSON.stringify(attempt?.flags ?? {}),
-    violations: JSON.stringify(attempt?.violations ?? []),
-    position: JSON.stringify({
-      phase: attempt?.phase ?? 'pre-check',
-      currentModule: attempt?.currentModule ?? 'listening',
-      currentQuestionId: attempt?.currentQuestionId ?? null,
-    }),
-  };
-}
-
 function shouldPreferLocalAttemptState(
   localAttempt: StudentAttempt,
   incomingAttempt: StudentAttempt,
@@ -318,7 +297,14 @@ export function StudentAttemptProvider({
   const [attempt, setAttempt] = useState<StudentAttempt | null>(attemptSnapshot);
   const [pendingMutationCount, setPendingMutationCount] = useState(0);
   const attemptRef = useRef<StudentAttempt | null>(attemptSnapshot);
-  const observedRef = useRef<ObservedSnapshot>(createObservedSnapshot(attemptSnapshot));
+  const observedPositionRef = useRef<string>(
+    JSON.stringify({
+      phase: attemptSnapshot?.phase ?? 'pre-check',
+      currentModule: attemptSnapshot?.currentModule ?? 'listening',
+      currentQuestionId: attemptSnapshot?.currentQuestionId ?? null,
+    }),
+  );
+  const observedViolationsRef = useRef<string>(JSON.stringify(attemptSnapshot?.violations ?? []));
   const objectiveFlushTimeoutRef = useRef<number | null>(null);
   const writingFlushTimeoutRef = useRef<number | null>(null);
   const flushPendingRef = useRef<() => Promise<boolean>>(async () => true);
@@ -333,16 +319,16 @@ export function StudentAttemptProvider({
 
   const setStorageDurabilityBlocking = useCallback((active: boolean) => {
     if (active) {
-      if (runtimeState.blockingReasonOverride !== 'storage_unavailable') {
-        runtimeActions.setBlockingReason('storage_unavailable');
+      if (runtimeState.blocking.reason !== 'storage_unavailable') {
+        runtimeActions.transitionBlocking('storage_unavailable', true);
       }
       return;
     }
 
-    if (runtimeState.blockingReasonOverride === 'storage_unavailable') {
-      runtimeActions.setBlockingReason(null);
+    if (runtimeState.blocking.reason === 'storage_unavailable') {
+      runtimeActions.transitionBlocking('storage_unavailable', false);
     }
-  }, [runtimeActions, runtimeState.blockingReasonOverride]);
+  }, [runtimeActions, runtimeState.blocking.reason]);
 
   const recordPendingMutationPersistenceError = useCallback((
     error: unknown,
@@ -446,7 +432,7 @@ export function StudentAttemptProvider({
     patch: AttemptPatch,
     mutationType: StudentAttemptMutationType,
     delayMs: number,
-    payload: Record<string, unknown>,
+    payload: StudentAttemptMutationPayload<StudentAttemptMutationType>,
   ) => {
     const currentAttempt = attemptRef.current;
     if (!currentAttempt) {
@@ -469,10 +455,14 @@ export function StudentAttemptProvider({
       return;
     }
 
-    const payloadWithModule =
+    const payloadWithModule: StudentAttemptMutationPayload<StudentAttemptMutationType> =
       (mutationType === 'answer' || mutationType === 'flag' || mutationType === 'writing_answer') &&
-      payload['module'] === undefined
-        ? { ...payload, module: currentAttempt.currentModule }
+      'module' in payload &&
+      payload.module === undefined
+        ? {
+            ...payload,
+            module: currentAttempt.currentModule,
+          }
         : payload;
     const mutation: StudentAttemptMutation = {
       id: generateId('mutation'),
@@ -481,7 +471,7 @@ export function StudentAttemptProvider({
       timestamp,
       type: mutationType,
       payload: payloadWithModule,
-    };
+    } as StudentAttemptMutation;
     const enqueue = buildQueuedMutationUpdate({
       currentAttempt,
       pending: durabilityMirrorRef.current?.getPendingMutations() ?? [],
@@ -629,7 +619,12 @@ export function StudentAttemptProvider({
 
     if (!attemptSnapshot) {
       attemptRef.current = null;
-      observedRef.current = createObservedSnapshot(null);
+      observedPositionRef.current = JSON.stringify({
+        phase: 'pre-check',
+        currentModule: 'listening',
+        currentQuestionId: null,
+      });
+      observedViolationsRef.current = JSON.stringify([]);
       setRuntimeAttemptSyncState('idle');
       setAttempt(null);
       setPendingMutationCount(0);
@@ -646,7 +641,12 @@ export function StudentAttemptProvider({
       });
       attemptRef.current = ephemeralAttempt;
       setAttempt(ephemeralAttempt);
-      observedRef.current = createObservedSnapshot(ephemeralAttempt);
+      observedPositionRef.current = JSON.stringify({
+        phase: ephemeralAttempt.phase,
+        currentModule: ephemeralAttempt.currentModule,
+        currentQuestionId: ephemeralAttempt.currentQuestionId,
+      });
+      observedViolationsRef.current = JSON.stringify(ephemeralAttempt.violations ?? []);
       setRuntimeAttemptSyncState('idle');
       setPendingMutationCount(0);
       durabilityMirrorRef.current?.reset();
@@ -688,13 +688,23 @@ export function StudentAttemptProvider({
       });
 
       syncAttemptState(mergedAttempt);
-      observedRef.current = createObservedSnapshot(mergedAttempt);
+      observedPositionRef.current = JSON.stringify({
+        phase: mergedAttempt.phase,
+        currentModule: mergedAttempt.currentModule,
+        currentQuestionId: mergedAttempt.currentQuestionId,
+      });
+      observedViolationsRef.current = JSON.stringify(mergedAttempt.violations ?? []);
       return;
     }
 
     attemptRef.current = attemptSnapshot;
     setAttempt(attemptSnapshot);
-    observedRef.current = createObservedSnapshot(attemptSnapshot);
+    observedPositionRef.current = JSON.stringify({
+      phase: attemptSnapshot.phase,
+      currentModule: attemptSnapshot.currentModule,
+      currentQuestionId: attemptSnapshot.currentQuestionId,
+    });
+    observedViolationsRef.current = JSON.stringify(attemptSnapshot.violations ?? []);
     setRuntimeAttemptSyncState(attemptSnapshot.recovery.syncState);
 
     void (async () => {
@@ -759,20 +769,20 @@ export function StudentAttemptProvider({
 
         for (const mutation of pendingMutations) {
           if (mutation.type === 'answer') {
-            const questionId = mutation.payload['questionId'];
+            const questionId = mutation.payload.questionId;
             if (typeof questionId !== 'string' || questionId.trim() === '') {
               continue;
             }
-            replayAnswers[questionId] = mutation.payload['value'] as StudentAnswerValue;
+            replayAnswers[questionId] = mutation.payload.value;
             continue;
           }
 
           if (mutation.type === 'writing_answer') {
-            const taskId = mutation.payload['taskId'];
+            const taskId = mutation.payload.taskId;
             if (typeof taskId !== 'string' || taskId.trim() === '') {
               continue;
             }
-            const value = mutation.payload['value'];
+            const value = mutation.payload.value;
             if (typeof value !== 'string') {
               continue;
             }
@@ -781,31 +791,16 @@ export function StudentAttemptProvider({
           }
 
           if (mutation.type === 'flag') {
-            const questionId = mutation.payload['questionId'];
+            const questionId = mutation.payload.questionId;
             if (typeof questionId !== 'string' || questionId.trim() === '') {
               continue;
             }
-            const value = mutation.payload['value'];
+            const value = mutation.payload.value;
             if (typeof value !== 'boolean') {
               continue;
             }
             replayFlags[questionId] = value;
           }
-        }
-
-        for (const [questionId, value] of Object.entries(replayAnswers)) {
-          runtimeActions.setAnswer(questionId, value as any);
-        }
-
-        for (const [taskId, value] of Object.entries(replayWritingAnswers)) {
-          runtimeActions.setWritingAnswer(taskId, value);
-        }
-
-        for (const [questionId, flagged] of Object.entries(replayFlags)) {
-          if (runtimeState.flags[questionId] === flagged) {
-            continue;
-          }
-          runtimeActions.toggleFlag(questionId);
         }
 
         const currentAttempt = attemptRef.current ?? attemptSnapshot;
@@ -820,7 +815,12 @@ export function StudentAttemptProvider({
         });
 
         syncAttemptState(replayedAttempt);
-        observedRef.current = createObservedSnapshot(replayedAttempt);
+        observedPositionRef.current = JSON.stringify({
+          phase: replayedAttempt.phase,
+          currentModule: replayedAttempt.currentModule,
+          currentQuestionId: replayedAttempt.currentQuestionId,
+        });
+        observedViolationsRef.current = JSON.stringify(replayedAttempt.violations ?? []);
       }
 
       if (pendingMutations.length > 0 && navigator.onLine) {
@@ -855,29 +855,23 @@ export function StudentAttemptProvider({
       verifiedTerminalState === 'not_terminal'
         ? 'exam'
         : runtimeState.phase;
-
-    const nextObserved: ObservedSnapshot = {
-      answers: JSON.stringify(runtimeState.answers),
-      writingAnswers: JSON.stringify(runtimeState.writingAnswers),
-      flags: JSON.stringify(runtimeState.flags),
-      violations: JSON.stringify(runtimeState.violations),
-      position: JSON.stringify({
-        phase: effectivePhase,
-        currentModule: runtimeState.currentModule,
-        currentQuestionId: runtimeState.currentQuestionId,
-      }),
-    };
+    const nextPosition = JSON.stringify({
+      phase: effectivePhase,
+      currentModule: runtimeState.currentModule,
+      currentQuestionId: runtimeState.currentQuestionId,
+    });
+    const nextViolations = JSON.stringify(runtimeState.violations);
 
     const objectivePatch: AttemptPatch = {};
 
     if (
-      nextObserved.violations !== observedRef.current.violations &&
-      JSON.stringify(currentAttempt.violations) !== nextObserved.violations
+      nextViolations !== observedViolationsRef.current &&
+      JSON.stringify(currentAttempt.violations) !== nextViolations
     ) {
       objectivePatch.violations = runtimeState.violations;
     }
 
-    if (nextObserved.position !== observedRef.current.position) {
+    if (nextPosition !== observedPositionRef.current) {
       objectivePatch.phase = effectivePhase;
       objectivePatch.currentModule = runtimeState.currentModule;
       objectivePatch.currentQuestionId = runtimeState.currentQuestionId;
@@ -890,7 +884,7 @@ export function StudentAttemptProvider({
       });
     }
 
-    if (nextObserved.position !== observedRef.current.position) {
+    if (nextPosition !== observedPositionRef.current) {
       void applyPatch(objectivePatch, 'position', 400, {
         changedAreas: ['position'],
         phase: effectivePhase,
@@ -899,16 +893,14 @@ export function StudentAttemptProvider({
       });
     }
 
-    observedRef.current = nextObserved;
+    observedPositionRef.current = nextPosition;
+    observedViolationsRef.current = nextViolations;
   }, [
     applyPatch,
-    runtimeState.answers,
     runtimeState.currentModule,
     runtimeState.currentQuestionId,
-    runtimeState.flags,
     runtimeState.phase,
     runtimeState.violations,
-    runtimeState.writingAnswers,
     runtimeState.runtimeBacked,
     runtimeState.runtimeSnapshot,
   ]);
@@ -930,18 +922,18 @@ export function StudentAttemptProvider({
     answer: StudentAnswerValue,
     meta?: StudentAnswerMutationMeta,
   ) => {
-    const payload: Record<string, unknown> = { questionId, value: answer };
+    const payload: StudentAttemptMutationPayload<'answer'> = { questionId, value: answer };
     if (meta?.interactionType === 'typing' || meta?.interactionType === 'discrete') {
-      payload['interactionType'] = meta.interactionType;
+      payload.interactionType = meta.interactionType;
     }
     if (typeof meta?.slotIndex === 'number' && Number.isInteger(meta.slotIndex) && meta.slotIndex >= 0) {
-      payload['slotIndex'] = meta.slotIndex;
+      payload.slotIndex = meta.slotIndex;
     }
     if (typeof meta?.slotId === 'string' && meta.slotId.trim()) {
-      payload['slotId'] = meta.slotId;
+      payload.slotId = meta.slotId;
     }
     if (typeof meta?.slotCount === 'number' && Number.isInteger(meta.slotCount) && meta.slotCount > 0) {
-      payload['slotCount'] = meta.slotCount;
+      payload.slotCount = meta.slotCount;
     }
 
     void applyPatch(

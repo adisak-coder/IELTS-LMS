@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { saveStudentAuditEvent } from '../studentAuditService';
+import * as attemptCredentialAdapter from '../attemptCredentialAdapter';
 
 describe('studentAuditService', () => {
   const originalFetch = global.fetch;
@@ -70,5 +71,34 @@ describe('studentAuditService', () => {
       }),
     );
   });
-});
 
+  it('resolves attempt auth via attemptCredentialAdapter', async () => {
+    window.sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-01T00:00:00.000Z',
+        },
+      ]),
+    );
+
+    const resolveHeaderSpy = vi.spyOn(
+      attemptCredentialAdapter,
+      'tryBuildAttemptAuthorizationHeader',
+    );
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: null }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await saveStudentAuditEvent('sched-1', 'VIOLATION_DETECTED', { key: 'value' }, 'attempt-1');
+
+    expect(resolveHeaderSpy).toHaveBeenCalledWith('sched-1', 'attempt-1');
+  });
+});

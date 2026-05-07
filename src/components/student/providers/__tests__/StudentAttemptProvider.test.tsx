@@ -315,7 +315,7 @@ describe('StudentAttemptProvider', () => {
       expect(result.current.attempt.state.pendingMutationCount).toBe(1);
     });
 
-    expect(result.current.runtime.state.writingAnswers['task1']).toBe('<p>Draft</p>');
+    expect(result.current.attempt.state.attempt?.writingAnswers['task1']).toBe('<p>Draft</p>');
   });
 
   it('preserves explicit sync state patches for network transitions', async () => {
@@ -1285,7 +1285,6 @@ describe('StudentAttemptProvider', () => {
     });
 
     expect(result.current.attempt.state.attempt?.answers.q1).toBe('CHECKPOINT_ANSWER');
-    expect(result.current.runtime.state.answers.q1).toBe('CHECKPOINT_ANSWER');
   });
 
   it('forces an immediate durable answer flush on pagehide and beforeunload', async () => {

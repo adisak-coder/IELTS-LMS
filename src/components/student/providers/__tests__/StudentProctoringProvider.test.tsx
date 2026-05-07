@@ -8,6 +8,11 @@ import { studentAttemptRepository as studentAttemptRepositoryInstance } from '..
 import { resetStudentAttemptPendingMutationIndexedDbForTests } from '../../../../services/studentAttemptRepository';
 import type { ExamConfig, ExamState } from '../../../../types';
 import type { StudentAttempt } from '../../../../types/studentAttempt';
+import { saveStudentAuditEvent } from '@services/studentAuditService';
+
+vi.mock('@services/studentAuditService', () => ({
+  saveStudentAuditEvent: vi.fn().mockResolvedValue(undefined),
+}));
 
 const mockConfig: ExamConfig = {
   general: {
@@ -389,6 +394,42 @@ describe('StudentProctoringProvider', () => {
         }),
       ],
     });
+  });
+
+  it('includes violationId when publishing a VIOLATION_DETECTED audit event', () => {
+    sessionStorage.setItem(
+      'ielts_student_attempt_credentials_v1',
+      JSON.stringify([
+        {
+          attemptId: 'attempt-1',
+          scheduleId: 'sched-1',
+          attemptToken: 'token-1',
+          expiresAt: '2026-01-02T00:00:00.000Z',
+        },
+      ]),
+    );
+    const harness = renderHarness();
+
+    act(() => {
+      harness.result.current.proctoring.handleViolation(
+        'TEST_CRITICAL',
+        'Critical violation',
+        'critical',
+      );
+    });
+
+    const runtimeViolation = harness.result.current.runtime.state.violations[0];
+    expect(runtimeViolation).toBeDefined();
+
+    expect(saveStudentAuditEvent).toHaveBeenCalledWith(
+      'sched-1',
+      'VIOLATION_DETECTED',
+      expect.objectContaining({
+        violationId: runtimeViolation?.id,
+        violationType: 'TEST_CRITICAL',
+      }),
+      'attempt-1',
+    );
   });
 
   it('applies cooldowns per violation type', () => {

@@ -4,10 +4,8 @@ import { ArrowLeftRight, Check, X } from 'lucide-react';
 import { getWritingTaskContent } from '../../utils/writingTaskUtils';
 import { saveStudentAuditEvent } from '../../services/studentAuditService';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
-import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
-import { WritingChartPreview } from '../writing/WritingChartPreview';
 import { useSplitPaneResize } from './useSplitPaneResize';
 import { MIN_HEIGHTS } from '../../constants/uiConstants';
 
@@ -30,6 +28,21 @@ interface StudentWritingProps {
   showSubmitButton?: boolean | undefined;
   tabletMode?: boolean | undefined;
   registerLiveWritingAnswer?: ((taskId: string, text: string) => void) | undefined;
+}
+
+function normalizeWritingPlainText(value: string): string {
+  return value.replace(/\r\n?/g, '\n');
+}
+
+function readEditorPlainText(editor: HTMLDivElement): string {
+  return normalizeWritingPlainText(editor.textContent ?? '');
+}
+
+function writeEditorPlainText(editor: HTMLDivElement, value: string): void {
+  const normalized = normalizeWritingPlainText(value);
+  if ((editor.textContent ?? '') !== normalized) {
+    editor.textContent = normalized;
+  }
 }
 
 export function StudentWriting({
@@ -59,7 +72,6 @@ export function StudentWriting({
   const editorRef = useRef<HTMLDivElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
-  const latestEditorTextRef = useRef<string>('');
   const lastCommittedDraftByTaskRef = useRef<Record<string, string>>({});
   const deferredBlurCommitTimerRef = useRef<number | null>(null);
   const editorHasFocusRef = useRef(false);
@@ -72,23 +84,23 @@ export function StudentWriting({
     dividerMode: isTabletMode ? 'overlay' : 'consumes-space',
   });
 
-	  const currentTask = writingConfig.tasks.find(t => t.id === activeTaskId) || writingConfig.tasks[0];
-	  const currentText = writingAnswers[activeTaskId] || '';
-	  const showEditorPlaceholder = !isEditorFocused && currentText.trim().length === 0;
+  const currentTask = writingConfig.tasks.find((t) => t.id === activeTaskId) || writingConfig.tasks[0];
+  const currentText = writingAnswers[activeTaskId] || '';
+  const showEditorPlaceholder = !isEditorFocused && currentText.trim().length === 0;
 
-	  const commitDraftText = useCallback(
-	    (taskId: string, rawText: string, options?: { flushDurability?: boolean }) => {
-	      const previous = lastCommittedDraftByTaskRef.current[taskId] ?? '';
-      if (rawText !== previous) {
-        onWritingChange(taskId, rawText);
-        lastCommittedDraftByTaskRef.current[taskId] = rawText;
+  const commitDraftText = useCallback(
+    (taskId: string, rawText: string, options?: { flushDurability?: boolean }) => {
+      const normalizedText = normalizeWritingPlainText(rawText);
+      const previous = lastCommittedDraftByTaskRef.current[taskId] ?? '';
+      if (normalizedText !== previous) {
+        onWritingChange(taskId, normalizedText);
+        lastCommittedDraftByTaskRef.current[taskId] = normalizedText;
       }
-      registerLiveWritingAnswer?.(taskId, rawText);
-      latestEditorTextRef.current = rawText;
+      registerLiveWritingAnswer?.(taskId, normalizedText);
       if (options?.flushDurability !== false) {
         attemptContext?.actions.flushAnswerDurabilityNow?.();
       }
-      return rawText;
+      return normalizedText;
     },
     [attemptContext, onWritingChange, registerLiveWritingAnswer],
   );
@@ -98,30 +110,9 @@ export function StudentWriting({
       return;
     }
 
-    const committed = commitDraftText(activeTaskId, editorRef.current.value);
-    if (committed !== editorRef.current.value) {
-      editorRef.current.value = committed;
-    }
+    const committed = commitDraftText(activeTaskId, readEditorPlainText(editorRef.current));
+    writeEditorPlainText(editorRef.current, committed);
   }, [activeTaskId, commitDraftText]);
-
-  const scheduleDeferredBlurCommit = useCallback(
-    (taskId: string) => {
-      if (deferredBlurCommitTimerRef.current !== null) {
-        window.clearTimeout(deferredBlurCommitTimerRef.current);
-      }
-      deferredBlurCommitTimerRef.current = window.setTimeout(() => {
-        deferredBlurCommitTimerRef.current = null;
-        if (!editorRef.current) {
-          return;
-        }
-        const committed = commitDraftText(taskId, editorRef.current.value);
-        if (committed !== editorRef.current.value) {
-          editorRef.current.value = committed;
-        }
-      }, 0);
-    },
-    [commitDraftText],
-  );
 
   useEffect(() => {
     if (!registerDraftCommit) {
@@ -145,12 +136,11 @@ export function StudentWriting({
     const editor = editorRef.current;
     if (!editor) return;
     if (editorHasFocusRef.current) return;
-    if (currentText !== editor.value) {
-      editor.value = currentText;
-      previousValueRef.current = editor.value;
+    if (currentText !== readEditorPlainText(editor)) {
+      writeEditorPlainText(editor, currentText);
+      previousValueRef.current = readEditorPlainText(editor);
     }
-    latestEditorTextRef.current = editor.value;
-    lastCommittedDraftByTaskRef.current[activeTaskId] = editor.value;
+    lastCommittedDraftByTaskRef.current[activeTaskId] = readEditorPlainText(editor);
   }, [activeTaskId, currentText]);
 
   useEffect(() => {
@@ -284,8 +274,6 @@ export function StudentWriting({
   const optimalMax = currentTask.optimalMax || Math.ceil(minWords * 1.5);
   const isOptimal = wordCount >= optimalMin && wordCount <= optimalMax;
   const isOverLength = currentTask.maxWords && wordCount > currentTask.maxWords;
-  const overLengthWarning = currentTask.maxWords && wordCount > currentTask.maxWords * 0.9;
-
   const resolvedTimeRemaining = timeRemaining ?? writingConfig.duration * 60;
 
   const formatTime = (seconds: number) => {
@@ -302,8 +290,8 @@ export function StudentWriting({
 
   const handleEditorInput = () => {
     if (editorRef.current) {
-      const htmlContent = editorRef.current.innerHTML;
-      onWritingChange(activeTaskId, htmlContent);
+      const textContent = readEditorPlainText(editorRef.current);
+      onWritingChange(activeTaskId, textContent);
     }
   };
 
@@ -490,10 +478,10 @@ export function StudentWriting({
                     Write your answer here…
                   </div>
               )}
-		              <div
-		                ref={editorRef}
-		                contentEditable
-		                onInput={handleEditorInput}
+              <div
+                ref={editorRef}
+                contentEditable
+                onInput={handleEditorInput}
                   suppressContentEditableWarning
                   role="textbox"
                   aria-multiline="true"
@@ -506,11 +494,8 @@ export function StudentWriting({
                     editorHasFocusRef.current = false;
                     setIsEditorFocused(false);
                     if (editorRef.current) {
-                      const sanitized = sanitizeHtml(editorRef.current.innerHTML);
-                      if (sanitized !== editorRef.current.innerHTML) {
-                        editorRef.current.innerHTML = sanitized;
-                      }
-                      onWritingChange(activeTaskId, editorRef.current.innerHTML);
+                      const committed = commitDraftText(activeTaskId, readEditorPlainText(editorRef.current));
+                      writeEditorPlainText(editorRef.current, committed);
                     }
                   }}
                   onPaste={blockWritingEditorInteraction}
@@ -518,17 +503,17 @@ export function StudentWriting({
                   onCut={blockWritingEditorInteraction}
                   onDrop={blockWritingEditorInteraction}
                   onContextMenu={blockWritingEditorInteraction}
-		                className={`flex-1 w-full text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
-		                  isTabletMode
-		                    ? 'pt-4 pr-4 pb-4 pl-10 md:pt-6 md:pr-6 md:pb-6 md:pl-10 lg:pt-8 lg:pr-8 lg:pb-8 lg:pl-10'
-		                    : 'p-4 md:p-6 lg:p-8'
-		                }`}
-		                  data-student-zoom-scroll
-		                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
-		                spellCheck={!security.preventAutocorrect}
-	                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
-	                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
-	              />
+                className={`flex-1 w-full text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+                  isTabletMode
+                    ? 'pt-4 pr-4 pb-4 pl-10 md:pt-6 md:pr-6 md:pb-6 md:pl-10 lg:pt-8 lg:pr-8 lg:pb-8 lg:pl-10'
+                    : 'p-4 md:p-6 lg:p-8'
+                }`}
+                data-student-zoom-scroll
+                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
+                spellCheck={!security.preventAutocorrect}
+                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
+                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
+              />
               </div>
 	          </div>
 

@@ -170,8 +170,9 @@ pub enum RuntimeCommandEvent {
 #[cfg(feature = "sqlx")]
 mod sqlx_text_enums {
     use super::{
-        DeliveryMode, RecurrenceType, RuntimeCommandEvent, RuntimeStatus, ScheduleStatus,
-        SectionRuntimeStatus,
+        AuditActionType, DeliveryMode, ProctorPresenceStatus, RecurrenceType, RuntimeCommandEvent,
+        RuntimeStatus, ScheduleStatus, SectionRuntimeStatus, SessionAuditActor,
+        SessionNoteCategory,
     };
 
     use sqlx::{
@@ -257,6 +258,80 @@ mod sqlx_text_enums {
         CompleteRuntime => "complete_runtime",
         AutoTimeout => "auto_timeout",
     });
+
+    impl_text_enum!(ProctorPresenceStatus, {
+        Active => "active",
+        Left => "left",
+    });
+
+    impl Type<MySql> for AuditActionType {
+        fn type_info() -> MySqlTypeInfo {
+            <&str as Type<MySql>>::type_info()
+        }
+
+        fn compatible(ty: &MySqlTypeInfo) -> bool {
+            <&str as Type<MySql>>::compatible(ty)
+        }
+    }
+
+    impl<'q> Encode<'q, MySql> for AuditActionType {
+        fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+            <&str as Encode<MySql>>::encode_by_ref(&self.as_str(), buf)
+        }
+    }
+
+    impl<'r> Decode<'r, MySql> for AuditActionType {
+        fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+            let text = <&str as Decode<MySql>>::decode(value)?;
+            Ok(AuditActionType::from_str(text))
+        }
+    }
+
+    impl Type<MySql> for SessionAuditActor {
+        fn type_info() -> MySqlTypeInfo {
+            <&str as Type<MySql>>::type_info()
+        }
+
+        fn compatible(ty: &MySqlTypeInfo) -> bool {
+            <&str as Type<MySql>>::compatible(ty)
+        }
+    }
+
+    impl<'q> Encode<'q, MySql> for SessionAuditActor {
+        fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+            <&str as Encode<MySql>>::encode_by_ref(&self.as_str(), buf)
+        }
+    }
+
+    impl<'r> Decode<'r, MySql> for SessionAuditActor {
+        fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+            let text = <&str as Decode<MySql>>::decode(value)?;
+            Ok(SessionAuditActor::from_str(text))
+        }
+    }
+
+    impl Type<MySql> for SessionNoteCategory {
+        fn type_info() -> MySqlTypeInfo {
+            <&str as Type<MySql>>::type_info()
+        }
+
+        fn compatible(ty: &MySqlTypeInfo) -> bool {
+            <&str as Type<MySql>>::compatible(ty)
+        }
+    }
+
+    impl<'q> Encode<'q, MySql> for SessionNoteCategory {
+        fn encode_by_ref(&self, buf: &mut Vec<u8>) -> sqlx::encode::IsNull {
+            <&str as Encode<MySql>>::encode_by_ref(&self.as_str(), buf)
+        }
+    }
+
+    impl<'r> Decode<'r, MySql> for SessionNoteCategory {
+        fn decode(value: sqlx::mysql::MySqlValueRef<'r>) -> Result<Self, BoxDynError> {
+            let text = <&str as Decode<MySql>>::decode(value)?;
+            Ok(SessionNoteCategory::from_str(text))
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -323,10 +398,17 @@ pub struct ProctorPresence {
     pub schedule_id: String,
     pub proctor_id: String,
     pub proctor_name: String,
-    pub status: String,
+    pub status: ProctorPresenceStatus,
     pub joined_at: DateTime<Utc>,
     pub last_heartbeat_at: DateTime<Utc>,
     pub left_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProctorPresenceStatus {
+    Active,
+    Left,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -335,13 +417,150 @@ pub struct ProctorPresence {
 pub struct SessionAuditLog {
     pub id: String,
     pub schedule_id: String,
-    pub actor: String,
-    pub action_type: String,
+    pub actor: SessionAuditActor,
+    pub action_type: AuditActionType,
     pub target_student_id: Option<String>,
     pub payload: Option<Value>,
     pub acknowledged_at: Option<DateTime<Utc>>,
     pub acknowledged_by: Option<String>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SessionAuditActor {
+    System,
+    StudentSystem,
+    ActorId(String),
+    Candidate(String),
+}
+
+impl SessionAuditActor {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::System => "system",
+            Self::StudentSystem => "student-system",
+            Self::ActorId(value) | Self::Candidate(value) => value.as_str(),
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "system" => Self::System,
+            "student-system" => Self::StudentSystem,
+            other => {
+                if Uuid::parse_str(other).is_ok() {
+                    Self::ActorId(other.to_owned())
+                } else {
+                    Self::Candidate(other.to_owned())
+                }
+            }
+        }
+    }
+}
+
+impl Serialize for SessionAuditActor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionAuditActor {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from_str(&value))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AuditActionType {
+    StudentPrecheck,
+    StudentMutationBatch,
+    StudentSubmit,
+    StudentAttemptCreated,
+    StudentNetwork,
+    NetworkDisconnected,
+    NetworkReconnected,
+    HeartbeatLost,
+    StudentWarn,
+    StudentPause,
+    StudentResume,
+    StudentTerminate,
+    ViolationDetected,
+    DeviceContinuityFailed,
+    AutoWarning,
+    ProctorWarning,
+    Unknown(String),
+}
+
+impl AuditActionType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::StudentPrecheck => "STUDENT_PRECHECK",
+            Self::StudentMutationBatch => "STUDENT_MUTATION_BATCH",
+            Self::StudentSubmit => "STUDENT_SUBMIT",
+            Self::StudentAttemptCreated => "STUDENT_ATTEMPT_CREATED",
+            Self::StudentNetwork => "STUDENT_NETWORK",
+            Self::NetworkDisconnected => "NETWORK_DISCONNECTED",
+            Self::NetworkReconnected => "NETWORK_RECONNECTED",
+            Self::HeartbeatLost => "HEARTBEAT_LOST",
+            Self::StudentWarn => "STUDENT_WARN",
+            Self::StudentPause => "STUDENT_PAUSE",
+            Self::StudentResume => "STUDENT_RESUME",
+            Self::StudentTerminate => "STUDENT_TERMINATE",
+            Self::ViolationDetected => "VIOLATION_DETECTED",
+            Self::DeviceContinuityFailed => "DEVICE_CONTINUITY_FAILED",
+            Self::AutoWarning => "AUTO_WARNING",
+            Self::ProctorWarning => "PROCTOR_WARNING",
+            Self::Unknown(value) => value.as_str(),
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "STUDENT_PRECHECK" => Self::StudentPrecheck,
+            "STUDENT_MUTATION_BATCH" => Self::StudentMutationBatch,
+            "STUDENT_SUBMIT" => Self::StudentSubmit,
+            "STUDENT_ATTEMPT_CREATED" => Self::StudentAttemptCreated,
+            "STUDENT_NETWORK" => Self::StudentNetwork,
+            "NETWORK_DISCONNECTED" => Self::NetworkDisconnected,
+            "NETWORK_RECONNECTED" => Self::NetworkReconnected,
+            "HEARTBEAT_LOST" => Self::HeartbeatLost,
+            "STUDENT_WARN" => Self::StudentWarn,
+            "STUDENT_PAUSE" => Self::StudentPause,
+            "STUDENT_RESUME" => Self::StudentResume,
+            "STUDENT_TERMINATE" => Self::StudentTerminate,
+            "VIOLATION_DETECTED" => Self::ViolationDetected,
+            "DEVICE_CONTINUITY_FAILED" => Self::DeviceContinuityFailed,
+            "AUTO_WARNING" => Self::AutoWarning,
+            "PROCTOR_WARNING" => Self::ProctorWarning,
+            other => Self::Unknown(other.to_owned()),
+        }
+    }
+}
+
+impl Serialize for AuditActionType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for AuditActionType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from_str(&value))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,11 +570,61 @@ pub struct SessionNote {
     pub id: String,
     pub schedule_id: String,
     pub author: String,
-    pub category: String,
+    pub category: SessionNoteCategory,
     pub content: String,
     pub is_resolved: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SessionNoteCategory {
+    General,
+    Incident,
+    Proctoring,
+    Integrity,
+    Unknown(String),
+}
+
+impl SessionNoteCategory {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::General => "general",
+            Self::Incident => "incident",
+            Self::Proctoring => "proctoring",
+            Self::Integrity => "integrity",
+            Self::Unknown(value) => value.as_str(),
+        }
+    }
+
+    pub fn from_str(value: &str) -> Self {
+        match value {
+            "general" => Self::General,
+            "incident" => Self::Incident,
+            "proctoring" => Self::Proctoring,
+            "integrity" => Self::Integrity,
+            other => Self::Unknown(other.to_owned()),
+        }
+    }
+}
+
+impl Serialize for SessionNoteCategory {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionNoteCategory {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        Ok(Self::from_str(&value))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, type ReactNode } from 'react';
+import { countAnsweredQuestions, countQuestionSlots } from '@services/examAdapterService';
 import { useProctoring } from './StudentProctoringProvider';
 import { useStudentAttempt } from './StudentAttemptProvider';
 import { useStudentRuntime } from './StudentRuntimeProvider';
@@ -74,6 +75,16 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
   const studentId = attemptState.attemptId ?? undefined;
   const shouldBlockClipboard = examState.config.security.blockClipboard !== false;
   const shouldEnableAntiScreenshotGuard = examState.config.security.antiScreenshotGuardEnabled !== false;
+  const attemptAnswers = attemptState.attempt?.answers ?? {};
+  const totalQuestions = countQuestionSlots(runtimeState.allQuestions);
+  const answeredCount = countAnsweredQuestions(runtimeState.allQuestions, attemptAnswers);
+  const unansweredSubmissionPolicy = examState.config.progression.unansweredSubmissionPolicy ?? 'confirm';
+  const submitRequiresConfirmation =
+    runtimeState.phase === 'exam' &&
+    (runtimeState.currentModule === 'reading' || runtimeState.currentModule === 'listening') &&
+    totalQuestions > 0 &&
+    answeredCount < totalQuestions &&
+    unansweredSubmissionPolicy !== 'allow';
   const screenshotUnsupportedLoggedRef = useRef(false);
 
   useEffect(() => {
@@ -177,7 +188,7 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
         void (async () => {
-          if (runtimeState.submitRequiresConfirmation) {
+          if (submitRequiresConfirmation) {
             uiActions.setShowSubmitConfirm(true);
             return;
           }
@@ -185,11 +196,16 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
           if (runtimeState.runtimeBacked) {
             const flushed = await attemptActions.flushPending();
             if (!flushed) {
-              runtimeActions.setBlockingReason(navigator.onLine ? 'syncing_reconnect' : 'offline');
+              if (!navigator.onLine) {
+                runtimeActions.transitionBlocking('offline', true);
+              } else {
+                runtimeActions.transitionBlocking('syncing_reconnect', true);
+              }
               return;
             }
 
-            runtimeActions.setBlockingReason(null);
+            runtimeActions.transitionBlocking('syncing_reconnect', false);
+            runtimeActions.transitionBlocking('offline', false);
           }
 
           runtimeActions.submitModule();
@@ -211,7 +227,8 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
       switch (normalizedKey) {
         case 'f':
           if (runtimeState.currentQuestionId) {
-            runtimeActions.toggleFlag(runtimeState.currentQuestionId);
+            const nextFlagged = !(attemptState.attempt?.flags?.[runtimeState.currentQuestionId] ?? false);
+            attemptActions.persistFlag(runtimeState.currentQuestionId, nextFlagged);
           }
           return;
         case 'n': {
@@ -359,9 +376,11 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
     attemptState.attemptId,
     examState.config.security.antiScreenshotGuardEnabled,
     examState.config.security.blockClipboard,
+    examState.config.progression.unansweredSubmissionPolicy,
     handleViolation,
     runtimeActions,
     runtimeState,
+    submitRequiresConfirmation,
     uiState.accessibilitySettings.highlightMode,
     uiActions,
   ]);

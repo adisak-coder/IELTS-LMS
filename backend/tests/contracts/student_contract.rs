@@ -14,8 +14,9 @@ use ielts_backend_api::{router::build_router, state::AppState};
 use ielts_backend_application::{builder::BuilderService, scheduling::SchedulingService};
 use ielts_backend_domain::{
     attempt::{
-        StudentAuditLogRequest, StudentBootstrapRequest, StudentHeartbeatRequest,
-        StudentMutationBatchRequest, StudentPrecheckRequest, StudentSubmitRequest,
+        HeartbeatEventType, MutationCommand, MutationType, StudentAuditLogRequest,
+        StudentBootstrapRequest, StudentHeartbeatRequest, StudentMutationBatchRequest,
+        StudentPrecheckRequest, StudentSubmitRequest,
     },
     auth::UserRole,
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
@@ -40,6 +41,14 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
     "0014_student_attempt_presence.sql",
     "0015_operation_write_hardening.sql",
 ];
+
+fn command(mutation_type: MutationType, payload: serde_json::Value) -> MutationCommand {
+    serde_json::from_value(json!({
+        "mutationType": mutation_type.as_str(),
+        "payload": payload
+    }))
+    .expect("valid mutation command")
+}
 
 #[tokio::test]
 async fn get_student_session_returns_schedule_and_version_before_bootstrap() {
@@ -225,16 +234,20 @@ async fn mutation_batch_persists_answers_and_returns_the_server_watermark() {
                                 id: "mutation-1".to_owned(),
                                 seq: 1,
                                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                                mutation_type: "answer".to_owned(),
-                                payload: json!({"questionId": "q1", "value": "A"}),
+                                command: command(
+                                    MutationType::Answer,
+                                    json!({"questionId": "q1", "value": "A"}),
+                                ),
                                 base_revision: None,
                             },
                             ielts_backend_domain::attempt::MutationEnvelope {
                                 id: "mutation-2".to_owned(),
                                 seq: 2,
                                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
-                                mutation_type: "flag".to_owned(),
-                                payload: json!({"questionId": "q1", "value": true}),
+                                command: command(
+                                    MutationType::Flag,
+                                    json!({"questionId": "q1", "value": true}),
+                                ),
                                 base_revision: None,
                             },
                         ],
@@ -385,8 +398,10 @@ async fn mutation_batch_allows_independent_client_sessions_to_persist_reading_an
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -417,8 +432,10 @@ async fn mutation_batch_allows_independent_client_sessions_to_persist_reading_an
                             id: "mutation-2".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q2", "value": "B"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q2", "value": "B"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -474,16 +491,20 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
                 id: "mutation-1".to_owned(),
                 seq: 1,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                mutation_type: "answer".to_owned(),
-                payload: json!({"questionId": "q1", "value": "A"}),
+                command: command(
+                    MutationType::Answer,
+                    json!({"questionId": "q1", "value": "A"}),
+                ),
                 base_revision: None,
             },
             ielts_backend_domain::attempt::MutationEnvelope {
                 id: "mutation-2".to_owned(),
                 seq: 2,
                 timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
-                mutation_type: "flag".to_owned(),
-                payload: json!({"questionId": "q1", "value": true}),
+                command: command(
+                    MutationType::Flag,
+                    json!({"questionId": "q1", "value": true}),
+                ),
                 base_revision: None,
             },
         ],
@@ -549,8 +570,10 @@ async fn mutation_batch_replays_same_idempotency_key_and_rejects_hash_mismatch()
                             id: "mutation-3".to_owned(),
                             seq: 3,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 10).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q2", "value": "B"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q2", "value": "B"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -609,7 +632,7 @@ async fn heartbeat_ack_mode_records_presence_without_touching_attempt_revision()
                         attempt_id: Some(attempt_id.clone()),
                         student_key: student_key.clone(),
                         client_session_id: client_session_id.clone(),
-                        event_type: "heartbeat".to_owned(),
+                        event_type: HeartbeatEventType::Heartbeat,
                         payload: None,
                         client_timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 6, 0).unwrap(),
                     })
@@ -686,7 +709,7 @@ async fn heartbeat_defaults_to_ack_response_without_touching_attempt_revision() 
                         attempt_id: Some(attempt_id.clone()),
                         student_key: student_key.clone(),
                         client_session_id,
-                        event_type: "heartbeat".to_owned(),
+                        event_type: HeartbeatEventType::Heartbeat,
                         payload: None,
                         client_timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 6, 0).unwrap(),
                     })
@@ -747,7 +770,7 @@ async fn heartbeat_records_disconnect_transitions() {
                         attempt_id: Some(attempt_id.clone()),
                         student_key: student_key.clone(),
                         client_session_id,
-                        event_type: "disconnect".to_owned(),
+                        event_type: HeartbeatEventType::Disconnect,
                         payload: Some(json!({"source": "browser"})),
                         client_timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 6, 0).unwrap(),
                     })
@@ -826,7 +849,7 @@ async fn heartbeat_records_lost_transitions() {
                         attempt_id: Some(attempt_id.clone()),
                         student_key: student_key.clone(),
                         client_session_id,
-                        event_type: "lost".to_owned(),
+                        event_type: HeartbeatEventType::Lost,
                         payload: Some(json!({"source": "browser"})),
                         client_timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 6, 10).unwrap(),
                     })
@@ -881,7 +904,8 @@ async fn student_audit_inserts_session_log_and_violation_event() {
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&StudentAuditLogRequest {
-                        action_type: "VIOLATION_DETECTED".to_owned(),
+                        action_type:
+                            ielts_backend_domain::schedule::AuditActionType::ViolationDetected,
                         payload: Some(json!({
                             "event": "VIOLATION_DETECTED",
                             "violationType": "TAB_SWITCH",
@@ -1207,8 +1231,10 @@ async fn submit_applies_final_patch_even_if_last_seen_revision_is_behind() {
                             id: "mutation-submit-stale-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1362,8 +1388,10 @@ async fn bootstrap_hydrates_existing_attempt_after_crash_reconnect() {
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1422,8 +1450,10 @@ async fn mutation_batch_persists_writing_answers_separately_and_tracks_current_q
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "writing_answer".to_owned(),
-                            payload: json!({"taskId": "task1", "value": "Draft 1"}),
+                            command: command(
+                                MutationType::WritingAnswer,
+                                json!({"taskId": "task1", "value": "Draft 1"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1487,8 +1517,10 @@ async fn mutation_batch_rejects_objective_mutations_outside_the_current_section(
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1547,8 +1579,10 @@ async fn mutation_batch_surfaces_section_mismatch_with_reason() {
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "writing_answer".to_owned(),
-                            payload: json!({"taskId": "stale", "value": "hello"}),
+                            command: command(
+                                MutationType::WritingAnswer,
+                                json!({"taskId": "stale", "value": "hello"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1613,8 +1647,10 @@ async fn mutation_batch_rejects_objective_mutations_when_proctor_paused_attempt(
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1678,8 +1714,10 @@ async fn mutation_batch_rejects_objective_mutations_when_runtime_paused() {
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1737,14 +1775,16 @@ async fn violation_snapshot_is_append_only_and_client_cannot_erase_entries() {
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "violation".to_owned(),
-                            payload: json!({
-                                "violations": [{
-                                    "id": "v1",
-                                    "timestamp": "2026-01-10T09:05:00Z",
-                                    "type": "TEST_VIOLATION"
-                                }]
-                            }),
+                            command: command(
+                                MutationType::Violation,
+                                json!({
+                                    "violations": [{
+                                        "id": "v1",
+                                        "timestamp": "2026-01-10T09:05:00Z",
+                                        "type": "TEST_VIOLATION"
+                                    }]
+                                }),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1774,10 +1814,12 @@ async fn violation_snapshot_is_append_only_and_client_cannot_erase_entries() {
                             id: "mutation-2".to_owned(),
                             seq: 2,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 5).unwrap(),
-                            mutation_type: "violation".to_owned(),
-                            payload: json!({
-                                "violations": []
-                            }),
+                            command: command(
+                                MutationType::Violation,
+                                json!({
+                                    "violations": []
+                                }),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1841,12 +1883,14 @@ async fn position_mutation_is_telemetry_only_and_does_not_change_authoritative_s
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "position".to_owned(),
-                            payload: json!({
-                                "phase": "post-exam",
-                                "currentModule": "writing",
-                                "currentQuestionId": "task1"
-                            }),
+                            command: command(
+                                MutationType::Position,
+                                json!({
+                                    "phase": "post-exam",
+                                    "currentModule": "writing",
+                                    "currentQuestionId": "task1"
+                                }),
+                            ),
                             base_revision: None,
                         }],
                     })
@@ -1898,8 +1942,7 @@ async fn oversized_mutation_batch_is_rejected_fast() {
             id: format!("mutation-{}", index + 1),
             seq: (index + 1) as i64,
             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-            mutation_type: "violation".to_owned(),
-            payload: json!({"violations": []}),
+            command: command(MutationType::Violation, json!({"violations": []})),
             base_revision: None,
         })
         .collect();
@@ -1973,8 +2016,10 @@ async fn attempt_token_rejects_schedule_mismatch() {
                             id: "mutation-1".to_owned(),
                             seq: 1,
                             timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            mutation_type: "answer".to_owned(),
-                            payload: json!({"questionId": "q1", "value": "A"}),
+                            command: command(
+                                MutationType::Answer,
+                                json!({"questionId": "q1", "value": "A"}),
+                            ),
                             base_revision: None,
                         }],
                     })

@@ -140,4 +140,24 @@ describe('StudentEntryRoute', () => {
 
     expect(studentEntryMock).not.toHaveBeenCalled();
   });
+
+  it('rejects emails that pass simple regex patterns but fail shared schema validation', async () => {
+    const scheduleId = '550e8400-e29b-41d4-a716-446655440099';
+    renderRoute(scheduleId);
+
+    fireEvent.change(screen.getByLabelText(/wcode/i), {
+      target: { value: 'W250334' },
+    });
+    fireEvent.change(screen.getByLabelText(/email/i), {
+      target: { value: 'student@example..com' },
+    });
+    fireEvent.change(screen.getByLabelText(/full name/i), {
+      target: { value: 'Student One' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /continue/i }));
+
+    await waitFor(() => {
+      expect(studentEntryMock).not.toHaveBeenCalled();
+    });
+  });
 });
