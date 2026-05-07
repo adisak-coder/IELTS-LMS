@@ -29,5 +29,6 @@ Current extractions in the outbox module:
   - `coalescePendingMutations(...)`
   - `buildQueuedMutationUpdate(...)` (enqueue decision: coalesce + durability mode + flush kind)
   - `PendingMutationDurabilityMirror` (durable mirror + checkpoint + debounce)
+  - `createStudentMutationOutbox(...).flushNow()` (network flush state machine)
 
-Next step is to move the network flush state-machine behind the same seam (so the provider becomes mostly lifecycle wiring).
+Next step is to keep shrinking `StudentAttemptProvider` toward lifecycle wiring only (events/timers + passing runtime dimensions).

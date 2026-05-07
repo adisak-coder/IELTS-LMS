@@ -393,6 +393,250 @@ export class PendingMutationDurabilityMirror {
   }
 }
 
+type StudentAttemptPatch = Omit<Partial<StudentAttempt>, 'integrity' | 'recovery'> & {
+  integrity?: Partial<StudentAttempt['integrity']> | undefined;
+  recovery?: Partial<StudentAttempt['recovery']> | undefined;
+};
+
+function mergeStudentAttempt(attempt: StudentAttempt, patch: StudentAttemptPatch): StudentAttempt {
+  return {
+    ...attempt,
+    ...patch,
+    answers: patch.answers ? { ...attempt.answers, ...patch.answers } : attempt.answers,
+    writingAnswers: patch.writingAnswers
+      ? { ...attempt.writingAnswers, ...patch.writingAnswers }
+      : attempt.writingAnswers,
+    flags: patch.flags ? { ...attempt.flags, ...patch.flags } : attempt.flags,
+    violations: patch.violations ?? attempt.violations,
+    integrity: patch.integrity
+      ? {
+          ...attempt.integrity,
+          ...patch.integrity,
+        }
+      : attempt.integrity,
+    recovery: patch.recovery
+      ? {
+          ...attempt.recovery,
+          ...patch.recovery,
+        }
+      : attempt.recovery,
+    updatedAt: patch.updatedAt ?? new Date().toISOString(),
+  };
+}
+
+export interface StudentMutationOutbox {
+  flushNow: () => Promise<boolean>;
+}
+
+export function createStudentMutationOutbox(deps: {
+  getAttempt: () => StudentAttempt | null;
+  syncAttemptState: (attempt: StudentAttempt) => void;
+  setRuntimeAttemptSyncState: (state: AttemptSyncState) => void;
+  setStorageDurabilityBlocking: (active: boolean) => void;
+  mirror: PendingMutationDurabilityMirror;
+  persistenceEnabled: () => boolean;
+  isOnline: () => boolean;
+  hasAttemptCredential: (scheduleId: string, attemptId: string) => boolean;
+  refreshAttemptCredentialForAttempt: (attempt: StudentAttempt) => Promise<boolean>;
+  backendConflictReason: (error: unknown) => string | null;
+  clearAttemptMutationWatermark: (attempt: StudentAttempt) => void;
+  onReplayAfterSubmit?: (attempt: StudentAttempt) => void;
+  saveAttempt: (attempt: StudentAttempt) => Promise<void>;
+  clearPendingMutations: (attemptId: string) => Promise<void>;
+  getAttemptsByScheduleId: (scheduleId: string) => Promise<StudentAttempt[]>;
+}): StudentMutationOutbox {
+  return {
+    flushNow: async () => {
+      const currentAttempt = deps.getAttempt();
+      if (!currentAttempt) {
+        return true;
+      }
+
+      if (!deps.persistenceEnabled()) {
+        deps.mirror.reset();
+        deps.setStorageDurabilityBlocking(false);
+        const idleAttempt = mergeStudentAttempt(currentAttempt, {
+          recovery: { pendingMutationCount: 0, syncState: 'idle' },
+        });
+        deps.syncAttemptState(idleAttempt);
+        return true;
+      }
+
+      if (!deps.isOnline()) {
+        const offlineAttempt = mergeStudentAttempt(currentAttempt, {
+          recovery: {
+            syncState: 'offline',
+            pendingMutationCount: deps.mirror.getPendingMutations().length,
+          },
+        });
+        deps.syncAttemptState(offlineAttempt);
+        return false;
+      }
+
+      if (deps.mirror.getPendingMutations().length === 0) {
+        deps.setRuntimeAttemptSyncState(currentAttempt.recovery.syncState);
+        return true;
+      }
+
+      if (!deps.mirror.isDurableMirrorUpToDate()) {
+        const persistedMirror = await deps.mirror.persistNow('mutation');
+        if (!persistedMirror) {
+          const erroredAttempt = mergeStudentAttempt(currentAttempt, {
+            recovery: {
+              syncState: 'error',
+              pendingMutationCount: deps.mirror.getPendingMutations().length,
+            },
+          });
+          deps.syncAttemptState(erroredAttempt);
+          return false;
+        }
+      }
+
+      if (!deps.hasAttemptCredential(currentAttempt.scheduleId, currentAttempt.id)) {
+        const refreshed = await deps.refreshAttemptCredentialForAttempt(currentAttempt).catch(() => false);
+        if (!refreshed) {
+          const erroredAttempt = mergeStudentAttempt(currentAttempt, {
+            recovery: {
+              syncState: 'error',
+              pendingMutationCount: deps.mirror.getPendingMutations().length,
+            },
+          });
+          deps.syncAttemptState(erroredAttempt);
+          return false;
+        }
+      }
+
+      while (deps.mirror.getPendingMutations().length > 0) {
+        const attemptBeforeFlush = deps.getAttempt() ?? currentAttempt;
+        const mutationsBeingFlushed = deps.mirror.getPendingMutations();
+        const flushedMutationIds = new Set(mutationsBeingFlushed.map((mutation) => mutation.id));
+        const savingAttempt = mergeStudentAttempt(attemptBeforeFlush, {
+          recovery: {
+            syncState: 'saving',
+            pendingMutationCount: mutationsBeingFlushed.length,
+          },
+        });
+        deps.syncAttemptState(savingAttempt);
+
+        try {
+          const persistedAt = new Date().toISOString();
+          const persistedAttempt = mergeStudentAttempt(savingAttempt, {
+            recovery: {
+              lastPersistedAt: persistedAt,
+              pendingMutationCount: 0,
+              syncState: 'saved',
+            },
+          });
+
+          await deps.saveAttempt(persistedAttempt);
+
+          const remainingMutations = deps.mirror.getPendingMutations().filter(
+            (mutation) => !flushedMutationIds.has(mutation.id),
+          );
+
+          if (remainingMutations.length > 0) {
+            const persistedMirror = await (
+              deps.mirror.setPendingMutations(remainingMutations, {
+                durableWriteMode: 'immediate',
+                includesAnswerMutation: remainingMutations.some(
+                  (mutation) => mutation.type === 'answer' || mutation.type === 'writing_answer',
+                ),
+                awaitPersistence: true,
+                source: 'mutation',
+              }) ?? Promise.resolve(true)
+            );
+            if (!persistedMirror) {
+              return false;
+            }
+            const stillSavingAttempt = mergeStudentAttempt(deps.getAttempt() ?? persistedAttempt, {
+              recovery: {
+                lastPersistedAt: persistedAt,
+                pendingMutationCount: remainingMutations.length,
+                syncState: deps.isOnline() ? 'saving' : 'offline',
+              },
+            });
+            deps.syncAttemptState(stillSavingAttempt);
+
+            if (!deps.isOnline()) {
+              return false;
+            }
+
+            continue;
+          }
+
+          deps.mirror.cancelDebouncedPersist();
+          await deps.clearPendingMutations(persistedAttempt.id);
+          const postClearMutations = deps.mirror.getPendingMutations().filter(
+            (mutation) => !flushedMutationIds.has(mutation.id),
+          );
+          if (postClearMutations.length > 0) {
+            const persistedMirror = await (
+              deps.mirror.setPendingMutations(postClearMutations, {
+                durableWriteMode: 'immediate',
+                includesAnswerMutation: postClearMutations.some(
+                  (mutation) => mutation.type === 'answer' || mutation.type === 'writing_answer',
+                ),
+                awaitPersistence: true,
+                source: 'mutation',
+              }) ?? Promise.resolve(true)
+            );
+            if (!persistedMirror) {
+              return false;
+            }
+            const stillSavingAttempt = mergeStudentAttempt(deps.getAttempt() ?? persistedAttempt, {
+              recovery: {
+                lastPersistedAt: persistedAt,
+                pendingMutationCount: postClearMutations.length,
+                syncState: deps.isOnline() ? 'saving' : 'offline',
+              },
+            });
+            deps.syncAttemptState(stillSavingAttempt);
+
+            if (!deps.isOnline()) {
+              return false;
+            }
+
+            continue;
+          }
+
+          deps.mirror.finalizeAfterSuccessfulClear(persistedAttempt.id);
+          const cachedAttempts = await deps.getAttemptsByScheduleId(persistedAttempt.scheduleId);
+          const refreshed =
+            cachedAttempts.find((candidate) => candidate.id === persistedAttempt.id) ?? persistedAttempt;
+          deps.syncAttemptState(refreshed);
+          return true;
+        } catch (error) {
+          const conflictReason = deps.backendConflictReason(error);
+          if (conflictReason === 'ATTEMPT_SUBMITTED') {
+            deps.onReplayAfterSubmit?.(currentAttempt);
+            deps.mirror.reset();
+            await deps.clearPendingMutations(currentAttempt.id);
+            deps.clearAttemptMutationWatermark(currentAttempt);
+            deps.setStorageDurabilityBlocking(false);
+            const cachedAttempts = await deps.getAttemptsByScheduleId(currentAttempt.scheduleId);
+            const refreshed =
+              cachedAttempts.find((candidate) => candidate.id === currentAttempt.id) ?? currentAttempt;
+            deps.syncAttemptState(refreshed);
+            return true;
+          }
+
+          const erroredAttempt = mergeStudentAttempt(deps.getAttempt() ?? savingAttempt, {
+            recovery: {
+              syncState: deps.isOnline() ? 'error' : 'offline',
+              pendingMutationCount: deps.mirror.getPendingMutations().length,
+            },
+          });
+          deps.syncAttemptState(erroredAttempt);
+          return false;
+        }
+      }
+
+      deps.setRuntimeAttemptSyncState((deps.getAttempt() ?? currentAttempt).recovery.syncState);
+      return true;
+    },
+  };
+}
+
 export function buildQueuedMutationUpdate(args: {
   currentAttempt: Pick<StudentAttempt, 'id' | 'scheduleId' | 'currentModule'>;
   pending: StudentAttemptMutation[];

@@ -21,6 +21,7 @@ import {
 } from '@services/studentAttemptRepository';
 import {
   buildQueuedMutationUpdate,
+  createStudentMutationOutbox,
   DurablePersistTriggerSource,
   PendingMutationDurabilityMirror,
   readAnswerSyncCheckpoint,
@@ -412,12 +413,6 @@ export function StudentAttemptProvider({
     });
   }
 
-  const persistPendingMutationsMirrorNow = useCallback(
-    (source: DurablePersistTriggerSource = 'mutation') =>
-      durabilityMirrorRef.current?.persistNow(source) ?? Promise.resolve(true),
-    [],
-  );
-
   const flushAnswerDurableMirrorNow = useCallback((source: DurablePersistTriggerSource) => {
     durabilityMirrorRef.current?.flushAnswerDurableMirrorNow(source);
   }, []);
@@ -525,214 +520,41 @@ export function StudentAttemptProvider({
     }
 
     const promise = (async () => {
-      const currentAttempt = attemptRef.current;
-      if (!currentAttempt) {
-        return true;
-      }
       const mirror = durabilityMirrorRef.current;
       if (!mirror) {
         return true;
       }
 
-      if (!persistenceEnabled) {
-        mirror.reset();
-        setStorageDurabilityBlocking(false);
-        const idleAttempt = mergeAttempt(currentAttempt, {
-          recovery: {
-            pendingMutationCount: 0,
-            syncState: 'idle',
-          },
-        });
-        syncAttemptState(idleAttempt);
-        return true;
-      }
-
-      if (!navigator.onLine) {
-        const offlineAttempt = mergeAttempt(currentAttempt, {
-          recovery: {
-            syncState: 'offline',
-            pendingMutationCount: mirror.getPendingMutations().length,
-          },
-        });
-        syncAttemptState(offlineAttempt);
-        return false;
-      }
-
-      if (mirror.getPendingMutations().length === 0) {
-        setRuntimeAttemptSyncState(currentAttempt.recovery.syncState);
-        return true;
-      }
-
-      if (!mirror.isDurableMirrorUpToDate()) {
-        const persistedMirror = await persistPendingMutationsMirrorNow();
-        if (!persistedMirror) {
-          const erroredAttempt = mergeAttempt(currentAttempt, {
-            recovery: {
-              syncState: 'error',
-              pendingMutationCount: mirror.getPendingMutations().length,
-            },
-          });
-          syncAttemptState(erroredAttempt);
-          return false;
-        }
-      }
-
-      if (!hasAttemptCredential(currentAttempt.scheduleId, currentAttempt.id)) {
-        const refreshed = await refreshAttemptCredentialForAttempt(currentAttempt).catch(() => false);
-        if (!refreshed) {
-          const erroredAttempt = mergeAttempt(currentAttempt, {
-            recovery: {
-              syncState: 'error',
-              pendingMutationCount: mirror.getPendingMutations().length,
-            },
-          });
-          syncAttemptState(erroredAttempt);
-          return false;
-        }
-      }
-
-      while (mirror.getPendingMutations().length > 0) {
-        const attemptBeforeFlush = attemptRef.current ?? currentAttempt;
-        const mutationsBeingFlushed = mirror.getPendingMutations();
-        const flushedMutationIds = new Set(mutationsBeingFlushed.map((mutation) => mutation.id));
-        const savingAttempt = mergeAttempt(attemptBeforeFlush, {
-          recovery: {
-            syncState: 'saving',
-            pendingMutationCount: mutationsBeingFlushed.length,
-          },
-        });
-        syncAttemptState(savingAttempt);
-
-        try {
-          const persistedAt = new Date().toISOString();
-          const persistedAttempt = mergeAttempt(savingAttempt, {
-            recovery: {
-              lastPersistedAt: persistedAt,
-              pendingMutationCount: 0,
-              syncState: 'saved',
-            },
-          });
-
-          await studentAttemptRepository.saveAttempt(persistedAttempt);
-
-          const remainingMutations = mirror.getPendingMutations().filter(
-            (mutation) => !flushedMutationIds.has(mutation.id),
+      const outbox = createStudentMutationOutbox({
+        getAttempt: () => attemptRef.current,
+        syncAttemptState,
+        setRuntimeAttemptSyncState,
+        setStorageDurabilityBlocking,
+        mirror,
+        persistenceEnabled: () => persistenceEnabled,
+        isOnline: () => navigator.onLine,
+        hasAttemptCredential,
+        refreshAttemptCredentialForAttempt,
+        backendConflictReason,
+        clearAttemptMutationWatermark,
+        onReplayAfterSubmit: (attempt) => {
+          emitStudentObservabilityMetric(
+            'student_mutation_replay_after_submit_total',
+            withStudentObservabilityDimensions({
+              scheduleId: attempt.scheduleId,
+              attemptId: attempt.id,
+              endpoint: 'mutations:batch',
+              reason: 'ATTEMPT_SUBMITTED',
+              syncState: attempt.recovery.syncState,
+            }),
           );
+        },
+        saveAttempt: (attempt) => studentAttemptRepository.saveAttempt(attempt),
+        clearPendingMutations: (attemptId) => studentAttemptRepository.clearPendingMutations(attemptId),
+        getAttemptsByScheduleId: (scheduleId) => studentAttemptRepository.getAttemptsByScheduleId(scheduleId),
+      });
 
-          if (remainingMutations.length > 0) {
-            const persistedMirror = await (
-              setPendingMutations(remainingMutations, {
-                durableWriteMode: 'immediate',
-                includesAnswerMutation: remainingMutations.some(
-                  (mutation) => mutation.type === 'answer' || mutation.type === 'writing_answer',
-                ),
-                awaitPersistence: true,
-                source: 'mutation',
-              }) ?? Promise.resolve(true)
-            );
-            if (!persistedMirror) {
-              return false;
-            }
-            const stillSavingAttempt = mergeAttempt(attemptRef.current ?? persistedAttempt, {
-              recovery: {
-                lastPersistedAt: persistedAt,
-                pendingMutationCount: remainingMutations.length,
-                syncState: navigator.onLine ? 'saving' : 'offline',
-              },
-            });
-            syncAttemptState(stillSavingAttempt);
-
-            if (!navigator.onLine) {
-              return false;
-            }
-
-            continue;
-          }
-
-          mirror.cancelDebouncedPersist();
-          await studentAttemptRepository.clearPendingMutations(persistedAttempt.id);
-          const postClearMutations = mirror.getPendingMutations().filter(
-            (mutation) => !flushedMutationIds.has(mutation.id),
-          );
-          if (postClearMutations.length > 0) {
-            const persistedMirror = await (
-              setPendingMutations(postClearMutations, {
-                durableWriteMode: 'immediate',
-                includesAnswerMutation: postClearMutations.some(
-                  (mutation) => mutation.type === 'answer' || mutation.type === 'writing_answer',
-                ),
-                awaitPersistence: true,
-                source: 'mutation',
-              }) ?? Promise.resolve(true)
-            );
-            if (!persistedMirror) {
-              return false;
-            }
-            const stillSavingAttempt = mergeAttempt(attemptRef.current ?? persistedAttempt, {
-              recovery: {
-                lastPersistedAt: persistedAt,
-                pendingMutationCount: postClearMutations.length,
-                syncState: navigator.onLine ? 'saving' : 'offline',
-              },
-            });
-            syncAttemptState(stillSavingAttempt);
-
-            if (!navigator.onLine) {
-              return false;
-            }
-
-            continue;
-          }
-          mirror.finalizeAfterSuccessfulClear(persistedAttempt.id);
-          const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId(
-            persistedAttempt.scheduleId,
-          );
-          const refreshed =
-            cachedAttempts.find((candidate) => candidate.id === persistedAttempt.id) ?? persistedAttempt;
-          syncAttemptState(refreshed);
-          return true;
-        } catch (error) {
-          // If the attempt was already submitted, purge the queue and move on.
-          // The server deterministically rejects mutations after submit with ATTEMPT_SUBMITTED.
-          const conflictReason = backendConflictReason(error);
-          if (conflictReason === 'ATTEMPT_SUBMITTED') {
-            emitStudentObservabilityMetric(
-              'student_mutation_replay_after_submit_total',
-              withStudentObservabilityDimensions({
-                scheduleId: currentAttempt.scheduleId,
-                attemptId: currentAttempt.id,
-                endpoint: 'mutations:batch',
-                reason: conflictReason,
-                syncState: currentAttempt.recovery.syncState,
-              }),
-            );
-            // Purge pending mutations - the attempt is already submitted.
-            mirror.reset();
-            await studentAttemptRepository.clearPendingMutations(currentAttempt.id);
-            clearAttemptMutationWatermark(currentAttempt);
-            setStorageDurabilityBlocking(false);
-            // Refresh attempt state from cache to get the submitted state.
-            const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId(
-              currentAttempt.scheduleId,
-            );
-            const refreshed =
-              cachedAttempts.find((candidate) => candidate.id === currentAttempt.id) ?? currentAttempt;
-            syncAttemptState(refreshed);
-            return true;
-          }
-          const erroredAttempt = mergeAttempt(attemptRef.current ?? savingAttempt, {
-            recovery: {
-              syncState: navigator.onLine ? 'error' : 'offline',
-              pendingMutationCount: mirror.getPendingMutations().length,
-            },
-          });
-          syncAttemptState(erroredAttempt);
-          return false;
-        }
-      }
-
-      setRuntimeAttemptSyncState((attemptRef.current ?? currentAttempt).recovery.syncState);
-      return true;
+      return outbox.flushNow();
     })();
 
     flushInFlightRef.current = promise;
@@ -745,8 +567,6 @@ export function StudentAttemptProvider({
     }
   }, [
     persistenceEnabled,
-    persistPendingMutationsMirrorNow,
-    setPendingMutations,
     setRuntimeAttemptSyncState,
     setStorageDurabilityBlocking,
     syncAttemptState,

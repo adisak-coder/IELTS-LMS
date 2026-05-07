@@ -1,0 +1,116 @@
+import { describe, expect, it, vi } from 'vitest';
+import type { StudentAttempt, StudentAttemptMutation } from '../../types/studentAttempt';
+import {
+  PendingMutationDurabilityMirror,
+  createStudentMutationOutbox,
+} from '../studentMutationOutbox';
+
+function makeAttempt(overrides?: Partial<StudentAttempt>): StudentAttempt {
+  return {
+    id: 'attempt-1',
+    scheduleId: 'sched-1',
+    studentKey: 'student-key',
+    examId: 'exam-1',
+    examTitle: 'Exam',
+    candidateId: 'cand-1',
+    candidateName: 'Candidate',
+    candidateEmail: 'candidate@example.com',
+    phase: 'exam',
+    currentModule: 'reading',
+    currentQuestionId: 'q1',
+    answers: {},
+    writingAnswers: {},
+    flags: {},
+    violations: [],
+    proctorStatus: 'active' as any,
+    proctorNote: null,
+    proctorUpdatedAt: null,
+    proctorUpdatedBy: null,
+    lastWarningId: null,
+    lastAcknowledgedWarningId: null,
+    integrity: {
+      preCheck: null,
+      deviceFingerprintHash: null,
+      clientSessionId: null,
+      lastDisconnectAt: null,
+      lastReconnectAt: null,
+      lastHeartbeatAt: null,
+      lastHeartbeatStatus: 'idle',
+    },
+    recovery: {
+      lastRecoveredAt: null,
+      lastLocalMutationAt: null,
+      lastPersistedAt: null,
+      lastDroppedMutations: null,
+      pendingMutationCount: 0,
+      serverAcceptedThroughSeq: 0,
+      clientSessionId: null,
+      syncState: 'idle',
+    },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+describe('studentMutationOutbox.flushNow', () => {
+  it('flushes pending mutations and clears the queue on success', async () => {
+    const attempt = makeAttempt();
+    const syncAttemptState = vi.fn();
+    const setRuntimeAttemptSyncState = vi.fn();
+    const setStorageDurabilityBlocking = vi.fn();
+
+    const saveAttempt = vi.fn(async () => {});
+    const clearPendingMutations = vi.fn(async () => {});
+    const getAttemptsByScheduleId = vi.fn(async () => [attempt]);
+
+    const mirror = new PendingMutationDurabilityMirror({
+      debounceMs: 100,
+      getAttempt: () => attempt,
+      savePendingMutations: vi.fn(async () => {}),
+      clearPendingMutations: vi.fn(async () => {}),
+      setStorageDurabilityBlocking,
+      onPersistError: vi.fn(),
+      onPendingMutationCountChange: vi.fn(),
+    });
+
+    const mutation: StudentAttemptMutation = {
+      id: 'm1',
+      attemptId: attempt.id,
+      scheduleId: attempt.scheduleId,
+      timestamp: new Date().toISOString(),
+      type: 'answer',
+      payload: { questionId: 'q1', value: 'A', module: 'reading' },
+    };
+    mirror.setPendingMutations([mutation], {
+      durableWriteMode: 'immediate',
+      includesAnswerMutation: true,
+      awaitPersistence: true,
+      source: 'mutation',
+    });
+
+    const outbox = createStudentMutationOutbox({
+      getAttempt: () => attempt,
+      syncAttemptState,
+      setRuntimeAttemptSyncState,
+      setStorageDurabilityBlocking,
+      mirror,
+      persistenceEnabled: () => true,
+      isOnline: () => true,
+      hasAttemptCredential: () => true,
+      refreshAttemptCredentialForAttempt: vi.fn(async () => true),
+      backendConflictReason: () => null,
+      clearAttemptMutationWatermark: vi.fn(),
+      saveAttempt,
+      clearPendingMutations,
+      getAttemptsByScheduleId,
+    });
+
+    const ok = await outbox.flushNow();
+    expect(ok).toBe(true);
+    expect(saveAttempt).toHaveBeenCalledTimes(1);
+    expect(clearPendingMutations).toHaveBeenCalledTimes(1);
+    expect(mirror.getPendingMutations()).toHaveLength(0);
+  });
+});
+
