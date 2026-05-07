@@ -24,8 +24,9 @@ describe('StudentZoomableMedia', () => {
 
     expect(screen.getByRole('dialog', { name: /reference diagram zoomed view/i })).toBeInTheDocument();
     expect(screen.getByText(/zoom only/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('100%');
 
     fireEvent.click(screen.getByRole('button', { name: /zoom in image/i }));
-    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('155%');
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('120%');
   });
 });

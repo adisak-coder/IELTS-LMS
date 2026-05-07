@@ -15,7 +15,7 @@ type StudentZoomableMediaProps = {
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 2.8;
-const DEFAULT_ZOOM = 1.35;
+const DEFAULT_ZOOM = 1;
 
 export function StudentZoomableMedia({
   sources,
