@@ -428,6 +428,20 @@ export interface StudentMutationOutbox {
   flushNow: () => Promise<boolean>;
 }
 
+function generateLifecycleCycleId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function shouldSampleLifecycleSuccessLogs(sampleRate = 0.2): boolean {
+  if (!(sampleRate > 0)) {
+    return false;
+  }
+  if (sampleRate >= 1) {
+    return true;
+  }
+  return Math.random() < sampleRate;
+}
+
 export function createStudentMutationOutbox(deps: {
   getAttempt: () => StudentAttempt | null;
   syncAttemptState: (attempt: StudentAttempt) => void;
@@ -441,12 +455,17 @@ export function createStudentMutationOutbox(deps: {
   backendConflictReason: (error: unknown) => string | null;
   clearAttemptMutationWatermark: (attempt: StudentAttempt) => void;
   onReplayAfterSubmit?: (attempt: StudentAttempt) => void;
-  saveAttempt: (attempt: StudentAttempt) => Promise<void>;
+  saveAttempt: (
+    attempt: StudentAttempt,
+    context?: { flushCycleId?: string; sampledSuccessLogs?: boolean },
+  ) => Promise<void>;
   clearPendingMutations: (attemptId: string) => Promise<void>;
   getAttemptsByScheduleId: (scheduleId: string) => Promise<StudentAttempt[]>;
 }): StudentMutationOutbox {
   return {
     flushNow: async () => {
+      const flushCycleId = generateLifecycleCycleId('flush');
+      const sampledSuccessLogs = shouldSampleLifecycleSuccessLogs();
       const currentAttempt = deps.getAttempt();
       if (!currentAttempt) {
         return true;
@@ -528,7 +547,10 @@ export function createStudentMutationOutbox(deps: {
             },
           });
 
-          await deps.saveAttempt(persistedAttempt);
+          await deps.saveAttempt(persistedAttempt, {
+            flushCycleId,
+            sampledSuccessLogs,
+          });
 
           const remainingMutations = deps.mirror.getPendingMutations().filter(
             (mutation) => !flushedMutationIds.has(mutation.id),

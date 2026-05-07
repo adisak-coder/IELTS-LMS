@@ -15,7 +15,7 @@ use ielts_backend_domain::schedule::{
     SessionAuditLog,
 };
 use ielts_backend_infrastructure::actor_context::ActorContext;
-use sqlx::query_scalar;
+use sqlx::{query_scalar, Row};
 use uuid::Uuid;
 
 use crate::{
@@ -41,6 +41,35 @@ pub struct ProctorSessionQuery {
     pub alert_limit: Option<u32>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLifecycleQuery {
+    pub schedule_id: Option<Uuid>,
+    pub attempt_id: Option<String>,
+    pub stage: Option<String>,
+    pub status: Option<String>,
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveLifecycleEventDto {
+    pub id: String,
+    pub schedule_id: String,
+    pub attempt_id: String,
+    pub stage: String,
+    pub status: String,
+    pub cycle_id: Option<String>,
+    pub requested_mutation_count: Option<i64>,
+    pub applied_mutation_count: Option<i64>,
+    pub server_accepted_through_seq: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub error_message: Option<String>,
+    pub created_at: String,
+}
+
 pub async fn list_sessions(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -63,6 +92,84 @@ pub async fn list_sessions(
         .telemetry
         .observe_db_operation("proctor.list_sessions", started.elapsed());
     Ok(ApiResponse::success_with_request_id(sessions, request_id.0))
+}
+
+pub async fn list_save_lifecycle_events(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    principal: AuthenticatedUser,
+    Query(query): Query<SaveLifecycleQuery>,
+) -> Result<ApiResponse<Vec<SaveLifecycleEventDto>>, ApiError> {
+    principal.require_one_of(&[UserRole::Admin])?;
+    let limit = query.limit.unwrap_or(200).min(1000) as i64;
+    let started = std::time::Instant::now();
+    let pool = state.db_pool();
+
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            id,
+            schedule_id,
+            attempt_id,
+            stage,
+            status,
+            cycle_id,
+            requested_mutation_count,
+            applied_mutation_count,
+            server_accepted_through_seq,
+            duration_ms,
+            error_message,
+            DATE_FORMAT(created_at, '%Y-%m-%dT%H:%i:%sZ') AS created_at
+        FROM student_save_lifecycle_events
+        WHERE (? IS NULL OR schedule_id = ?)
+          AND (? IS NULL OR attempt_id = ?)
+          AND (? IS NULL OR stage = ?)
+          AND (? IS NULL OR status = ?)
+          AND (? IS NULL OR created_at >= ?)
+          AND (? IS NULL OR created_at <= ?)
+        ORDER BY created_at DESC
+        LIMIT ?
+        "#,
+    )
+    .bind(query.schedule_id.map(|value| value.to_string()))
+    .bind(query.schedule_id.map(|value| value.to_string()))
+    .bind(query.attempt_id.clone())
+    .bind(query.attempt_id.clone())
+    .bind(query.stage.clone())
+    .bind(query.stage.clone())
+    .bind(query.status.clone())
+    .bind(query.status.clone())
+    .bind(query.from.clone())
+    .bind(query.from.clone())
+    .bind(query.to.clone())
+    .bind(query.to.clone())
+    .bind(limit)
+    .fetch_all(&pool)
+    .await
+    .map_err(|err| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", &err.to_string()))?;
+
+    let events = rows
+        .into_iter()
+        .map(|row| SaveLifecycleEventDto {
+            id: row.get::<String, _>("id"),
+            schedule_id: row.get::<String, _>("schedule_id"),
+            attempt_id: row.get::<String, _>("attempt_id"),
+            stage: row.get::<String, _>("stage"),
+            status: row.get::<String, _>("status"),
+            cycle_id: row.get::<Option<String>, _>("cycle_id"),
+            requested_mutation_count: row.get::<Option<i64>, _>("requested_mutation_count"),
+            applied_mutation_count: row.get::<Option<i64>, _>("applied_mutation_count"),
+            server_accepted_through_seq: row.get::<Option<i64>, _>("server_accepted_through_seq"),
+            duration_ms: row.get::<Option<i64>, _>("duration_ms"),
+            error_message: row.get::<Option<String>, _>("error_message"),
+            created_at: row.get::<String, _>("created_at"),
+        })
+        .collect::<Vec<_>>();
+
+    state
+        .telemetry
+        .observe_db_operation("proctor.list_save_lifecycle_events", started.elapsed());
+    Ok(ApiResponse::success_with_request_id(events, request_id.0))
 }
 
 pub async fn get_session(

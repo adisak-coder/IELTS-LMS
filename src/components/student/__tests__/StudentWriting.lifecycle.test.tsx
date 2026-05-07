@@ -255,4 +255,29 @@ describe('StudentWriting lifecycle durability', () => {
 
     expect(onWritingChange).toHaveBeenLastCalledWith('task1', exact);
   });
+
+  it('preserves contenteditable line breaks when committing and restoring drafts', () => {
+    const onWritingChange = vi.fn();
+
+    render(
+      <StudentWriting
+        state={createExamState()}
+        writingAnswers={{}}
+        onWritingChange={onWritingChange}
+        onSubmit={() => undefined}
+        currentQuestionId="task1"
+        onNavigate={() => undefined}
+      />,
+    );
+
+    const editor = screen.getByRole('textbox', { name: /writing response/i });
+    Object.defineProperty(editor, 'innerText', {
+      configurable: true,
+      get: () => 'Line 1\n\nLine 3',
+    });
+    fireEvent.input(editor);
+    fireEvent.blur(editor);
+
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'Line 1\n\nLine 3');
+  });
 });

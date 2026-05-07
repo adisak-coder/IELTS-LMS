@@ -49,6 +49,10 @@ const MAX_HEARTBEAT_FLUSH_EVENTS = 50;
 const MUTATION_BATCH_CHUNK_SIZE = 100;
 const MAX_PENDING_MUTATIONS_PER_ATTEMPT = 1_000;
 const MAX_PENDING_MUTATION_BYTES_PER_ATTEMPT = 512 * 1024;
+const STUDENT_LIFECYCLE_LOG_SAMPLE_RATE = 0.2;
+const STUDENT_LIFECYCLE_SAMPLE_HEADER = 'x-student-lifecycle-sampled';
+const STUDENT_FLUSH_CYCLE_ID_HEADER = 'x-student-flush-cycle-id';
+const STUDENT_SUBMIT_CYCLE_ID_HEADER = 'x-student-submit-cycle-id';
 
 export interface StudentLocalCachePolicy {
   submittedReceiptTtlMs: number;
@@ -180,6 +184,11 @@ interface BackendSubmitRequest {
   finalClientSnapshotHash?: string | undefined;
 }
 
+interface SaveAttemptLifecycleContext {
+  flushCycleId?: string;
+  sampledSuccessLogs?: boolean;
+}
+
 interface BackendAttemptCredential {
   attemptToken: string;
   expiresAt: string;
@@ -201,6 +210,16 @@ function generateUuid(): string {
   }
 
   return `00000000-0000-4000-8000-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`;
+}
+
+function shouldEmitStudentLifecycleSuccessLog(sampleRate: number): boolean {
+  if (!(sampleRate > 0)) {
+    return false;
+  }
+  if (sampleRate >= 1) {
+    return true;
+  }
+  return Math.random() < sampleRate;
 }
 
 function buildFinalAnswerPatch(attempt: StudentAttempt): StudentFinalAnswerPatch {
@@ -1401,7 +1420,7 @@ export interface IStudentAttemptRepository {
   getAttemptByScheduleId(scheduleId: string, studentKey: string): Promise<StudentAttempt | null>;
   getAllAttempts(): Promise<StudentAttempt[]>;
   getAttemptsByScheduleId(scheduleId: string): Promise<StudentAttempt[]>;
-  saveAttempt(attempt: StudentAttempt): Promise<void>;
+  saveAttempt(attempt: StudentAttempt, context?: SaveAttemptLifecycleContext): Promise<void>;
   submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt>;
   createAttempt(seed: StudentAttemptSeed): Promise<StudentAttempt>;
   savePendingMutations(attemptId: string, mutations: StudentAttemptMutation[]): Promise<void>;
@@ -1904,6 +1923,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     watermarkKey: string;
     startSeq: number;
     mutations: StudentAttemptMutation[];
+    lifecycleContext?: SaveAttemptLifecycleContext;
   }): Promise<FlushQueueResult> {
     let currentAttempt = args.attempt;
     let nextSeq = args.startSeq;
@@ -1937,7 +1957,15 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
             attemptId: currentAttempt.id,
             mutations: mappedCommands,
           },
-          { retries: 0 },
+          {
+            retries: 0,
+            headers: {
+              ...(args.lifecycleContext?.flushCycleId
+                ? { [STUDENT_FLUSH_CYCLE_ID_HEADER]: args.lifecycleContext.flushCycleId }
+                : {}),
+              [STUDENT_LIFECYCLE_SAMPLE_HEADER]: String(Boolean(args.lifecycleContext?.sampledSuccessLogs)),
+            },
+          },
         );
 
         nextSeq = response.serverAcceptedThroughSeq;
@@ -2017,7 +2045,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     return this.cache.getAttemptsByScheduleId(scheduleId);
   }
 
-  async saveAttempt(attempt: StudentAttempt): Promise<void> {
+  async saveAttempt(attempt: StudentAttempt, context?: SaveAttemptLifecycleContext): Promise<void> {
     await this.withSaveAttemptLock(attempt.id, async () => {
       const pendingMutations = this.filterTombstonedMutations(
         attempt.id,
@@ -2045,6 +2073,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         watermarkKey,
         startSeq,
         mutations: pendingMutations,
+        ...(context ? { lifecycleContext: context } : {}),
       });
       if (first.ok) {
         return;
@@ -2089,6 +2118,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
           watermarkKey,
           startSeq: latestRevision ?? first.nextSeq,
           mutations: rebasedMutations,
+          ...(context ? { lifecycleContext: context } : {}),
         });
         if (second.ok) {
           return;
@@ -2257,6 +2287,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         watermarkKey,
         startSeq: first.nextSeq,
         mutations: prunedMutations,
+        ...(context ? { lifecycleContext: context } : {}),
       });
       if (second.ok) {
         return;
@@ -2304,6 +2335,8 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
     }
 
     const submissionId = `student-submit-${attempt.id}`;
+    const submitCycleId = generateUuid();
+    const sampledSuccessLogs = shouldEmitStudentLifecycleSuccessLog(STUDENT_LIFECYCLE_LOG_SAMPLE_RATE);
     const endpoint = studentSessionTransport.paths.submit(attempt.scheduleId);
     const submitOnce = async (candidate: StudentAttempt): Promise<BackendSubmitResponse> => {
       const payload = await this.buildSubmitPayload(candidate, submissionId);
@@ -2314,6 +2347,8 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         {
           headers: {
             'Idempotency-Key': submissionId,
+            [STUDENT_SUBMIT_CYCLE_ID_HEADER]: submitCycleId,
+            [STUDENT_LIFECYCLE_SAMPLE_HEADER]: String(sampledSuccessLogs),
           },
           timeout: 60_000,
           retries: 0,
@@ -2342,7 +2377,10 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         }),
       );
 
-      await this.saveAttempt(attemptForSubmit);
+      await this.saveAttempt(attemptForSubmit, {
+        flushCycleId: generateUuid(),
+        sampledSuccessLogs,
+      });
       attemptForSubmit =
         (await this.cache.getAllAttempts()).find((candidate) => candidate.id === attempt.id) ??
         attemptForSubmit;

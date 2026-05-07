@@ -35,7 +35,8 @@ function normalizeWritingPlainText(value: string): string {
 }
 
 function readEditorPlainText(editor: HTMLDivElement): string {
-  return normalizeWritingPlainText(editor.textContent ?? '');
+  const raw = typeof editor.innerText === 'string' ? editor.innerText : (editor.textContent ?? '');
+  return normalizeWritingPlainText(raw);
 }
 
 function writeEditorPlainText(editor: HTMLDivElement, value: string): void {
@@ -212,8 +213,8 @@ export function StudentWriting({
     };
 
     const handleInput = (event: Event) => {
-      const target = event.target as HTMLTextAreaElement;
-      const newValue = target.value;
+      const target = event.currentTarget as HTMLDivElement | null;
+      const newValue = target ? readEditorPlainText(target) : '';
       const previousValue = previousValueRef.current;
       
       const textLength = newValue.length;
@@ -507,7 +508,7 @@ export function StudentWriting({
                   isTabletMode
                     ? 'pt-4 pr-4 pb-4 pl-10 md:pt-6 md:pr-6 md:pb-6 md:pl-10 lg:pt-8 lg:pr-8 lg:pb-8 lg:pl-10'
                     : 'p-4 md:p-6 lg:p-8'
-                }`}
+                } whitespace-pre-wrap break-words [overflow-wrap:anywhere]`}
                 data-student-zoom-scroll
                 style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
                 spellCheck={!security.preventAutocorrect}

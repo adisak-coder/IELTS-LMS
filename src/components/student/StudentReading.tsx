@@ -49,6 +49,25 @@ export function StudentReading({
   tabletMode = false,
   contentZoom = 1,
 }: StudentReadingProps) {
+  const resolveSharedAnswerMeta = (
+    value: QuestionAnswer,
+    defaultEntryAnswerIndex: number | undefined,
+    incomingMeta?: StudentAnswerMutationMeta,
+  ): StudentAnswerMutationMeta | undefined => {
+    if (incomingMeta?.slotIndex !== undefined || typeof defaultEntryAnswerIndex !== 'number') {
+      return incomingMeta;
+    }
+    if (typeof value !== 'string') {
+      return incomingMeta;
+    }
+
+    return {
+      ...incomingMeta,
+      slotIndex: defaultEntryAnswerIndex,
+      slotValue: value,
+    };
+  };
+
   const isTabletMode = Boolean(tabletMode);
   const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
   const supportsCssZoom = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('zoom', '1.01');
@@ -349,7 +368,13 @@ export function StudentReading({
                               block={block}
                               number={globalIdx}
                               answer={answers[answerKey]}
-                              onChange={(val, meta) => onAnswerChange(answerKey, val, meta)}
+                              onChange={(val, meta) =>
+                                onAnswerChange(
+                                  answerKey,
+                                  val,
+                                  resolveSharedAnswerMeta(val, firstEntry?.answerIndex, meta),
+                                )
+                              }
                               registerLiveAnswer={({ value }) => registerLiveAnswer?.(answerKey, value)}
                               isFlagged={flagId ? Boolean(flags[flagId]) : false}
                               isActive={isActive}

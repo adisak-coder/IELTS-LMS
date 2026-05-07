@@ -2,6 +2,7 @@ import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
+  Activity,
   BarChart3,
   BookOpen,
   Calendar,
@@ -29,7 +30,7 @@ import type {
 import type { AdminContextValue } from '../routes/AdminContext';
 
 interface AdminNavItem {
-  id: 'exams' | 'library' | 'scheduling' | 'grading' | 'results' | 'settings';
+  id: 'exams' | 'library' | 'scheduling' | 'grading' | 'results' | 'settings' | 'save-lifecycle';
   label: string;
   icon: typeof BookOpen;
   path: string;
@@ -88,6 +89,7 @@ export function useAdminRootController(): AdminRootController {
         { id: 'scheduling', label: 'Scheduling', icon: Calendar, path: '/admin/scheduling' },
         { id: 'grading', label: 'Grading', icon: CheckSquare, path: '/admin/grading' },
         { id: 'results', label: 'Results', icon: BarChart3, path: '/admin/results' },
+        { id: 'save-lifecycle', label: 'Save Logs', icon: Activity, path: '/admin/save-lifecycle' },
         { id: 'settings', label: 'Settings', icon: Settings, path: '/admin/settings' },
       ];
     },
@@ -102,6 +104,7 @@ export function useAdminRootController(): AdminRootController {
     if (path.startsWith('/admin/scheduling')) return 'scheduling';
     if (path.startsWith('/admin/grading')) return 'grading';
     if (path.startsWith('/admin/results')) return 'results';
+    if (path.startsWith('/admin/save-lifecycle')) return 'save-lifecycle';
     if (path.startsWith('/admin/settings')) return 'settings';
 
     return 'exams';

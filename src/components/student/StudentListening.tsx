@@ -11,6 +11,7 @@ import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useSplitPaneResize } from './useSplitPaneResize';
+import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 
 interface StudentListeningProps {
   state: ExamState;
@@ -104,6 +105,25 @@ export function StudentListening({
   tabletMode = false,
   contentZoom = 1,
 }: StudentListeningProps) {
+  const resolveSharedAnswerMeta = (
+    value: QuestionAnswer,
+    defaultEntryAnswerIndex: number | undefined,
+    incomingMeta?: StudentAnswerMutationMeta,
+  ): StudentAnswerMutationMeta | undefined => {
+    if (incomingMeta?.slotIndex !== undefined || typeof defaultEntryAnswerIndex !== 'number') {
+      return incomingMeta;
+    }
+    if (typeof value !== 'string') {
+      return incomingMeta;
+    }
+
+    return {
+      ...incomingMeta,
+      slotIndex: defaultEntryAnswerIndex,
+      slotValue: value,
+    };
+  };
+
   const isTabletMode = Boolean(tabletMode);
   const clampedContentZoom = Math.min(1.5, Math.max(0.85, contentZoom));
   const supportsCssZoom = typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('zoom', '1.01');
@@ -558,7 +578,11 @@ export function StudentListening({
                               number={globalIdx}
                               answer={answers[firstEntry?.answerKey ?? q.id]}
                               onChange={(val, meta) =>
-                                onAnswerChange(firstEntry?.answerKey ?? q.id, val, meta)
+                                onAnswerChange(
+                                  firstEntry?.answerKey ?? q.id,
+                                  val,
+                                  resolveSharedAnswerMeta(val, firstEntry?.answerIndex, meta),
+                                )
                               }
                               registerLiveAnswer={({ value }) =>
                                 registerLiveAnswer?.(firstEntry?.answerKey ?? q.id, value)}

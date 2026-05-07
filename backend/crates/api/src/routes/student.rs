@@ -46,6 +46,75 @@ fn delivery_service(state: &AppState) -> DeliveryService {
     )
 }
 
+const STUDENT_LIFECYCLE_SAMPLE_HEADER: &str = "x-student-lifecycle-sampled";
+const STUDENT_FLUSH_CYCLE_ID_HEADER: &str = "x-student-flush-cycle-id";
+const STUDENT_SUBMIT_CYCLE_ID_HEADER: &str = "x-student-submit-cycle-id";
+
+fn header_bool(headers: &HeaderMap, key: &str) -> bool {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
+    headers
+        .get(key)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+}
+
+async fn write_student_save_lifecycle_event(
+    state: &AppState,
+    schedule_id: Uuid,
+    attempt_id: &str,
+    stage: &str,
+    status: &str,
+    cycle_id: Option<&str>,
+    requested_mutation_count: Option<i64>,
+    applied_mutation_count: Option<i64>,
+    server_accepted_through_seq: Option<i64>,
+    duration_ms: Option<i64>,
+    error_message: Option<&str>,
+) {
+    let pool = state.db_pool();
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO student_save_lifecycle_events (
+            id,
+            schedule_id,
+            attempt_id,
+            stage,
+            status,
+            cycle_id,
+            requested_mutation_count,
+            applied_mutation_count,
+            server_accepted_through_seq,
+            duration_ms,
+            error_message,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        "#,
+    )
+    .bind(Uuid::new_v4().to_string())
+    .bind(schedule_id.to_string())
+    .bind(attempt_id)
+    .bind(stage)
+    .bind(status)
+    .bind(cycle_id)
+    .bind(requested_mutation_count)
+    .bind(applied_mutation_count)
+    .bind(server_accepted_through_seq)
+    .bind(duration_ms)
+    .bind(error_message)
+    .execute(&pool)
+    .await;
+}
+
 pub async fn get_student_session(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -434,6 +503,8 @@ pub async fn apply_mutation_batch(
         )
     })?;
     let attempt_id = principal.authorization.claims.attempt_id.clone();
+    let sampled_success_logs = header_bool(&headers, STUDENT_LIFECYCLE_SAMPLE_HEADER);
+    let flush_cycle_id = header_string(&headers, STUDENT_FLUSH_CYCLE_ID_HEADER);
     let claims_schedule_id = principal.authorization.claims.schedule_id.clone();
     let claims_client_session_id = principal.authorization.claims.client_session_id.clone();
 
@@ -508,7 +579,7 @@ pub async fn apply_mutation_batch(
     let requested_mutation_count = req.mutations.len();
     let service = delivery_service(&state);
     let started = Instant::now();
-    let mut result = service
+    let mut result = match service
         .apply_mutation_batch(
             schedule_id,
             req,
@@ -516,7 +587,36 @@ pub async fn apply_mutation_batch(
             MutationBatchResponseMode::Full,
             extract_idempotency_key(&headers)?,
         )
-        .await?;
+        .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            tracing::warn!(
+                event = "student_save_lifecycle",
+                stage = "flush",
+                status = "failed",
+                schedule_id = %schedule_id,
+                attempt_id = %attempt_id,
+                flush_cycle_id = flush_cycle_id.as_deref().unwrap_or("missing"),
+                error = %err
+            );
+            write_student_save_lifecycle_event(
+                &state,
+                schedule_id,
+                &attempt_id,
+                "flush",
+                "failed",
+                flush_cycle_id.as_deref(),
+                Some(requested_mutation_count as i64),
+                None,
+                None,
+                None,
+                Some(&err.to_string()),
+            )
+            .await;
+            return Err(err.into());
+        }
+    };
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
     result.refreshed_attempt_credential = auth_service
         .maybe_refresh_attempt_token(&principal.authorization)
@@ -534,6 +634,34 @@ pub async fn apply_mutation_batch(
         result.applied_mutation_count,
         result.applied_mutation_count,
     );
+    if sampled_success_logs {
+        tracing::info!(
+            event = "student_save_lifecycle",
+            stage = "flush",
+            status = "succeeded",
+            schedule_id = %schedule_id,
+            attempt_id = %attempt_id,
+            flush_cycle_id = flush_cycle_id.as_deref().unwrap_or("missing"),
+            requested_mutation_count = requested_mutation_count,
+            applied_mutation_count = result.applied_mutation_count,
+            server_accepted_through_seq = result.server_accepted_through_seq,
+            duration_ms = duration.as_millis() as u64
+        );
+        write_student_save_lifecycle_event(
+            &state,
+            schedule_id,
+            &attempt_id,
+            "flush",
+            "succeeded",
+            flush_cycle_id.as_deref(),
+            Some(requested_mutation_count as i64),
+            Some(result.applied_mutation_count as i64),
+            Some(result.server_accepted_through_seq),
+            Some(duration.as_millis() as i64),
+            None,
+        )
+        .await;
+    }
 
     if contains_violation {
         state.publish_live_update(ielts_backend_domain::schedule::LiveUpdateEvent {
@@ -841,6 +969,8 @@ pub async fn submit_student_session(
         )
     })?;
     let attempt_id = principal.authorization.claims.attempt_id.clone();
+    let sampled_success_logs = header_bool(&headers, STUDENT_LIFECYCLE_SAMPLE_HEADER);
+    let submit_cycle_id = header_string(&headers, STUDENT_SUBMIT_CYCLE_ID_HEADER);
     let claims_schedule_id = principal.authorization.claims.schedule_id.clone();
     let claims_client_session_id = principal.authorization.claims.client_session_id.clone();
 
@@ -926,6 +1056,29 @@ pub async fn submit_student_session(
                     _ => {}
                 }
             }
+            tracing::warn!(
+                event = "student_save_lifecycle",
+                stage = "submit",
+                status = "failed",
+                schedule_id = %schedule_id,
+                attempt_id = %attempt_id,
+                submit_cycle_id = submit_cycle_id.as_deref().unwrap_or("missing"),
+                error = %err
+            );
+            write_student_save_lifecycle_event(
+                &state,
+                schedule_id,
+                &attempt_id,
+                "submit",
+                "failed",
+                submit_cycle_id.as_deref(),
+                None,
+                None,
+                None,
+                None,
+                Some(&err.to_string()),
+            )
+            .await;
             return Err(err.into());
         }
     };
@@ -939,6 +1092,31 @@ pub async fn submit_student_session(
         .telemetry
         .observe_db_operation("delivery.submit_attempt", duration);
     state.telemetry.observe_answer_commit("submit", duration);
+    if sampled_success_logs {
+        tracing::info!(
+            event = "student_save_lifecycle",
+            stage = "submit",
+            status = "succeeded",
+            schedule_id = %schedule_id,
+            attempt_id = %attempt_id,
+            submit_cycle_id = submit_cycle_id.as_deref().unwrap_or("missing"),
+            duration_ms = duration.as_millis() as u64
+        );
+        write_student_save_lifecycle_event(
+            &state,
+            schedule_id,
+            &attempt_id,
+            "submit",
+            "succeeded",
+            submit_cycle_id.as_deref(),
+            None,
+            None,
+            None,
+            Some(duration.as_millis() as i64),
+            None,
+        )
+        .await;
+    }
     Ok(ApiResponse::success_with_request_id(
         submission,
         request_id.0,
