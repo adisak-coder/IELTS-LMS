@@ -328,4 +328,49 @@ describe('ProtectedInput', () => {
       'attempt-ctx',
     );
   });
+
+  it('ignores stray historyUndo input events without a trusted precursor', async () => {
+    const handleChange = vi.fn();
+    render(
+      <ProtectedInput
+        security={{ preventAutofill: true, preventAutocorrect: true } as any}
+        name="answer"
+        value="LATEST"
+        onChange={handleChange}
+      />,
+    );
+
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    input.value = 'abcdefghijklmnop';
+
+    const undoInput = new Event('input', { bubbles: true, cancelable: false });
+    Object.assign(undoInput, { inputType: 'historyUndo' });
+    fireEvent(input, undoInput);
+    await Promise.resolve();
+
+    expect(input.value).toBe('abcdefghijklmnop');
+    expect(handleChange).not.toHaveBeenCalled();
+    expect(flushAnswerDurabilityNowMock).not.toHaveBeenCalled();
+    expect(
+      saveStudentAuditEventMock.mock.calls.some((call) => call[1] === 'UNDO_RESTORED'),
+    ).toBe(false);
+  });
+
+  it('keeps long unbroken typing text intact during normal input', () => {
+    const onLiveValueChange = vi.fn();
+    render(
+      <ProtectedInput
+        security={{ preventAutofill: true, preventAutocorrect: true } as any}
+        name="answer"
+        onLiveValueChange={onLiveValueChange}
+      />,
+    );
+
+    const input = screen.getByRole('textbox') as HTMLInputElement;
+    const longWord = 'abcdefghijklmnop';
+    fireEvent.input(input, { target: { value: longWord } });
+
+    expect(input.value).toBe(longWord);
+    expect(onLiveValueChange).toHaveBeenLastCalledWith(longWord);
+  });
 });

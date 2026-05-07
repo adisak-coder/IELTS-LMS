@@ -6,6 +6,12 @@ type UndoRedoSignal = {
   cancelable: boolean;
 };
 
+type UndoRedoIntent = {
+  kind: UndoRedoKind;
+  snapshot: string;
+  atMs: number;
+};
+
 interface AnswerUndoRedoGuardOptions {
   element: HTMLElement;
   readLatestSnapshot: () => string;
@@ -56,6 +62,8 @@ function queuePersistFlush(flushPersist?: (() => void) | undefined) {
   window.setTimeout(() => flushPersist(), 0);
 }
 
+const UNDO_REDO_INTENT_TTL_MS = 1500;
+
 export function registerAnswerUndoRedoGuard(options: AnswerUndoRedoGuardOptions) {
   const {
     element,
@@ -66,7 +74,30 @@ export function registerAnswerUndoRedoGuard(options: AnswerUndoRedoGuardOptions)
     onRestored,
   } = options;
 
-  let lastSnapshotBeforeMutation: string | null = null;
+  let pendingUndoRedoIntent: UndoRedoIntent | null = null;
+
+  const setIntent = (kind: UndoRedoKind) => {
+    pendingUndoRedoIntent = {
+      kind,
+      snapshot: readLatestSnapshot(),
+      atMs: Date.now(),
+    };
+  };
+
+  const consumeIntent = (kind: UndoRedoKind): string | null => {
+    const intent = pendingUndoRedoIntent;
+    pendingUndoRedoIntent = null;
+    if (!intent) {
+      return null;
+    }
+    if (intent.kind !== kind) {
+      return null;
+    }
+    if (Date.now() - intent.atMs > UNDO_REDO_INTENT_TTL_MS) {
+      return null;
+    }
+    return intent.snapshot;
+  };
 
   const handleBeforeInput = (event: Event) => {
     const kind = historyKindFromInputEvent(event);
@@ -74,7 +105,7 @@ export function registerAnswerUndoRedoGuard(options: AnswerUndoRedoGuardOptions)
       return;
     }
 
-    lastSnapshotBeforeMutation = readLatestSnapshot();
+    setIntent(kind);
     if (event.cancelable) {
       event.preventDefault();
     }
@@ -93,7 +124,7 @@ export function registerAnswerUndoRedoGuard(options: AnswerUndoRedoGuardOptions)
       return;
     }
 
-    lastSnapshotBeforeMutation = readLatestSnapshot();
+    setIntent(kind);
     if (keyboardEvent.cancelable) {
       keyboardEvent.preventDefault();
     }
@@ -111,8 +142,10 @@ export function registerAnswerUndoRedoGuard(options: AnswerUndoRedoGuardOptions)
       return;
     }
 
-    const snapshot = lastSnapshotBeforeMutation ?? readLatestSnapshot();
-    lastSnapshotBeforeMutation = null;
+    const snapshot = consumeIntent(kind);
+    if (snapshot === null) {
+      return;
+    }
     restoreLatestSnapshot(snapshot);
     queuePersistFlush(flushPersist);
     onRestored?.({
