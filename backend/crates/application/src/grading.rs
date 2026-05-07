@@ -933,7 +933,7 @@ impl GradingService {
 
     pub async fn get_result(&self, result_id: Uuid) -> Result<StudentResult, GradingError> {
         sqlx::query_as::<_, StudentResult>("SELECT * FROM student_results WHERE id = ?")
-            .bind(result_id)
+            .bind(result_id.to_string())
             .fetch_optional(&self.pool)
             .await?
             .ok_or(GradingError::NotFound)
@@ -946,7 +946,7 @@ impl GradingService {
         sqlx::query_as::<_, ReleaseEvent>(
             "SELECT * FROM release_events WHERE result_id = ? ORDER BY created_at DESC",
         )
-        .bind(result_id)
+        .bind(result_id.to_string())
         .fetch_all(&self.pool)
         .await
         .map_err(GradingError::from)

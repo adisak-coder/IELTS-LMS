@@ -662,6 +662,25 @@ async function run(): Promise<void> {
             `GRADING_VERIFY_MISMATCH: submissionId=${submissionId} mismatches=${verifyResult.mismatches.length} [${preview}]`,
           );
         }
+        const verifyOkLine = JSON.stringify({
+          ts: new Date().toISOString(),
+          userId: user.userId,
+          scheduleId: ctx.scheduleId,
+          event: 'GRADING_VERIFY_OK',
+          submissionId,
+          mismatches: verifyResult.mismatches.length,
+        });
+        console.log(verifyOkLine);
+        appendLog(verifyOkLine);
+      } else {
+        const verifySkippedLine = JSON.stringify({
+          ts: new Date().toISOString(),
+          userId: user.userId,
+          scheduleId: ctx.scheduleId,
+          event: 'GRADING_VERIFY_SKIPPED',
+        });
+        console.log(verifySkippedLine);
+        appendLog(verifySkippedLine);
       }
 
       setPhase('done', 'done');

@@ -17,9 +17,9 @@ CREATE TABLE IF NOT EXISTS media_assets (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
-CREATE INDEX IF NOT EXISTS idx_media_assets_owner_updated
+CREATE INDEX idx_media_assets_owner_updated
     ON media_assets(owner_kind, owner_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_media_assets_status_updated
+CREATE INDEX idx_media_assets_status_updated
     ON media_assets(upload_status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS shared_cache_entries (
@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     PRIMARY KEY (actor_id, route_key, idempotency_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires_at
+CREATE INDEX idx_idempotency_keys_expires_at
     ON idempotency_keys(expires_at ASC);
 
 CREATE TABLE IF NOT EXISTS outbox_events (
@@ -61,11 +61,11 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     last_error TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_outbox_events_publish_pending
+CREATE INDEX idx_outbox_events_publish_pending
     ON outbox_events(published_at, claimed_at, created_at ASC);
-CREATE INDEX IF NOT EXISTS idx_outbox_events_aggregate
+CREATE INDEX idx_outbox_events_aggregate
     ON outbox_events(aggregate_kind, aggregate_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_outbox_events_created_at
+CREATE INDEX idx_outbox_events_created_at
     ON outbox_events(created_at);
 
 -- Note: Partitioning removed for simplicity - can be added later if needed for performance

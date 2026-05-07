@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS exam_entities (
 
 -- Indexes for exam_entities
 CREATE UNIQUE INDEX idx_exam_entities_slug ON exam_entities(slug);
-CREATE INDEX IF NOT EXISTS idx_exam_entities_org_status_updated ON exam_entities(organization_id, status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_exam_entities_owner_updated ON exam_entities(owner_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_exam_entities_draft_version ON exam_entities(current_draft_version_id);
+CREATE INDEX idx_exam_entities_org_status_updated ON exam_entities(organization_id, status, updated_at DESC);
+CREATE INDEX idx_exam_entities_owner_updated ON exam_entities(owner_id, updated_at DESC);
+CREATE INDEX idx_exam_entities_draft_version ON exam_entities(current_draft_version_id);
 
 -- exam_memberships
 CREATE TABLE IF NOT EXISTS exam_memberships (
@@ -50,9 +50,9 @@ CREATE TABLE IF NOT EXISTS exam_memberships (
 -- Constraints and indexes for exam_memberships
 CREATE UNIQUE INDEX idx_exam_memberships_exam_actor_role_active 
     ON exam_memberships(exam_id, actor_id, role);
-CREATE INDEX IF NOT EXISTS idx_exam_memberships_actor_role_created 
+CREATE INDEX idx_exam_memberships_actor_role_created 
     ON exam_memberships(actor_id, role, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_exam_memberships_revoked_at ON exam_memberships(revoked_at);
+CREATE INDEX idx_exam_memberships_revoked_at ON exam_memberships(revoked_at);
 
 -- exam_versions
 CREATE TABLE IF NOT EXISTS exam_versions (
@@ -75,10 +75,10 @@ CREATE TABLE IF NOT EXISTS exam_versions (
 );
 
 -- Indexes for exam_versions
-CREATE INDEX IF NOT EXISTS idx_exam_versions_exam_created ON exam_versions(exam_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_exam_versions_exam_draft ON exam_versions(exam_id, is_draft);
-CREATE INDEX IF NOT EXISTS idx_exam_versions_exam_published ON exam_versions(exam_id, is_published);
-CREATE INDEX IF NOT EXISTS idx_exam_versions_parent ON exam_versions(parent_version_id);
+CREATE INDEX idx_exam_versions_exam_created ON exam_versions(exam_id, created_at DESC);
+CREATE INDEX idx_exam_versions_exam_draft ON exam_versions(exam_id, is_draft);
+CREATE INDEX idx_exam_versions_exam_published ON exam_versions(exam_id, is_published);
+CREATE INDEX idx_exam_versions_parent ON exam_versions(parent_version_id);
 
 -- exam_events (append-only)
 CREATE TABLE IF NOT EXISTS exam_events (
@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS exam_events (
 );
 
 -- Indexes for exam_events
-CREATE INDEX IF NOT EXISTS idx_exam_events_exam_created ON exam_events(exam_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_exam_events_exam_action_created ON exam_events(exam_id, action, created_at DESC);
+CREATE INDEX idx_exam_events_exam_created ON exam_events(exam_id, created_at DESC);
+CREATE INDEX idx_exam_events_exam_action_created ON exam_events(exam_id, action, created_at DESC);
 
 -- Note: RLS policies removed - authorization is now handled at the application level

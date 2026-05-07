@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS user_sessions (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_sessions_user_active
+CREATE INDEX idx_user_sessions_user_active
     ON user_sessions(user_id, expires_at DESC, revoked_at);
 
 CREATE TABLE IF NOT EXISTS user_session_events (
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS user_session_events (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_session_events_session_created
+CREATE INDEX idx_user_session_events_session_created
     ON user_session_events(session_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_expires
+CREATE INDEX idx_password_reset_tokens_expires
     ON password_reset_tokens(expires_at ASC);
 
 CREATE TABLE IF NOT EXISTS account_activation_tokens (
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS account_activation_tokens (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_account_activation_tokens_expires
+CREATE INDEX idx_account_activation_tokens_expires
     ON account_activation_tokens(expires_at ASC);
 
 CREATE TABLE IF NOT EXISTS student_profiles (
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS attempt_sessions (
     FOREIGN KEY (attempt_id) REFERENCES student_attempts(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_attempt_sessions_user_active
+CREATE INDEX idx_attempt_sessions_user_active
     ON attempt_sessions(user_id, schedule_id, expires_at DESC, revoked_at);
 
 -- Note: GRANT statements removed - using MySQL user management instead

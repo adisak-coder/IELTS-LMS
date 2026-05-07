@@ -28,9 +28,9 @@ CREATE TABLE IF NOT EXISTS exam_schedules (
     FOREIGN KEY (published_version_id) REFERENCES exam_versions(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_exam_schedules_org_status_start ON exam_schedules(organization_id, status, start_time ASC);
-CREATE INDEX IF NOT EXISTS idx_exam_schedules_exam_start ON exam_schedules(exam_id, start_time DESC);
-CREATE INDEX IF NOT EXISTS idx_exam_schedules_version ON exam_schedules(published_version_id);
+CREATE INDEX idx_exam_schedules_org_status_start ON exam_schedules(organization_id, status, start_time ASC);
+CREATE INDEX idx_exam_schedules_exam_start ON exam_schedules(exam_id, start_time DESC);
+CREATE INDEX idx_exam_schedules_version ON exam_schedules(published_version_id);
 
 CREATE TABLE IF NOT EXISTS schedule_registrations (
     id VARCHAR(36) PRIMARY KEY,
@@ -55,17 +55,17 @@ CREATE TABLE IF NOT EXISTS schedule_registrations (
     FOREIGN KEY (schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_schedule_registrations_schedule_actor_active
+CREATE INDEX idx_schedule_registrations_schedule_actor_active
     ON schedule_registrations(schedule_id, actor_id);
-CREATE INDEX IF NOT EXISTS idx_schedule_registrations_schedule_access_updated
+CREATE INDEX idx_schedule_registrations_schedule_access_updated
     ON schedule_registrations(schedule_id, access_state, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_schedule_registrations_actor_updated
+CREATE INDEX idx_schedule_registrations_actor_updated
     ON schedule_registrations(actor_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_schedule_registrations_student_updated
+CREATE INDEX idx_schedule_registrations_student_updated
     ON schedule_registrations(student_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_schedule_registrations_schedule_user_active
+CREATE INDEX idx_schedule_registrations_schedule_user_active
     ON schedule_registrations(schedule_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_schedule_registrations_wcode ON schedule_registrations(wcode);
+CREATE INDEX idx_schedule_registrations_wcode ON schedule_registrations(wcode);
 
 CREATE TABLE IF NOT EXISTS schedule_staff_assignments (
     id VARCHAR(36) PRIMARY KEY,
@@ -79,11 +79,11 @@ CREATE TABLE IF NOT EXISTS schedule_staff_assignments (
     FOREIGN KEY (schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_schedule_staff_assignments_active
+CREATE INDEX idx_schedule_staff_assignments_active
     ON schedule_staff_assignments(schedule_id, actor_id, role, revoked_at);
-CREATE INDEX IF NOT EXISTS idx_schedule_staff_assignments_actor_role_created
+CREATE INDEX idx_schedule_staff_assignments_actor_role_created
     ON schedule_staff_assignments(actor_id, role, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_schedule_staff_assignments_user_role_created
+CREATE INDEX idx_schedule_staff_assignments_user_role_created
     ON schedule_staff_assignments(user_id, role, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS exam_session_runtimes (
@@ -129,7 +129,7 @@ CREATE TABLE IF NOT EXISTS exam_session_runtime_sections (
     FOREIGN KEY (runtime_id) REFERENCES exam_session_runtimes(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_runtime_sections_runtime_order
+CREATE INDEX idx_runtime_sections_runtime_order
     ON exam_session_runtime_sections(runtime_id, section_order);
 
 CREATE TABLE IF NOT EXISTS cohort_control_events (
@@ -149,7 +149,7 @@ CREATE TABLE IF NOT EXISTS cohort_control_events (
     FOREIGN KEY (exam_id) REFERENCES exam_entities(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_cohort_control_events_schedule_created
+CREATE INDEX idx_cohort_control_events_schedule_created
     ON cohort_control_events(schedule_id, created_at DESC);
 
 -- Note: GRANT statements removed - using MySQL user management instead

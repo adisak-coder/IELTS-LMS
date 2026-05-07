@@ -207,7 +207,7 @@ describe('student highlight persistence', () => {
   it('applies the latest long touch selection only on touch end', async () => {
     vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
-    let start = 6;
+    const start = 6;
     let end = 10;
     let text = 'beta';
     const selectionMock = {

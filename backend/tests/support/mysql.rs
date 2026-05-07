@@ -30,7 +30,7 @@ impl TestDatabase {
                 let server_url = server_url_from_database_url(&database_url);
 
                 let admin_pool = MySqlPoolOptions::new()
-                    .max_connections(1)
+                    .max_connections(2)
                     .connect(&server_url)
                     .await
                     .expect("connect to TiDB/MySQL server");
@@ -49,7 +49,7 @@ impl TestDatabase {
 
                 drop(admin_pool);
                 let pool = MySqlPoolOptions::new()
-                    .max_connections(1)
+                    .max_connections(5)
                     .connect(&effective_url)
                     .await
                     .expect("connect to test database");
@@ -65,7 +65,7 @@ impl TestDatabase {
                 );
                 let admin_options = connect_options("root", "ielts");
                 let admin_pool = MySqlPoolOptions::new()
-                    .max_connections(1)
+                    .max_connections(2)
                     .connect_with(admin_options)
                     .await
                     .expect("connect to local MySQL/TiDB");
@@ -77,7 +77,7 @@ impl TestDatabase {
 
                 let database_options = connect_options("root", &db_name);
                 let pool = MySqlPoolOptions::new()
-                    .max_connections(1)
+                    .max_connections(5)
                     .connect_with(database_options)
                     .await
                     .expect("connect to test database");
@@ -127,7 +127,7 @@ impl TestDatabase {
         if let Ok(database_url) = env::var("TEST_DATABASE_URL") {
             let server_url = server_url_from_database_url(&database_url);
             let admin_pool = MySqlPoolOptions::new()
-                .max_connections(1)
+                .max_connections(2)
                 .connect(&server_url)
                 .await
                 .expect("reconnect to TiDB/MySQL server");
@@ -140,7 +140,7 @@ impl TestDatabase {
 
         let admin_options = connect_options("root", "ielts");
         let admin_pool = MySqlPoolOptions::new()
-            .max_connections(1)
+            .max_connections(2)
             .connect_with(admin_options)
             .await
             .expect("reconnect to local MySQL/TiDB");

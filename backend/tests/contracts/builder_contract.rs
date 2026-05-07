@@ -13,7 +13,8 @@ use ielts_backend_api::{live_updates::LiveUpdateHub, router::build_router, state
 use ielts_backend_application::builder::BuilderService;
 use ielts_backend_domain::auth::UserRole;
 use ielts_backend_domain::exam::{
-    CreateExamRequest, ExamEntity, ExamType, PublishExamRequest, SaveDraftRequest, Visibility,
+    CreateExamRequest, ExamEntity, ExamStatus, ExamType, PublishExamRequest, SaveDraftRequest,
+    Visibility,
 };
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
@@ -706,7 +707,7 @@ async fn publish_revalidates_the_current_draft_before_marking_it_published() {
         .get_exam(&contract_actor(), seeded.id.clone())
         .await
         .expect("exam after rejected publish");
-    assert_eq!(exam_after_publish_attempt.status, "draft");
+    assert_eq!(exam_after_publish_attempt.status, ExamStatus::Draft);
     assert!(exam_after_publish_attempt
         .current_published_version_id
         .is_none());

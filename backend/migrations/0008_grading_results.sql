@@ -54,9 +54,9 @@ CREATE TABLE IF NOT EXISTS student_submissions (
     FOREIGN KEY (published_version_id) REFERENCES exam_versions(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_student_submissions_schedule_submitted
+CREATE INDEX idx_student_submissions_schedule_submitted
     ON student_submissions(schedule_id, submitted_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_submissions_status_updated
+CREATE INDEX idx_student_submissions_status_updated
     ON student_submissions(grading_status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS section_submissions (
@@ -138,7 +138,7 @@ CREATE TABLE IF NOT EXISTS review_events (
     FOREIGN KEY (submission_id) REFERENCES student_submissions(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_review_events_submission_created
+CREATE INDEX idx_review_events_submission_created
     ON review_events(submission_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS student_results (
@@ -167,9 +167,9 @@ CREATE TABLE IF NOT EXISTS student_results (
     FOREIGN KEY (previous_version_id) REFERENCES student_results(id) ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_student_results_submission_updated
+CREATE INDEX idx_student_results_submission_updated
     ON student_results(submission_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_results_release_status_updated
+CREATE INDEX idx_student_results_release_status_updated
     ON student_results(release_status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS release_events (
@@ -184,7 +184,7 @@ CREATE TABLE IF NOT EXISTS release_events (
     FOREIGN KEY (submission_id) REFERENCES student_submissions(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_release_events_result_created
+CREATE INDEX idx_release_events_result_created
     ON release_events(result_id, created_at DESC);
 
 -- Note: GRANT statements removed - using MySQL user management instead

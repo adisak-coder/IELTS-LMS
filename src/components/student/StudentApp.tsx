@@ -540,8 +540,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       tabletViewportSessionLocked && lockedViewportHeightRef.current !== null
         ? lockedViewportHeightRef.current
         : Math.round(window.visualViewport?.height ?? window.innerHeight);
-    let pinchGestureActive = false;
-
     const applyViewportHeight = (height: number) => {
       root.style.setProperty('--student-viewport-height', `${Math.max(0, Math.round(height))}px`);
     };
@@ -549,12 +547,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     const updateViewportHeight = () => {
       const visualViewport = window.visualViewport;
       const nextViewportHeight = Math.round(visualViewport?.height ?? window.innerHeight);
-      const nextViewportScale =
-        typeof visualViewport?.scale === 'number' && Number.isFinite(visualViewport.scale)
-          ? visualViewport.scale
-          : 1;
-      const isPinchZooming = nextViewportScale > 1.01;
-
       if (!tabletViewportSessionLocked) {
         applyViewportHeight(nextViewportHeight);
         return;
@@ -566,9 +558,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         stableViewportHeight = lockedViewportHeightRef.current;
       }
 
-      if (pinchGestureActive || isPinchZooming) {
-      }
-
       applyViewportHeight(stableViewportHeight);
     };
 
@@ -578,7 +567,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       }
 
       if (event.touches.length >= 2) {
-        pinchGestureActive = true;
         updateViewportHeight();
       }
     };

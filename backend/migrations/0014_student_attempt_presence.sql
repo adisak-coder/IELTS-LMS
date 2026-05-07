@@ -48,5 +48,5 @@ PREPARE student_attempt_presence_create_stmt FROM @student_attempt_presence_crea
 EXECUTE student_attempt_presence_create_stmt;
 DEALLOCATE PREPARE student_attempt_presence_create_stmt;
 
-CREATE INDEX IF NOT EXISTS idx_student_attempt_presence_schedule_heartbeat
+CREATE INDEX idx_student_attempt_presence_schedule_heartbeat
     ON student_attempt_presence(schedule_id, last_heartbeat_at DESC);

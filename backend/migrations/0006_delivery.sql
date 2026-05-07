@@ -42,13 +42,13 @@ CREATE TABLE IF NOT EXISTS student_attempts (
     FOREIGN KEY (published_version_id) REFERENCES exam_versions(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_student_attempts_schedule_phase_updated
+CREATE INDEX idx_student_attempts_schedule_phase_updated
     ON student_attempts(schedule_id, phase, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_attempts_exam_updated
+CREATE INDEX idx_student_attempts_exam_updated
     ON student_attempts(exam_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_attempts_schedule_user
+CREATE INDEX idx_student_attempts_schedule_user
     ON student_attempts(schedule_id, user_id, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_attempts_wcode ON student_attempts(wcode);
+CREATE INDEX idx_student_attempts_wcode ON student_attempts(wcode);
 
 CREATE TABLE IF NOT EXISTS student_attempt_mutations (
     id VARCHAR(36) NOT NULL PRIMARY KEY,
@@ -69,13 +69,13 @@ CREATE TABLE IF NOT EXISTS student_attempt_mutations (
 
 CREATE UNIQUE INDEX idx_student_attempt_mutations_attempt_session_seq
     ON student_attempt_mutations(attempt_id, client_session_id, mutation_seq);
-CREATE INDEX IF NOT EXISTS idx_student_attempt_mutations_attempt_received
+CREATE INDEX idx_student_attempt_mutations_attempt_received
     ON student_attempt_mutations(attempt_id, server_received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_attempt_mutations_schedule_received
+CREATE INDEX idx_student_attempt_mutations_schedule_received
     ON student_attempt_mutations(schedule_id, server_received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_attempt_mutations_attempt_session_seq_desc
+CREATE INDEX idx_student_attempt_mutations_attempt_session_seq_desc
     ON student_attempt_mutations(attempt_id, client_session_id, mutation_seq DESC);
-CREATE INDEX IF NOT EXISTS idx_student_attempt_mutations_server_received_at
+CREATE INDEX idx_student_attempt_mutations_server_received_at
     ON student_attempt_mutations(server_received_at);
 
 CREATE TABLE IF NOT EXISTS student_heartbeat_events (
@@ -90,11 +90,11 @@ CREATE TABLE IF NOT EXISTS student_heartbeat_events (
     FOREIGN KEY (schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_student_heartbeat_events_attempt_received
+CREATE INDEX idx_student_heartbeat_events_attempt_received
     ON student_heartbeat_events(attempt_id, server_received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_heartbeat_events_schedule_received
+CREATE INDEX idx_student_heartbeat_events_schedule_received
     ON student_heartbeat_events(schedule_id, server_received_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_heartbeat_events_server_received_at
+CREATE INDEX idx_student_heartbeat_events_server_received_at
     ON student_heartbeat_events(server_received_at);
 
 -- Note: Partitioning removed for simplicity - can be added later if needed for performance

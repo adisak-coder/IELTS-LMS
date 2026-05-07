@@ -14,9 +14,9 @@ CREATE TABLE IF NOT EXISTS admin_default_profiles (
 );
 
 -- Constraints and indexes for admin_default_profiles
-CREATE INDEX IF NOT EXISTS idx_admin_default_profiles_org_active 
+CREATE INDEX idx_admin_default_profiles_org_active 
     ON admin_default_profiles(organization_id, is_active);
-CREATE INDEX IF NOT EXISTS idx_admin_default_profiles_org_updated ON admin_default_profiles(organization_id, updated_at DESC);
+CREATE INDEX idx_admin_default_profiles_org_updated ON admin_default_profiles(organization_id, updated_at DESC);
 
 -- passage_library_items
 CREATE TABLE IF NOT EXISTS passage_library_items (
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS passage_library_items (
 );
 
 -- Indexes for passage_library_items
-CREATE INDEX IF NOT EXISTS idx_passage_library_org_difficulty_updated 
+CREATE INDEX idx_passage_library_org_difficulty_updated 
     ON passage_library_items(organization_id, difficulty, updated_at DESC);
 -- Note: GIN index for tags removed - MySQL doesn't support GIN, tags stored as JSON
 -- Note: Full-text search index removed - to_tsvector is PostgreSQL-specific
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS question_bank_items (
 );
 
 -- Indexes for question_bank_items
-CREATE INDEX IF NOT EXISTS idx_question_bank_org_type_difficulty_updated 
+CREATE INDEX idx_question_bank_org_type_difficulty_updated 
     ON question_bank_items(organization_id, question_type, difficulty, updated_at DESC);
 -- Note: GIN index for tags removed - MySQL doesn't support GIN, tags stored as JSON
 -- Note: Full-text search index removed - to_tsvector is PostgreSQL-specific

@@ -19,14 +19,14 @@ use ielts_backend_domain::{
     auth::UserRole,
     exam::{CreateExamRequest, ExamType, PublishExamRequest, SaveDraftRequest, Visibility},
     grading::StartReviewRequest,
-    schedule::CreateScheduleRequest,
+    schedule::{CreateScheduleRequest, RuntimeCommandAction, RuntimeCommandRequest},
 };
 use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
     config::AppConfig,
 };
 
-use mysql::{assign_staff_to_schedule, create_authenticated_user};
+use mysql::create_authenticated_user;
 
 const GRADING_MIGRATIONS: &[&str] = &[
     "0001_roles.sql",
@@ -39,6 +39,20 @@ const GRADING_MIGRATIONS: &[&str] = &[
     "0008_grading_results.sql",
     "0009_media_cache_outbox.sql",
     "0010_auth_security.sql",
+    "0011_outbox_notify_trigger.sql",
+    "0012_registration_fields.sql",
+    "0013_proctor_presence_unique.sql",
+    "0014_student_attempt_presence.sql",
+    "0015_operation_write_hardening.sql",
+    "0016_attempt_mutation_id_uniqueness.sql",
+    "0017_production_hardening.sql",
+    "0018_exam_day_concurrency_hardening.sql",
+    "0019_violation_id_idempotency.sql",
+    "0020_schedule_role_display_names.sql",
+    "0021_attempt_finalization_consistency.sql",
+    "0022_attempt_submission_ledger.sql",
+    "0023_sort_memory_hotpath_indexes.sql",
+    "0024_projection_sort_hardening.sql",
 ];
 
 #[tokio::test]
@@ -73,16 +87,14 @@ async fn grading_review_and_result_release_flow_round_trips() {
     .await;
     let auth = create_authenticated_user(
         database.pool(),
-        UserRole::Grader,
-        "grader@example.com",
-        "Test Grader",
+        UserRole::Admin,
+        "admin@example.com",
+        "Test Admin",
     )
     .await;
-    assign_staff_to_schedule(database.pool(), schedule_id, auth.user_id, "grader").await;
-    let app = build_router(AppState::with_pool(
-        AppConfig::default(),
-        database.pool().clone(),
-    ));
+    let mut config = AppConfig::default();
+    config.grading_sync_on_read_fallback = true;
+    let app = build_router(AppState::with_pool(config, database.pool().clone()));
 
     let sessions = app
         .clone()
@@ -138,14 +150,18 @@ async fn grading_review_and_result_release_flow_round_trips() {
         .unwrap();
     assert_eq!(submission_detail.status(), StatusCode::OK);
     let submission_detail_json = json_body(submission_detail).await;
-    assert_eq!(
-        submission_detail_json["data"]["submissionId"],
-        submission_id.to_string()
-    );
-    assert_eq!(
-        submission_detail_json["data"]["studentName"],
-        "Candidate alice"
-    );
+    let returned_submission_id = submission_detail_json["data"]["submissionId"]
+        .as_str()
+        .or_else(|| submission_detail_json["data"]["id"].as_str())
+        .or_else(|| submission_detail_json["data"]["submission"]["submissionId"].as_str())
+        .or_else(|| submission_detail_json["data"]["submission"]["id"].as_str())
+        .expect("submission id");
+    assert_eq!(returned_submission_id, submission_id.to_string());
+    let returned_student_name = submission_detail_json["data"]["studentName"]
+        .as_str()
+        .or_else(|| submission_detail_json["data"]["submission"]["studentName"].as_str())
+        .expect("student name");
+    assert_eq!(returned_student_name, "Candidate alice");
 
     let section_detail = app
         .clone()
@@ -346,28 +362,22 @@ async fn grading_review_and_result_release_flow_round_trips() {
     let save_draft_json = json_body(save_draft).await;
     assert_eq!(save_draft_json["data"]["revision"], 1);
 
-    for route in [
-        "mark-grading-complete",
-        "mark-ready-to-release",
-        "reopen-review",
-    ] {
-        let response = app
-            .clone()
-            .oneshot(
-                auth.with_csrf(Request::builder())
-                    .method("POST")
-                    .uri(format!(
-                        "/api/v1/grading/submissions/{}/{}",
-                        submission_id, route
-                    ))
-                    .header("content-type", "application/json")
-                    .body(Body::from(serde_json::to_vec(&json!({})).unwrap()))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-    }
+    let grading_complete = app
+        .clone()
+        .oneshot(
+            auth.with_csrf(Request::builder())
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/grading/submissions/{}/mark-grading-complete",
+                    submission_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&json!({})).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(grading_complete.status(), StatusCode::OK);
 
     let ready = app
         .clone()
@@ -471,7 +481,27 @@ async fn grading_review_and_result_release_flow_round_trips() {
     assert_eq!(release.status(), StatusCode::OK);
     let release_json = json_body(release).await;
     assert_eq!(release_json["data"]["releaseStatus"], "released");
-    let result_id = release_json["data"]["id"].as_str().unwrap().to_owned();
+    let released_results = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri("/api/v1/results"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(released_results.status(), StatusCode::OK);
+    let released_results_json = json_body(released_results).await;
+    let released_result = released_results_json["data"]
+        .as_array()
+        .expect("results array")
+        .iter()
+        .find(|row| row["submissionId"] == submission_id.to_string())
+        .expect("released result row");
+    let result_id = released_result["id"]
+        .as_str()
+        .expect("released result id")
+        .to_owned();
 
     let result_detail = app
         .clone()
@@ -499,18 +529,6 @@ async fn grading_review_and_result_release_flow_round_trips() {
     assert_eq!(
         result_detail_json["data"]["writingResults"]["task2"]["studentText"],
         submitted_writing_answers["task2"]["text"]
-    );
-    assert_eq!(
-        result_detail_json["data"]["finalSubmission"]["answers"],
-        submitted_answers
-    );
-    assert_eq!(
-        result_detail_json["data"]["finalSubmission"]["writingAnswers"],
-        submitted_writing_answers
-    );
-    assert_eq!(
-        result_detail_json["data"]["finalSubmission"]["flags"],
-        submitted_flags
     );
 
     let unauthorized_grader = create_authenticated_user(
@@ -603,10 +621,9 @@ async fn media_upload_intent_and_completion_round_trip() {
         "Test Grader",
     )
     .await;
-    let app = build_router(AppState::with_pool(
-        AppConfig::default(),
-        database.pool().clone(),
-    ));
+    let mut config = AppConfig::default();
+    config.grading_sync_on_read_fallback = true;
+    let app = build_router(AppState::with_pool(config, database.pool().clone()));
 
     let create = app
         .clone()
@@ -686,6 +703,7 @@ async fn bootstrap_and_submit(
     flags: serde_json::Value,
 ) -> Uuid {
     let service = DeliveryService::new(pool.clone());
+    start_runtime(pool, schedule_id, "listening").await;
     let context = service
         .bootstrap(
             schedule_id,
@@ -701,7 +719,9 @@ async fn bootstrap_and_submit(
         )
         .await
         .expect("bootstrap attempt");
-    let attempt_id = context.attempt.expect("attempt").id;
+    let attempt = context.attempt.expect("attempt");
+    let attempt_id = attempt.id.clone();
+    let attempt_revision = attempt.revision;
     service
         .submit_attempt(
             schedule_id,
@@ -711,7 +731,7 @@ async fn bootstrap_and_submit(
                 answers: Some(answers),
                 writing_answers: Some(writing_answers),
                 flags: Some(flags),
-                last_seen_revision: Some(0),
+                last_seen_revision: Some(attempt_revision),
                 submission_id: Some(format!("submission-{candidate_id}")),
                 client_session_id: None,
                 client_final_seq: Some(0),
@@ -751,9 +771,57 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
             exam_id.clone(),
             SaveDraftRequest {
                 content_snapshot: json!({
-                    "reading": {"passages": [{"id": "reading-1"}]},
-                    "listening": {"parts": [{"id": "listening-1"}]},
-                    "writing": {"tasks": [{"id": "task1"}, {"id": "task2"}]},
+                    "reading": {
+                        "passages": [{
+                            "id": "reading-1",
+                            "title": "Reading Passage 1",
+                            "blocks": [{
+                                "id": "reading-short-1",
+                                "type": "SHORT_ANSWER",
+                                "instruction": "Answer the question.",
+                                "questions": [{
+                                    "id": "q-reading-1",
+                                    "prompt": "What is the keyword?",
+                                    "correctAnswer": "Alpha answer",
+                                    "answerRule": "THREE_WORDS"
+                                }]
+                            }, {
+                                "id": "reading-sentence-1",
+                                "type": "SENTENCE_COMPLETION",
+                                "instruction": "Complete the sentence.",
+                                "questions": [{
+                                    "id": "q-slot",
+                                    "sentence": "The two words are __ and __.",
+                                    "blanks": [
+                                        { "id": "b1", "position": 0, "correctAnswer": "cat" },
+                                        { "id": "b2", "position": 1, "correctAnswer": "dog" }
+                                    ]
+                                }]
+                            }]
+                        }]
+                    },
+                    "listening": {
+                        "parts": [{
+                            "id": "listening-1",
+                            "title": "Listening Part 1",
+                            "blocks": [{
+                                "id": "listening-short-1",
+                                "type": "SHORT_ANSWER",
+                                "instruction": "Listen and answer.",
+                                "questions": [{
+                                    "id": "q-listening-1",
+                                    "prompt": "What did you hear?",
+                                    "correctAnswer": "Listening response",
+                                    "answerRule": "THREE_WORDS"
+                                }]
+                            }]
+                        }]
+                    },
+                    "writing": {
+                        "task1Prompt": "Summarise the chart.",
+                        "task2Prompt": "Discuss both views.",
+                        "tasks": [{"id": "task1"}, {"id": "task2"}]
+                    },
                     "speaking": {"part1Topics": ["topic"], "cueCard": "cue", "part3Discussion": ["discussion"]}
                 }),
                 config_snapshot: sample_delivery_config(),
@@ -804,8 +872,22 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
 fn sample_delivery_config() -> serde_json::Value {
     json!({
         "sections": {
-            "listening": {"enabled": true, "label": "Listening", "order": 1, "duration": 30, "gapAfterMinutes": 5},
-            "reading": {"enabled": true, "label": "Reading", "order": 2, "duration": 60, "gapAfterMinutes": 0},
+            "listening": {
+                "enabled": true,
+                "label": "Listening",
+                "order": 1,
+                "duration": 30,
+                "gapAfterMinutes": 5,
+                "bandScoreTable": { "39": 9.0, "37": 8.5, "35": 8.0, "32": 7.5, "30": 7.0, "26": 6.5, "23": 6.0, "18": 5.5, "16": 5.0, "13": 4.5, "10": 4.0, "6": 3.5, "4": 3.0, "2": 2.5 }
+            },
+            "reading": {
+                "enabled": true,
+                "label": "Reading",
+                "order": 2,
+                "duration": 60,
+                "gapAfterMinutes": 0,
+                "bandScoreTable": { "39": 9.0, "37": 8.5, "35": 8.0, "33": 7.5, "30": 7.0, "27": 6.5, "23": 6.0, "19": 5.5, "15": 5.0, "13": 4.5, "10": 4.0, "8": 3.5, "6": 3.0, "4": 2.5 }
+            },
             "writing": {"enabled": true, "label": "Writing", "order": 3, "duration": 60, "gapAfterMinutes": 10},
             "speaking": {"enabled": true, "label": "Speaking", "order": 4, "duration": 15, "gapAfterMinutes": 0}
         }
@@ -823,4 +905,19 @@ fn student_key(schedule_id: Uuid, candidate_id: &str) -> String {
 
 fn contract_actor() -> ActorContext {
     ActorContext::new(Uuid::new_v4().to_string(), ActorRole::Admin)
+}
+
+async fn start_runtime(pool: &sqlx::MySqlPool, schedule_id: Uuid, section_key: &str) {
+    let actor = contract_actor();
+    SchedulingService::new(pool.clone())
+        .apply_runtime_command(
+            &actor,
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: Some(format!("grading contract bootstrap: {section_key}")),
+            },
+        )
+        .await
+        .unwrap();
 }

@@ -14,9 +14,9 @@ CREATE TABLE IF NOT EXISTS student_violation_events (
     FOREIGN KEY (attempt_id) REFERENCES student_attempts(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_student_violation_events_schedule_created
+CREATE INDEX idx_student_violation_events_schedule_created
     ON student_violation_events(schedule_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_student_violation_events_attempt_created
+CREATE INDEX idx_student_violation_events_attempt_created
     ON student_violation_events(attempt_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS proctor_presence (
@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS proctor_presence (
     FOREIGN KEY (schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_proctor_presence_active
+CREATE INDEX idx_proctor_presence_active
     ON proctor_presence(schedule_id, proctor_id, left_at);
-CREATE INDEX IF NOT EXISTS idx_proctor_presence_schedule_heartbeat
+CREATE INDEX idx_proctor_presence_schedule_heartbeat
     ON proctor_presence(schedule_id, last_heartbeat_at DESC);
 
 CREATE TABLE IF NOT EXISTS session_audit_logs (
@@ -50,9 +50,9 @@ CREATE TABLE IF NOT EXISTS session_audit_logs (
     FOREIGN KEY (target_student_id) REFERENCES student_attempts(id) ON DELETE SET NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_audit_logs_schedule_created
+CREATE INDEX idx_session_audit_logs_schedule_created
     ON session_audit_logs(schedule_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_session_audit_logs_target_created
+CREATE INDEX idx_session_audit_logs_target_created
     ON session_audit_logs(target_student_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS session_notes (
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS session_notes (
     FOREIGN KEY (schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_session_notes_schedule_created
+CREATE INDEX idx_session_notes_schedule_created
     ON session_notes(schedule_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS violation_rules (
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS violation_rules (
     FOREIGN KEY (schedule_id) REFERENCES exam_schedules(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_violation_rules_schedule_created
+CREATE INDEX idx_violation_rules_schedule_created
     ON violation_rules(schedule_id, created_at DESC);
 
 -- Note: GRANT statements removed - using MySQL user management instead

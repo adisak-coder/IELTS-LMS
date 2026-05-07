@@ -12,6 +12,7 @@ import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { useSplitPaneResize } from './useSplitPaneResize';
+import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 
 interface StudentListeningProps {
@@ -152,9 +153,13 @@ export function StudentListening({
 
     return currentDiagramBlocks.length > 0 ? currentDiagramBlocks : diagramBlocks;
   }, [activePart?.blocks, currentQ?.blockId, currentQuestionId]);
-  const hiddenDiagramReferenceBlockIds = useMemo(
-    () => new Set(activeDiagramBlocks.map((block) => block.id)),
+  const diagramBlocksInMaterialPane = useMemo(
+    () => activeDiagramBlocks.filter((block) => !isInstructionReferencePlacement(block)),
     [activeDiagramBlocks],
+  );
+  const hiddenDiagramReferenceBlockIds = useMemo(
+    () => new Set(diagramBlocksInMaterialPane.map((block) => block.id)),
+    [diagramBlocksInMaterialPane],
   );
 
   useEffect(() => {
@@ -385,9 +390,9 @@ export function StudentListening({
               </div>
             </div>
           )}
-          {activeDiagramBlocks.length > 0 ? (
+          {diagramBlocksInMaterialPane.length > 0 ? (
             <div className={`${materialCompact ? 'mt-3 space-y-3' : 'mt-4 space-y-4'} break-words [overflow-wrap:anywhere]`} data-testid="listening-material-pane">
-              {activeDiagramBlocks.map((diagramBlock) => {
+              {diagramBlocksInMaterialPane.map((diagramBlock) => {
                 const sources = getImageUrlCandidates(diagramBlock.imageUrl ?? '');
                 const hasImage = Boolean(sources[0]);
 
