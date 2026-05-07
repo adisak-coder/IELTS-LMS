@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DiagramLabelingBlock, ExamState, QuestionAnswer } from '../../types';
 import { QuestionRenderer } from './QuestionRenderer';
-import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag, Minus, Plus, RotateCcw } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
 import { FormattedText } from './FormattedText';
 import { RichTextHighlighter } from './RichTextHighlighter';
+import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 import { formatQuestionRange } from './questionRangeLabel';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
@@ -42,53 +43,6 @@ function isCurrentDiagramBlock(block: DiagramLabelingBlock, currentQuestionId: s
   }
 
   return Boolean(currentQuestionId && getDiagramSlotIds(block).includes(currentQuestionId));
-}
-
-function ListeningDiagramReference({
-  block,
-  zoom,
-}: {
-  block: DiagramLabelingBlock;
-  zoom: number;
-}) {
-  const sources = useMemo(() => getImageUrlCandidates(block.imageUrl ?? ''), [block.imageUrl]);
-  const [sourceIndex, setSourceIndex] = useState(0);
-  const source = sources[sourceIndex] ?? '';
-
-  useEffect(() => {
-    setSourceIndex(0);
-  }, [block.imageUrl]);
-
-  if (!source) {
-    return (
-      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
-        Diagram image URL is missing or inaccessible.
-      </div>
-    );
-  }
-
-  return (
-    <div className="overflow-auto rounded-lg border border-gray-200 bg-gray-50" data-testid="listening-diagram-reference">
-      <img
-        src={source}
-        alt="Diagram reference"
-        className="h-auto max-h-[72dvh] max-w-none object-contain select-none"
-        style={{
-          width: `${Math.round(zoom * 100)}%`,
-          WebkitTouchCallout: 'none',
-          WebkitUserSelect: 'none',
-          userSelect: 'none',
-        }}
-        draggable={false}
-        referrerPolicy="no-referrer"
-        onContextMenu={(event) => event.preventDefault()}
-        onDragStart={(event) => event.preventDefault()}
-        onError={() => {
-          setSourceIndex((currentIndex) => Math.min(currentIndex + 1, sources.length - 1));
-        }}
-      />
-    </div>
-  );
 }
 
 export function StudentListening({
@@ -152,7 +106,6 @@ export function StudentListening({
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [volume, setVolume] = useState(70);
-  const [diagramZoom, setDiagramZoom] = useState(1);
   const questionContainerRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const { answerCompact, handleDrag, leftWidth, materialCompact, splitPaneStyle, workspaceRef } = useSplitPaneResize({
@@ -203,10 +156,6 @@ export function StudentListening({
     () => new Set(activeDiagramBlocks.map((block) => block.id)),
     [activeDiagramBlocks],
   );
-
-  const adjustDiagramZoom = (delta: number) => {
-    setDiagramZoom((current) => Math.min(1.8, Math.max(0.8, Math.round((current + delta) * 100) / 100)));
-  };
 
   useEffect(() => {
     if (currentQuestionId && questionContainerRef.current) {
@@ -438,26 +387,32 @@ export function StudentListening({
           )}
           {activeDiagramBlocks.length > 0 ? (
             <div className={`${materialCompact ? 'mt-3 space-y-3' : 'mt-4 space-y-4'} break-words [overflow-wrap:anywhere]`} data-testid="listening-material-pane">
-              {activeDiagramBlocks.map((diagramBlock) => (
+              {activeDiagramBlocks.map((diagramBlock) => {
+                const sources = getImageUrlCandidates(diagramBlock.imageUrl ?? '');
+                const hasImage = Boolean(sources[0]);
+
+                return (
                   <div key={diagramBlock.id} className="rounded-xl border border-gray-200 bg-white p-3">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                       <h3 className="text-sm font-semibold text-gray-700">Diagram reference</h3>
-                      <div className="inline-flex items-center gap-1 rounded-md border border-gray-200 bg-gray-50 p-1">
-                        <button type="button" onClick={() => adjustDiagramZoom(-0.15)} className="flex h-8 w-8 items-center justify-center rounded bg-white text-gray-700" aria-label="Zoom diagram out">
-                          <Minus size={14} />
-                        </button>
-                        <span className="min-w-12 text-center text-xs font-bold text-gray-700">{Math.round(diagramZoom * 100)}%</span>
-                        <button type="button" onClick={() => adjustDiagramZoom(0.15)} className="flex h-8 w-8 items-center justify-center rounded bg-white text-gray-700" aria-label="Zoom diagram in">
-                          <Plus size={14} />
-                        </button>
-                        <button type="button" onClick={() => setDiagramZoom(1)} className="flex h-8 w-8 items-center justify-center rounded bg-white text-gray-700" aria-label="Reset diagram zoom">
-                          <RotateCcw size={14} />
-                        </button>
-                      </div>
                     </div>
-                    <ListeningDiagramReference block={diagramBlock} zoom={diagramZoom} />
+                    {hasImage ? (
+                      <StudentZoomableMedia
+                        sources={sources}
+                        alt="Diagram reference"
+                        label="Diagram reference"
+                        hint="Tap to zoom the diagram"
+                        className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+                        imageClassName="max-h-[72dvh]"
+                      />
+                    ) : (
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 p-6 text-center text-sm text-gray-500">
+                        Diagram image URL is missing or inaccessible.
+                      </div>
+                    )}
                   </div>
-                ))}
+                );
+              })}
             </div>
           ) : null}
           {activeTranscript ? (

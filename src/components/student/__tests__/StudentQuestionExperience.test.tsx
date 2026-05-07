@@ -2087,10 +2087,14 @@ describe('student question experience', () => {
 
     const materialPane = screen.getByTestId('listening-material-pane');
     expect(within(materialPane).getByAltText('Diagram reference')).toBeInTheDocument();
-    expect(within(materialPane).getByRole('button', { name: /zoom diagram in/i })).toBeInTheDocument();
+    expect(within(materialPane).queryByRole('button', { name: /zoom diagram in/i })).not.toBeInTheDocument();
+    expect(within(materialPane).queryByRole('button', { name: /zoom diagram out/i })).not.toBeInTheDocument();
+    expect(within(materialPane).queryByRole('button', { name: /reset diagram zoom/i })).not.toBeInTheDocument();
     expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Answer for question 1' })).toBeInTheDocument();
     expect(screen.getAllByAltText('Diagram reference')).toHaveLength(1);
+    fireEvent.click(within(materialPane).getByRole('button', { name: /diagram reference\. tap to zoom the diagram/i }));
+    expect(screen.getByRole('dialog', { name: /diagram reference zoomed view/i })).toBeInTheDocument();
   });
 
   it('shows the active listening diagram when the diagram is not in the first part', () => {
