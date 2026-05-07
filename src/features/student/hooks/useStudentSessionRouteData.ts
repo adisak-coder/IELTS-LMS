@@ -110,6 +110,11 @@ function buildBackendStaticSessionEndpoint(scheduleId: string, candidateId: stri
   return `/v1/student/sessions/${scheduleId}/static?${query.toString()}`;
 }
 
+function buildBackendSessionEndpoint(scheduleId: string, candidateId: string) {
+  const query = new URLSearchParams({ candidateId });
+  return `/v1/student/sessions/${scheduleId}?${query.toString()}`;
+}
+
 function buildBackendLiveSessionEndpoint(scheduleId: string, candidateId: string) {
   const query = new URLSearchParams({ candidateId });
   return `/v1/student/sessions/${scheduleId}/live?${query.toString()}`;

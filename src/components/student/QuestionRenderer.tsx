@@ -613,37 +613,6 @@ export function QuestionRenderer({
       ]),
     );
 
-    const firstColumnAnchors = (() => {
-      const anchors: Array<{ render: boolean; rowSpan: number }> = tableBlock.rows.map(() => ({
-        render: true,
-        rowSpan: 1,
-      }));
-
-      let currentAnchor: number | null = null;
-      for (let rowIndex = 0; rowIndex < tableBlock.rows.length; rowIndex += 1) {
-        const hasSlotInFirstColumn = cellMap.has(`${rowIndex}:0`);
-        const value = (tableBlock.rows[rowIndex]?.[0] ?? '').trim();
-        const isMergeCandidate = value.length === 0 && !hasSlotInFirstColumn;
-
-        if (!isMergeCandidate) {
-          currentAnchor = rowIndex;
-          continue;
-        }
-
-        if (currentAnchor === null) {
-          continue;
-        }
-
-        anchors[rowIndex] = { render: false, rowSpan: 1 };
-        anchors[currentAnchor] = {
-          render: true,
-          rowSpan: anchors[currentAnchor].rowSpan + 1,
-        };
-      }
-
-      return anchors;
-    })();
-
     return (
       <div className="overflow-x-auto rounded-2xl border border-gray-200">
         <table
@@ -673,10 +642,6 @@ export function QuestionRenderer({
             {tableBlock.rows.map((row, rowIndex) => (
               <tr key={`row-${rowIndex}`}>
                 {row.map((cellValue, cellIndex) => {
-                  if (cellIndex === 0 && !firstColumnAnchors[rowIndex]?.render) {
-                    return null;
-                  }
-
                   const slot = cellMap.get(`${rowIndex}:${cellIndex}`);
 
                   if (!slot) {
@@ -684,7 +649,6 @@ export function QuestionRenderer({
                       <td
                         key={`cell-${rowIndex}-${cellIndex}`}
                         className="border border-gray-200 px-3 py-2 text-gray-800"
-                        rowSpan={cellIndex === 0 ? firstColumnAnchors[rowIndex]?.rowSpan : undefined}
                       >
                         <FormattedText
                           as="span"
