@@ -537,6 +537,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       return;
     }
 
+    // Cleanup previously used to clear scheduled refresh timeouts; keep the
+    // registry so the effect teardown never references an undefined identifier.
+    const scheduledRefreshTimers = new Set<number>();
+
     const root = document.documentElement;
     const body = document.body;
     const tabletViewportSessionLocked = viewportLockForExamSessionRef.current === true;
