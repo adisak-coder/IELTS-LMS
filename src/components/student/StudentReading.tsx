@@ -13,6 +13,8 @@ import type { StudentHighlightColor } from './highlightPalette';
 import type { StimulusAnnotation } from '../../types';
 import { formatQuestionRange } from './questionRangeLabel';
 import { useSplitPaneResize } from './useSplitPaneResize';
+import { normalizeReadingPlainTextForDisplay } from './normalizeReadingPassageText';
+import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
 
 interface StudentReadingProps {
   state: ExamState;

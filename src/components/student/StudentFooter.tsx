@@ -3,6 +3,7 @@ import { Button } from '../ui/Button';
 import {
   countAnsweredQuestions,
   countQuestionSlots,
+  getQuestionNumberLabel,
   isQuestionAnswered,
   type StudentQuestionDescriptor,
 } from '@services/examAdapterService';
@@ -30,34 +31,6 @@ export function StudentFooter({
   showSubmitButton = true,
   tabletMode = false,
 }: StudentFooterProps) {
-  const byRoot = questions.reduce<Record<string, StudentQuestionDescriptor[]>>((roots, question) => {
-    const bucket = roots[question.rootId];
-    if (bucket) {
-      bucket.push(question);
-    } else {
-      roots[question.rootId] = [question];
-    }
-    return roots;
-  }, {});
-
-  const rootQuestions = Object.values(byRoot)
-    .map((rootMembers) => {
-      const first = rootMembers[0];
-      if (!first) {
-        return null;
-      }
-      const currentMember = rootMembers.find((member) => member.id === currentQuestionId) ?? null;
-      const representative = currentMember ?? first;
-      return {
-        rootId: first.rootId,
-        rootNumber: first.rootNumber,
-        members: rootMembers,
-        representative,
-      };
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-    .sort((left, right) => left.rootNumber - right.rootNumber);
-
   const groupedQuestions = questions.reduce<Record<string, StudentQuestionDescriptor[]>>(
     (groups, question) => {
       const existingGroup = groups[question.groupId];
@@ -116,16 +89,8 @@ export function StudentFooter({
           );
           const partNumber = index + 1;
           const firstQuestionId = groupQuestions[0]?.id ?? null;
-          const groupRootIds = Array.from(
-            new Set(groupQuestions.map((question) => question.rootId)),
-          );
-          const groupAnsweredSlots = groupRootIds.filter((rootId) =>
-            groupQuestions.some(
-              (question) =>
-                question.rootId === rootId && isQuestionAnswered(question, answers),
-            ),
-          ).length;
-          const groupTotalSlots = groupRootIds.length;
+          const groupTotalSlots = countQuestionSlots(groupQuestions);
+          const groupAnsweredSlots = countAnsweredQuestions(groupQuestions, answers);
           const groupProgressPct =
             groupTotalSlots > 0 ? (groupAnsweredSlots / groupTotalSlots) * 100 : 0;
 
@@ -136,14 +101,12 @@ export function StudentFooter({
             >
               {isActiveGroup ? (
                 <div className="flex items-center gap-0.5 md:gap-1">
-                  {rootQuestions
-                    .filter((root) => root.members.some((member) => member.groupId === groupId))
-                    .map((root) => {
-                    const isCurrent = root.members.some((member) => member.id === currentQuestionId);
-                    const isFlagged = root.members.some((member) => Boolean(flags[member.id]));
-                    const isAnswered = root.members.some((member) => isQuestionAnswered(member, answers));
-                    const displayLabel = String(root.rootNumber);
-                    const targetQuestionId = root.representative.id;
+                  {groupQuestions.map((question) => {
+                    const isCurrent = question.id === currentQuestionId;
+                    const isFlagged = Boolean(flags[question.id]);
+                    const isAnswered = isQuestionAnswered(question, answers);
+                    const displayLabel = getQuestionNumberLabel(questions, question.id);
+                    const targetQuestionId = question.id;
 
                     return (
                       <button

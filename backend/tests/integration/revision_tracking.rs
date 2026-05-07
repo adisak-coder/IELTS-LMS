@@ -141,6 +141,143 @@ async fn revision_increments_and_mutations_record_applied_revision() {
     database.shutdown().await;
 }
 
+#[tokio::test]
+async fn mutation_batches_accept_batch_local_sequences_and_are_idempotent_by_mutation_id() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
+    let service = DeliveryService::new(database.pool().clone());
+
+    let student_key = format!("student-{}-alice", schedule_id);
+    let session = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key.clone(),
+                candidate_id: "alice".to_owned(),
+                candidate_name: "Alice Roe".to_owned(),
+                candidate_email: "alice@example.com".to_owned(),
+                email: Some("alice@example.com".to_owned()),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap");
+    let attempt = session.attempt.expect("attempt");
+
+    let client_session_id = Uuid::new_v4().to_string();
+    let first = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: attempt.id.clone(),
+                student_key: student_key.clone(),
+                client_session_id: client_session_id.clone(),
+                mutations: vec![MutationEnvelope {
+                    id: "m1".to_owned(),
+                    seq: 1,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
+                    mutation_type: "answer".to_owned(),
+                    base_revision: None,
+                    payload: json!({"questionId": "q1", "value": "A"}),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect("apply first batch");
+    assert_eq!(first.server_accepted_through_seq, 1);
+    let first_attempt = first.attempt.expect("full mutation response includes attempt");
+    assert_eq!(first_attempt.revision, 1);
+
+    // Second batch reuses a batch-local sequence (starts at 1 again). This must still be accepted.
+    let second = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: first_attempt.id.clone(),
+                student_key: student_key.clone(),
+                client_session_id: client_session_id.clone(),
+                mutations: vec![MutationEnvelope {
+                    id: "m2".to_owned(),
+                    seq: 1,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 0).unwrap(),
+                    mutation_type: "answer".to_owned(),
+                    base_revision: None,
+                    payload: json!({"questionId": "q2", "value": "B"}),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect("apply second batch");
+    assert_eq!(second.server_accepted_through_seq, 2);
+    let second_attempt = second.attempt.expect("full mutation response includes attempt");
+    assert_eq!(second_attempt.revision, 2);
+    assert_eq!(second_attempt.answers["q1"], "A");
+    assert_eq!(second_attempt.answers["q2"], "B");
+
+    let seq_1: i64 = sqlx::query_scalar(
+        "SELECT mutation_seq FROM student_attempt_mutations WHERE attempt_id = ? AND client_mutation_id = ?",
+    )
+    .bind(second_attempt.id.clone())
+    .bind("m1")
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(seq_1, 1);
+
+    let seq_2: i64 = sqlx::query_scalar(
+        "SELECT mutation_seq FROM student_attempt_mutations WHERE attempt_id = ? AND client_mutation_id = ?",
+    )
+    .bind(second_attempt.id.clone())
+    .bind("m2")
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(seq_2, 2);
+
+    // Replaying the same mutation id is idempotent: no revision bump, no new seq.
+    let replay = service
+        .apply_mutation_batch(
+            schedule_id,
+            StudentMutationBatchRequest {
+                attempt_id: second_attempt.id.clone(),
+                student_key: student_key.clone(),
+                client_session_id,
+                mutations: vec![MutationEnvelope {
+                    id: "m2".to_owned(),
+                    seq: 1,
+                    timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 11, 5).unwrap(),
+                    mutation_type: "answer".to_owned(),
+                    base_revision: None,
+                    payload: json!({"questionId": "q2", "value": "B"}),
+                }],
+            },
+            MutationBatchResponseMode::Full,
+            None,
+        )
+        .await
+        .expect("replay should be idempotent");
+    assert_eq!(replay.applied_mutation_count, 0);
+    assert_eq!(replay.server_accepted_through_seq, 2);
+    let replay_attempt = replay.attempt.expect("attempt");
+    assert_eq!(replay_attempt.revision, 2);
+
+    let stored_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM student_attempt_mutations WHERE attempt_id = ?")
+            .bind(&replay_attempt.id)
+            .fetch_one(database.pool())
+            .await
+            .expect("count persisted mutation rows");
+    assert_eq!(stored_count, 2);
+
+    database.shutdown().await;
+}
+
 async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule::ExamSchedule {
     let actor = ActorContext::new(Uuid::new_v4().to_string(), ActorRole::Admin);
     let builder_service = BuilderService::new(pool.clone());

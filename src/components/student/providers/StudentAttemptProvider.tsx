@@ -19,6 +19,12 @@ import {
   backendConflictReason,
   clearAttemptMutationWatermark,
 } from '@services/studentAttemptRepository';
+import {
+  buildQueuedMutationUpdate,
+  DurablePersistTriggerSource,
+  PendingMutationDurabilityMirror,
+  readAnswerSyncCheckpoint,
+} from '@services/studentMutationOutbox';
 import { saveStudentAuditEvent } from '@services/studentAuditService';
 import { queryClient } from '../../../app/data/queryClient';
 import {
@@ -103,115 +109,6 @@ type ObservedSnapshot = {
 
 const StudentAttemptContext = createContext<StudentAttemptContextValue | null>(null);
 const ANSWER_DURABLE_WRITE_DEBOUNCE_MS = 100;
-const ANSWER_SYNC_CHECKPOINT_KEY_PREFIX = 'ielts_student_answer_checkpoint_v1';
-
-type DurablePersistTriggerSource =
-  | 'mutation'
-  | 'debounce_timer'
-  | 'focusout'
-  | 'visibility_hidden'
-  | 'pagehide'
-  | 'beforeunload'
-  | 'freeze'
-  | 'window_blur'
-  | 'hydrate_checkpoint'
-  | 'dom_rescue_commit';
-
-interface AnswerSyncCheckpointRecord {
-  attemptId: string;
-  savedAt: string;
-  mutationVersion: number;
-  mutations: StudentAttemptMutation[];
-}
-
-function checkpointStorageKey(attemptId: string): string {
-  return `${ANSWER_SYNC_CHECKPOINT_KEY_PREFIX}:${attemptId}`;
-}
-
-function readCheckpointStorage(): Storage | null {
-  try {
-    if (typeof window === 'undefined') {
-      return null;
-    }
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function isCheckpointEligibleMutationType(type: StudentAttemptMutationType): boolean {
-  return type === 'answer' || type === 'writing_answer' || type === 'flag';
-}
-
-function isCheckpointRecord(candidate: unknown): candidate is AnswerSyncCheckpointRecord {
-  if (!candidate || typeof candidate !== 'object') {
-    return false;
-  }
-
-  const parsed = candidate as Partial<AnswerSyncCheckpointRecord>;
-  return (
-    typeof parsed.attemptId === 'string' &&
-    typeof parsed.savedAt === 'string' &&
-    typeof parsed.mutationVersion === 'number' &&
-    Number.isFinite(parsed.mutationVersion) &&
-    Array.isArray(parsed.mutations)
-  );
-}
-
-function writeAnswerSyncCheckpoint(
-  attemptId: string,
-  mutationVersion: number,
-  mutations: StudentAttemptMutation[],
-): boolean {
-  const storage = readCheckpointStorage();
-  if (!storage) {
-    return false;
-  }
-
-  try {
-    const eligibleMutations = mutations.filter((mutation) =>
-      isCheckpointEligibleMutationType(mutation.type),
-    );
-    const key = checkpointStorageKey(attemptId);
-    if (eligibleMutations.length === 0) {
-      storage.removeItem(key);
-      return true;
-    }
-
-    const payload: AnswerSyncCheckpointRecord = {
-      attemptId,
-      savedAt: new Date().toISOString(),
-      mutationVersion,
-      mutations: eligibleMutations,
-    };
-    storage.setItem(key, JSON.stringify(payload));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function readAnswerSyncCheckpoint(attemptId: string): StudentAttemptMutation[] {
-  const storage = readCheckpointStorage();
-  if (!storage) {
-    return [];
-  }
-
-  try {
-    const raw = storage.getItem(checkpointStorageKey(attemptId));
-    if (!raw) {
-      return [];
-    }
-    const parsed = JSON.parse(raw) as unknown;
-    if (!isCheckpointRecord(parsed) || parsed.attemptId !== attemptId) {
-      return [];
-    }
-
-    return parsed.mutations.filter((mutation) => isCheckpointEligibleMutationType(mutation.type));
-  } catch {
-    return [];
-  }
-}
 
 function pendingMutationOldestAgeMs(mutations: StudentAttemptMutation[]): number | null {
   let oldest = Number.POSITIVE_INFINITY;
@@ -265,10 +162,6 @@ function detectBrowserEngine(): 'webkit' | 'blink' | 'gecko' | 'unknown' {
   return 'unknown';
 }
 
-function isAnswerMutationType(type: StudentAttemptMutationType): boolean {
-  return type === 'answer' || type === 'writing_answer';
-}
-
 function isEditableDomTarget(target: EventTarget | null): boolean {
   if (!target || !(target instanceof Element)) {
     return false;
@@ -279,55 +172,6 @@ function isEditableDomTarget(target: EventTarget | null): boolean {
     target instanceof HTMLTextAreaElement ||
     target.getAttribute('contenteditable') === 'true'
   );
-}
-
-function getMutationCoalesceKey(mutation: StudentAttemptMutation): string | null {
-  switch (mutation.type) {
-    case 'answer': {
-      const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
-      if (!(typeof questionId === 'string' && questionId.trim())) {
-        return null;
-      }
-
-      const slotIndex = (mutation.payload as { slotIndex?: unknown } | undefined)?.slotIndex;
-      if (typeof slotIndex === 'number' && Number.isInteger(slotIndex) && slotIndex >= 0) {
-        return `answer:${questionId}:slot:${slotIndex}`;
-      }
-
-      return `answer:${questionId}`;
-    }
-    case 'writing_answer': {
-      const taskId = (mutation.payload as { taskId?: unknown } | undefined)?.taskId;
-      return typeof taskId === 'string' && taskId.trim() ? `writing_answer:${taskId}` : null;
-    }
-    case 'flag': {
-      const questionId = (mutation.payload as { questionId?: unknown } | undefined)?.questionId;
-      return typeof questionId === 'string' && questionId.trim() ? `flag:${questionId}` : null;
-    }
-    case 'position':
-    case 'network':
-    case 'device_fingerprint':
-      return mutation.type;
-    case 'violation':
-    case 'precheck':
-    case 'heartbeat':
-    case 'sync':
-    default:
-      return null;
-  }
-}
-
-function coalescePendingMutations(
-  pending: StudentAttemptMutation[],
-  nextMutation: StudentAttemptMutation,
-): StudentAttemptMutation[] {
-  const coalesceKey = getMutationCoalesceKey(nextMutation);
-  if (!coalesceKey) {
-    return [...pending, nextMutation];
-  }
-
-  const filtered = pending.filter((existing) => getMutationCoalesceKey(existing) !== coalesceKey);
-  return [...filtered, nextMutation];
 }
 
 function mergeViolationsById(
@@ -473,18 +317,12 @@ export function StudentAttemptProvider({
   const [attempt, setAttempt] = useState<StudentAttempt | null>(attemptSnapshot);
   const [pendingMutationCount, setPendingMutationCount] = useState(0);
   const attemptRef = useRef<StudentAttempt | null>(attemptSnapshot);
-  const pendingMutationsRef = useRef<StudentAttemptMutation[]>([]);
   const observedRef = useRef<ObservedSnapshot>(createObservedSnapshot(attemptSnapshot));
   const objectiveFlushTimeoutRef = useRef<number | null>(null);
   const writingFlushTimeoutRef = useRef<number | null>(null);
-  const durablePendingWriteTimeoutRef = useRef<number | null>(null);
-  const pendingMutationVersionRef = useRef(0);
-  const durablePersistedMutationVersionRef = useRef(0);
-  const latestAnswerMutationVersionRef = useRef(0);
-  const durablePersistChainRef = useRef<Promise<boolean>>(Promise.resolve(true));
   const flushPendingRef = useRef<() => Promise<boolean>>(async () => true);
   const flushInFlightRef = useRef<Promise<boolean> | null>(null);
-  const lastDurablePersistTriggerRef = useRef<DurablePersistTriggerSource>('mutation');
+  const durabilityMirrorRef = useRef<PendingMutationDurabilityMirror | null>(null);
 
   const syncAttemptState = useCallback((nextAttempt: StudentAttempt) => {
     attemptRef.current = nextAttempt;
@@ -539,11 +377,11 @@ export function StudentAttemptProvider({
                   userAgentData?: {
                     platform?: string;
                   };
-                }).userAgentData?.platform ?? navigator.platform
+        }).userAgentData?.platform ?? navigator.platform
               )
             : 'unknown',
         deviceClass: detectClientDeviceClass(),
-        pendingMutationAgeMs: pendingMutationOldestAgeMs(pendingMutationsRef.current),
+        pendingMutationAgeMs: pendingMutationOldestAgeMs(durabilityMirrorRef.current?.getPendingMutations() ?? []),
         pendingMutationCount: pendingMutationCountForError,
       }),
     );
@@ -560,89 +398,29 @@ export function StudentAttemptProvider({
     );
   }, [scheduleId, setStorageDurabilityBlocking, syncAttemptState]);
 
-  const updatePendingMutationsRamState = useCallback((
-    nextMutations: StudentAttemptMutation[],
-    options?: {
-      includesAnswerMutation?: boolean;
-    },
-  ) => {
-    pendingMutationsRef.current = nextMutations;
-    setPendingMutationCount(nextMutations.length);
-    pendingMutationVersionRef.current += 1;
-
-    if (options?.includesAnswerMutation) {
-      latestAnswerMutationVersionRef.current = pendingMutationVersionRef.current;
-    }
-  }, []);
-
-  const clearDurablePendingWriteTimeout = useCallback(() => {
-    if (durablePendingWriteTimeoutRef.current) {
-      window.clearTimeout(durablePendingWriteTimeoutRef.current);
-      durablePendingWriteTimeoutRef.current = null;
-    }
-  }, []);
-
-  const persistPendingMutationsMirrorNow = useCallback((
-    source: DurablePersistTriggerSource = 'mutation',
-  ): Promise<boolean> => {
-    lastDurablePersistTriggerRef.current = source;
-    const persistTask = durablePersistChainRef.current.then(async () => {
-      const attempt = attemptRef.current;
-      if (!attempt) {
-        return true;
-      }
-
-      const mutationVersion = pendingMutationVersionRef.current;
-      if (mutationVersion <= durablePersistedMutationVersionRef.current) {
-        return true;
-      }
-
-      try {
-        const pendingMutations = pendingMutationsRef.current;
-        if (pendingMutations.length > 0) {
-          await studentAttemptRepository.savePendingMutations(attempt.id, pendingMutations);
-        } else {
-          await studentAttemptRepository.clearPendingMutations(attempt.id);
-        }
-      } catch (error) {
-        recordPendingMutationPersistenceError(
-          error,
-          pendingMutationsRef.current.length,
-          attempt,
-          lastDurablePersistTriggerRef.current,
-        );
-        return false;
-      }
-
-      durablePersistedMutationVersionRef.current = Math.max(
-        durablePersistedMutationVersionRef.current,
-        mutationVersion,
-      );
-      setStorageDurabilityBlocking(false);
-      return true;
+  if (!durabilityMirrorRef.current) {
+    durabilityMirrorRef.current = new PendingMutationDurabilityMirror({
+      debounceMs: ANSWER_DURABLE_WRITE_DEBOUNCE_MS,
+      getAttempt: () => attemptRef.current,
+      savePendingMutations: (attemptId, mutations) =>
+        studentAttemptRepository.savePendingMutations(attemptId, mutations),
+      clearPendingMutations: (attemptId) =>
+        studentAttemptRepository.clearPendingMutations(attemptId),
+      setStorageDurabilityBlocking,
+      onPersistError: recordPendingMutationPersistenceError,
+      onPendingMutationCountChange: (count) => setPendingMutationCount(count),
     });
+  }
 
-    durablePersistChainRef.current = persistTask;
-    return persistTask;
-  }, [recordPendingMutationPersistenceError, setStorageDurabilityBlocking]);
+  const persistPendingMutationsMirrorNow = useCallback(
+    (source: DurablePersistTriggerSource = 'mutation') =>
+      durabilityMirrorRef.current?.persistNow(source) ?? Promise.resolve(true),
+    [],
+  );
 
-  const scheduleDebouncedPendingMutationMirrorPersist = useCallback(() => {
-    clearDurablePendingWriteTimeout();
-    durablePendingWriteTimeoutRef.current = window.setTimeout(() => {
-      void persistPendingMutationsMirrorNow('debounce_timer');
-    }, ANSWER_DURABLE_WRITE_DEBOUNCE_MS);
-  }, [clearDurablePendingWriteTimeout, persistPendingMutationsMirrorNow]);
-
-  const flushAnswerDurableMirrorNow = useCallback((
-    source: DurablePersistTriggerSource,
-  ) => {
-    if (durablePersistedMutationVersionRef.current >= latestAnswerMutationVersionRef.current) {
-      return;
-    }
-
-    clearDurablePendingWriteTimeout();
-    void persistPendingMutationsMirrorNow(source);
-  }, [clearDurablePendingWriteTimeout, persistPendingMutationsMirrorNow]);
+  const flushAnswerDurableMirrorNow = useCallback((source: DurablePersistTriggerSource) => {
+    durabilityMirrorRef.current?.flushAnswerDurableMirrorNow(source);
+  }, []);
 
   const setPendingMutations = useCallback((
     nextMutations: StudentAttemptMutation[],
@@ -653,52 +431,8 @@ export function StudentAttemptProvider({
       source?: DurablePersistTriggerSource;
     },
   ): Promise<boolean> | void => {
-    const ramStateOptions =
-      options?.includesAnswerMutation === undefined
-        ? undefined
-        : { includesAnswerMutation: options.includesAnswerMutation };
-    updatePendingMutationsRamState(nextMutations, ramStateOptions);
-
-    const activeAttempt = attemptRef.current;
-    if (activeAttempt && options?.includesAnswerMutation) {
-      const checkpointOk = writeAnswerSyncCheckpoint(
-        activeAttempt.id,
-        pendingMutationVersionRef.current,
-        nextMutations,
-      );
-      if (!checkpointOk) {
-        recordPendingMutationPersistenceError(
-          new Error('failed_to_write_sync_checkpoint'),
-          nextMutations.length,
-          activeAttempt,
-          options?.source ?? 'mutation',
-          'checkpoint_failed',
-        );
-      }
-    }
-
-    if (options?.durableWriteMode === 'debounced') {
-      scheduleDebouncedPendingMutationMirrorPersist();
-      if (options?.awaitPersistence) {
-        clearDurablePendingWriteTimeout();
-        return persistPendingMutationsMirrorNow(options?.source ?? 'mutation');
-      }
-      return;
-    }
-
-    clearDurablePendingWriteTimeout();
-    const persistence = persistPendingMutationsMirrorNow(options?.source ?? 'mutation');
-    if (options?.awaitPersistence) {
-      return persistence;
-    }
-    void persistence;
-  }, [
-    clearDurablePendingWriteTimeout,
-    recordPendingMutationPersistenceError,
-    persistPendingMutationsMirrorNow,
-    scheduleDebouncedPendingMutationMirrorPersist,
-    updatePendingMutationsRamState,
-  ]);
+    return durabilityMirrorRef.current?.setPendingMutations(nextMutations, options);
+  }, []);
 
   const scheduleFlush = useCallback((kind: 'objective' | 'writing', delayMs: number) => {
     const timeoutRef =
@@ -753,37 +487,35 @@ export function StudentAttemptProvider({
       type: mutationType,
       payload: payloadWithModule,
     };
-    const nextPendingMutations = coalescePendingMutations(pendingMutationsRef.current, mutation);
-    const mutationIsAnswer = isAnswerMutationType(mutationType);
-    const answerInteractionType = mutationType === 'answer' ? payloadWithModule['interactionType'] : null;
-    const shouldDebounceAnswerDurability =
-      mutationType === 'writing_answer' ||
-      (mutationType === 'answer' && answerInteractionType !== 'discrete');
-    setPendingMutations(nextPendingMutations, {
-      durableWriteMode: mutationIsAnswer && shouldDebounceAnswerDurability ? 'debounced' : 'immediate',
-      includesAnswerMutation: mutationIsAnswer,
+    const enqueue = buildQueuedMutationUpdate({
+      currentAttempt,
+      pending: durabilityMirrorRef.current?.getPendingMutations() ?? [],
+      mutation,
+      patchSyncState: patch.recovery?.syncState,
+      online: navigator.onLine,
+      flushDelayMs: delayMs,
+    });
+    setPendingMutations(enqueue.nextPendingMutations, {
+      durableWriteMode: enqueue.durableWriteMode,
+      includesAnswerMutation: enqueue.includesAnswerMutation,
       source: 'mutation',
     });
 
-    const syncState: AttemptSyncState =
-      patch.recovery?.syncState ?? (navigator.onLine ? 'saving' : 'offline');
+    const syncState: AttemptSyncState = enqueue.syncState;
     const nextAttempt = mergeAttempt(currentAttempt, {
       ...patch,
       recovery: {
         ...patch.recovery,
         lastLocalMutationAt: timestamp,
-        pendingMutationCount: nextPendingMutations.length,
+        pendingMutationCount: enqueue.nextPendingMutations.length,
         syncState,
       },
     });
 
     syncAttemptState(nextAttempt);
 
-    if (navigator.onLine) {
-      scheduleFlush(
-        mutationType === 'writing_answer' ? 'writing' : 'objective',
-        delayMs,
-      );
+    if (enqueue.flush) {
+      scheduleFlush(enqueue.flush.kind, enqueue.flush.delayMs);
     }
   }, [persistenceEnabled, scheduleFlush, setPendingMutations, syncAttemptState]);
 
@@ -797,10 +529,13 @@ export function StudentAttemptProvider({
       if (!currentAttempt) {
         return true;
       }
+      const mirror = durabilityMirrorRef.current;
+      if (!mirror) {
+        return true;
+      }
 
       if (!persistenceEnabled) {
-        pendingMutationsRef.current = [];
-        setPendingMutationCount(0);
+        mirror.reset();
         setStorageDurabilityBlocking(false);
         const idleAttempt = mergeAttempt(currentAttempt, {
           recovery: {
@@ -816,25 +551,25 @@ export function StudentAttemptProvider({
         const offlineAttempt = mergeAttempt(currentAttempt, {
           recovery: {
             syncState: 'offline',
-            pendingMutationCount: pendingMutationsRef.current.length,
+            pendingMutationCount: mirror.getPendingMutations().length,
           },
         });
         syncAttemptState(offlineAttempt);
         return false;
       }
 
-      if (pendingMutationsRef.current.length === 0) {
+      if (mirror.getPendingMutations().length === 0) {
         setRuntimeAttemptSyncState(currentAttempt.recovery.syncState);
         return true;
       }
 
-      if (durablePersistedMutationVersionRef.current < pendingMutationVersionRef.current) {
+      if (!mirror.isDurableMirrorUpToDate()) {
         const persistedMirror = await persistPendingMutationsMirrorNow();
         if (!persistedMirror) {
           const erroredAttempt = mergeAttempt(currentAttempt, {
             recovery: {
               syncState: 'error',
-              pendingMutationCount: pendingMutationsRef.current.length,
+              pendingMutationCount: mirror.getPendingMutations().length,
             },
           });
           syncAttemptState(erroredAttempt);
@@ -848,7 +583,7 @@ export function StudentAttemptProvider({
           const erroredAttempt = mergeAttempt(currentAttempt, {
             recovery: {
               syncState: 'error',
-              pendingMutationCount: pendingMutationsRef.current.length,
+              pendingMutationCount: mirror.getPendingMutations().length,
             },
           });
           syncAttemptState(erroredAttempt);
@@ -856,9 +591,9 @@ export function StudentAttemptProvider({
         }
       }
 
-      while (pendingMutationsRef.current.length > 0) {
+      while (mirror.getPendingMutations().length > 0) {
         const attemptBeforeFlush = attemptRef.current ?? currentAttempt;
-        const mutationsBeingFlushed = pendingMutationsRef.current;
+        const mutationsBeingFlushed = mirror.getPendingMutations();
         const flushedMutationIds = new Set(mutationsBeingFlushed.map((mutation) => mutation.id));
         const savingAttempt = mergeAttempt(attemptBeforeFlush, {
           recovery: {
@@ -880,7 +615,7 @@ export function StudentAttemptProvider({
 
           await studentAttemptRepository.saveAttempt(persistedAttempt);
 
-          const remainingMutations = pendingMutationsRef.current.filter(
+          const remainingMutations = mirror.getPendingMutations().filter(
             (mutation) => !flushedMutationIds.has(mutation.id),
           );
 
@@ -914,9 +649,9 @@ export function StudentAttemptProvider({
             continue;
           }
 
-          clearDurablePendingWriteTimeout();
+          mirror.cancelDebouncedPersist();
           await studentAttemptRepository.clearPendingMutations(persistedAttempt.id);
-          const postClearMutations = pendingMutationsRef.current.filter(
+          const postClearMutations = mirror.getPendingMutations().filter(
             (mutation) => !flushedMutationIds.has(mutation.id),
           );
           if (postClearMutations.length > 0) {
@@ -948,15 +683,7 @@ export function StudentAttemptProvider({
 
             continue;
           }
-          updatePendingMutationsRamState([]);
-          void writeAnswerSyncCheckpoint(
-            persistedAttempt.id,
-            pendingMutationVersionRef.current,
-            [],
-          );
-          durablePersistedMutationVersionRef.current = pendingMutationVersionRef.current;
-          latestAnswerMutationVersionRef.current = pendingMutationVersionRef.current;
-          setStorageDurabilityBlocking(false);
+          mirror.finalizeAfterSuccessfulClear(persistedAttempt.id);
           const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId(
             persistedAttempt.scheduleId,
           );
@@ -980,9 +707,7 @@ export function StudentAttemptProvider({
               }),
             );
             // Purge pending mutations - the attempt is already submitted.
-            pendingMutationsRef.current = [];
-            setPendingMutationCount(0);
-            clearDurablePendingWriteTimeout();
+            mirror.reset();
             await studentAttemptRepository.clearPendingMutations(currentAttempt.id);
             clearAttemptMutationWatermark(currentAttempt);
             setStorageDurabilityBlocking(false);
@@ -998,7 +723,7 @@ export function StudentAttemptProvider({
           const erroredAttempt = mergeAttempt(attemptRef.current ?? savingAttempt, {
             recovery: {
               syncState: navigator.onLine ? 'error' : 'offline',
-              pendingMutationCount: pendingMutationsRef.current.length,
+              pendingMutationCount: mirror.getPendingMutations().length,
             },
           });
           syncAttemptState(erroredAttempt);
@@ -1019,15 +744,12 @@ export function StudentAttemptProvider({
       }
     }
   }, [
-    clearDurablePendingWriteTimeout,
     persistenceEnabled,
     persistPendingMutationsMirrorNow,
     setPendingMutations,
     setRuntimeAttemptSyncState,
     setStorageDurabilityBlocking,
-    setPendingMutationCount,
     syncAttemptState,
-    updatePendingMutationsRamState,
   ]);
 
   useEffect(() => {
@@ -1091,12 +813,7 @@ export function StudentAttemptProvider({
       setRuntimeAttemptSyncState('idle');
       setAttempt(null);
       setPendingMutationCount(0);
-      pendingMutationsRef.current = [];
-      pendingMutationVersionRef.current = 0;
-      durablePersistedMutationVersionRef.current = 0;
-      latestAnswerMutationVersionRef.current = 0;
-      durablePersistChainRef.current = Promise.resolve(true);
-      clearDurablePendingWriteTimeout();
+      durabilityMirrorRef.current?.reset();
       return;
     }
 
@@ -1112,12 +829,7 @@ export function StudentAttemptProvider({
       observedRef.current = createObservedSnapshot(ephemeralAttempt);
       setRuntimeAttemptSyncState('idle');
       setPendingMutationCount(0);
-      pendingMutationsRef.current = [];
-      pendingMutationVersionRef.current = 0;
-      durablePersistedMutationVersionRef.current = 0;
-      latestAnswerMutationVersionRef.current = 0;
-      durablePersistChainRef.current = Promise.resolve(true);
-      clearDurablePendingWriteTimeout();
+      durabilityMirrorRef.current?.reset();
       return;
     }
 
@@ -1127,7 +839,7 @@ export function StudentAttemptProvider({
       sameAttempt &&
       !!currentAttempt &&
       (
-        pendingMutationsRef.current.length > 0 ||
+        (durabilityMirrorRef.current?.getPendingMutations().length ?? 0) > 0 ||
         shouldPreferLocalAttemptState(currentAttempt, attemptSnapshot)
       );
 
@@ -1175,7 +887,7 @@ export function StudentAttemptProvider({
 
       // Local edits that happen during mount hydration are authoritative for this tab.
       // Do not replace them with a stale durable snapshot that resolved later.
-      if (pendingMutationsRef.current.length > 0) {
+      if ((durabilityMirrorRef.current?.getPendingMutations().length ?? 0) > 0) {
         return;
       }
 
@@ -1215,20 +927,10 @@ export function StudentAttemptProvider({
         }
       }
 
-      updatePendingMutationsRamState(pendingMutations, {
-        includesAnswerMutation: pendingMutations.some(
-          (mutation) => mutation.type === 'answer' || mutation.type === 'writing_answer',
-        ),
+      durabilityMirrorRef.current?.hydratePendingMutations({
+        mutations: pendingMutations,
+        recoveredFromCheckpoint,
       });
-      if (recoveredFromCheckpoint && pendingMutations.length > 0) {
-        durablePersistedMutationVersionRef.current = Math.max(
-          0,
-          pendingMutationVersionRef.current - 1,
-        );
-        void persistPendingMutationsMirrorNow('hydrate_checkpoint');
-      } else {
-        durablePersistedMutationVersionRef.current = pendingMutationVersionRef.current;
-      }
 
       if (pendingMutations.length > 0) {
         const replayAnswers: Record<string, StudentAnswerValue> = {};
@@ -1311,13 +1013,10 @@ export function StudentAttemptProvider({
     };
   }, [
     attemptSnapshot,
-    clearDurablePendingWriteTimeout,
     flushPending,
     persistenceEnabled,
-    persistPendingMutationsMirrorNow,
     runtimeState.runtimeSnapshot,
     setRuntimeAttemptSyncState,
-    updatePendingMutationsRamState,
   ]);
 
   useEffect(() => {
@@ -1402,9 +1101,7 @@ export function StudentAttemptProvider({
       if (writingFlushTimeoutRef.current) {
         window.clearTimeout(writingFlushTimeoutRef.current);
       }
-      if (durablePendingWriteTimeoutRef.current) {
-        window.clearTimeout(durablePendingWriteTimeoutRef.current);
-      }
+      durabilityMirrorRef.current?.cancelDebouncedPersist();
     };
   }, []);
 

@@ -15,7 +15,7 @@ use ielts_backend_infrastructure::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Map, Value};
-use sqlx::{MySqlConnection, MySqlPool};
+use sqlx::{MySql, MySqlConnection, MySqlPool, QueryBuilder};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
@@ -403,6 +403,7 @@ impl DeliveryService {
         }
 
         validate_batch_sequences(&req.mutations)?;
+        validate_batch_mutation_ids(&req.mutations)?;
 
         let repository = self.idempotency_repository();
         let route_key = mutation_batch_route_key(schedule_id);
@@ -475,7 +476,28 @@ impl DeliveryService {
         .fetch_one(tx.as_mut())
         .await?;
 
-        validate_contiguous_sequences(existing_max_seq, &req.mutations)?;
+        let mut lookup_existing = QueryBuilder::<MySql>::new(
+            "SELECT client_mutation_id, mutation_type, payload FROM student_attempt_mutations WHERE attempt_id = ",
+        );
+        lookup_existing.push_bind(&req.attempt_id);
+        lookup_existing.push(" AND client_session_id = ");
+        lookup_existing.push_bind(&req.client_session_id);
+        lookup_existing.push(" AND client_mutation_id IN (");
+        {
+            let mut separated = lookup_existing.separated(", ");
+            for mutation in &req.mutations {
+                separated.push_bind(&mutation.id);
+            }
+        }
+        lookup_existing.push(")");
+        let existing_identities: Vec<ExistingMutationIdentityRow> = lookup_existing
+            .build_query_as::<ExistingMutationIdentityRow>()
+            .fetch_all(tx.as_mut())
+            .await?;
+        let existing_by_id: HashMap<String, (String, Value)> = existing_identities
+            .into_iter()
+            .map(|row| (row.client_mutation_id, (row.mutation_type, row.payload)))
+            .collect();
 
         let mut answers = attempt.answers.clone();
         let mut writing_answers = attempt.writing_answers.clone();
@@ -499,7 +521,45 @@ impl DeliveryService {
         let mut current_question_id = attempt.current_question_id.clone();
         let mut recovery = attempt.recovery.clone();
 
+        let mut new_mutations: Vec<&MutationEnvelope> = Vec::new();
         for mutation in &req.mutations {
+            if let Some((existing_type, existing_payload)) = existing_by_id.get(&mutation.id) {
+                if existing_type != &mutation.mutation_type || existing_payload != &mutation.payload
+                {
+                    return Err(DeliveryError::Validation(
+                        "Mutation id already exists with different contents.".to_owned(),
+                    ));
+                }
+                continue;
+            }
+            new_mutations.push(mutation);
+        }
+
+        if new_mutations.is_empty() {
+            let response = StudentMutationBatchResponse {
+                attempt: Some(attempt.clone()),
+                applied_mutation_count: 0,
+                server_accepted_through_seq: existing_max_seq,
+                revision: attempt.revision,
+                refreshed_attempt_credential: None,
+            };
+
+            self.store_idempotent_response(
+                tx.as_mut(),
+                &repository,
+                &req.student_key,
+                &route_key,
+                idempotency_key.as_deref(),
+                request_hash.as_deref(),
+                &response,
+            )
+            .await?;
+
+            tx.commit().await?;
+            return Ok(response);
+        }
+
+        for mutation in &new_mutations {
             apply_mutation(
                 mutation,
                 &answer_schema,
@@ -517,12 +577,8 @@ impl DeliveryService {
             )?;
         }
 
-        let server_accepted_through_seq = req
-            .mutations
-            .iter()
-            .map(|mutation| mutation.seq)
-            .max()
-            .unwrap_or(existing_max_seq);
+        let server_accepted_through_seq =
+            existing_max_seq + i64::try_from(new_mutations.len()).unwrap_or(i64::MAX);
         let now = Utc::now();
         let recovery = merge_recovery(
             recovery,
@@ -535,7 +591,9 @@ impl DeliveryService {
             }),
         );
 
-        for mutation in &req.mutations {
+        let mut next_seq = existing_max_seq;
+        for mutation in &new_mutations {
+            next_seq = next_seq.saturating_add(1);
             sqlx::query(
                 r#"
                 INSERT INTO student_attempt_mutations (
@@ -552,7 +610,7 @@ impl DeliveryService {
             .bind(&req.client_session_id)
             .bind(&mutation.mutation_type)
             .bind(&mutation.id)
-            .bind(mutation.seq)
+            .bind(next_seq)
             .bind(&mutation.payload)
             .bind(mutation.timestamp)
             .bind(attempt.revision + 1)
@@ -595,14 +653,15 @@ impl DeliveryService {
                 .fetch_one(tx.as_mut())
                 .await?;
 
-        let seq_from = req.mutations.iter().map(|mutation| mutation.seq).min();
-        let seq_to = req.mutations.iter().map(|mutation| mutation.seq).max();
         let mut mutation_types: HashSet<String> = HashSet::new();
-        for mutation in &req.mutations {
+        for mutation in &new_mutations {
             mutation_types.insert(mutation.mutation_type.clone());
         }
         let mut mutation_types: Vec<String> = mutation_types.into_iter().collect();
         mutation_types.sort();
+
+        let seq_from = Some(existing_max_seq.saturating_add(1));
+        let seq_to = Some(server_accepted_through_seq);
 
         sqlx::query(
             r#"
@@ -618,7 +677,8 @@ impl DeliveryService {
         .bind("STUDENT_MUTATION_BATCH")
         .bind(&attempt.id)
         .bind(json!({
-            "count": req.mutations.len(),
+            "requestedCount": req.mutations.len(),
+            "appliedCount": new_mutations.len(),
             "seqFrom": seq_from,
             "seqTo": seq_to,
             "types": mutation_types,
@@ -632,7 +692,7 @@ impl DeliveryService {
 
         let response = StudentMutationBatchResponse {
             attempt: Some(attempt.clone()),
-            applied_mutation_count: req.mutations.len(),
+            applied_mutation_count: new_mutations.len(),
             server_accepted_through_seq,
             revision: attempt.revision,
             refreshed_attempt_credential: None,
@@ -1634,6 +1694,23 @@ fn validate_batch_sequences(mutations: &[MutationEnvelope]) -> Result<(), Delive
     Ok(())
 }
 
+fn validate_batch_mutation_ids(mutations: &[MutationEnvelope]) -> Result<(), DeliveryError> {
+    let mut seen = std::collections::BTreeSet::new();
+    for mutation in mutations {
+        if mutation.id.trim().is_empty() {
+            return Err(DeliveryError::Validation(
+                "Mutation id cannot be empty.".to_owned(),
+            ));
+        }
+        if !seen.insert(mutation.id.as_str()) {
+            return Err(DeliveryError::Validation(
+                "Mutation batch contains duplicate mutation ids.".to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_contiguous_sequences(
     existing_max_seq: i64,
     mutations: &[MutationEnvelope],
@@ -1670,6 +1747,13 @@ struct RuntimeGateRow {
     actual_end_at: Option<DateTime<Utc>>,
     current_section_key: Option<String>,
     waiting_for_next_section: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct ExistingMutationIdentityRow {
+    client_mutation_id: String,
+    mutation_type: String,
+    payload: Value,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2600,6 +2684,38 @@ mod tests {
         assert!(objective_mutation_gate(Some(&live), None).allowed);
 
         assert!(objective_mutation_gate(Some(&live), Some("paused")).allowed);
+    }
+
+    #[test]
+    fn validate_batch_mutation_ids_rejects_empty_or_duplicate_ids() {
+        let base = MutationEnvelope {
+            id: "m1".to_owned(),
+            seq: 1,
+            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+            mutation_type: "answer".to_owned(),
+            base_revision: None,
+            payload: json!({"questionId": "q1", "value": "A"}),
+        };
+
+        let empty = MutationEnvelope {
+            id: "   ".to_owned(),
+            seq: 2,
+            ..base.clone()
+        };
+        assert!(matches!(
+            validate_batch_mutation_ids(&[base.clone(), empty]),
+            Err(DeliveryError::Validation(_))
+        ));
+
+        let dup = MutationEnvelope {
+            id: "m1".to_owned(),
+            seq: 2,
+            ..base.clone()
+        };
+        assert!(matches!(
+            validate_batch_mutation_ids(&[base, dup]),
+            Err(DeliveryError::Validation(_))
+        ));
     }
 
     #[test]
