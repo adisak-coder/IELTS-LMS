@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { StudentAttempt, StudentAttemptMutation } from '../../types/studentAttempt';
 import {
   PendingMutationDurabilityMirror,
+  buildQueuedMutationUpdate,
   createStudentMutationOutbox,
 } from '../studentMutationOutbox';
 
@@ -112,5 +113,32 @@ describe('studentMutationOutbox.flushNow', () => {
     expect(clearPendingMutations).toHaveBeenCalledTimes(1);
     expect(mirror.getPendingMutations()).toHaveLength(0);
   });
-});
 
+  it('forces immediate durability and zero-delay flush when requested near boundary', () => {
+    const mutation: StudentAttemptMutation = {
+      id: 'm-boundary',
+      attemptId: 'attempt-1',
+      scheduleId: 'sched-1',
+      timestamp: new Date().toISOString(),
+      type: 'answer',
+      payload: {
+        questionId: 'q1',
+        value: 'A',
+        module: 'reading',
+        interactionType: 'typing',
+      },
+    };
+
+    const result = buildQueuedMutationUpdate({
+      currentAttempt: { id: 'attempt-1', scheduleId: 'sched-1', currentModule: 'reading' },
+      pending: [],
+      mutation,
+      online: true,
+      flushDelayMs: 400,
+      forceImmediateDurability: true,
+    });
+
+    expect(result.durableWriteMode).toBe('immediate');
+    expect(result.flush).toMatchObject({ kind: 'objective', delayMs: 0 });
+  });
+});

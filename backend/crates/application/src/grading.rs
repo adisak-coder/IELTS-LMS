@@ -622,6 +622,7 @@ impl GradingService {
                 draft.release_status
             )));
         }
+        validate_release_override_requirement(&submission, &req)?;
         let section_bands = build_section_bands(&draft.section_drafts);
         let overall_band = average_band(&section_bands);
         let now = Utc::now();
@@ -2816,6 +2817,25 @@ fn canonical_text_values(value: &Value) -> Vec<String> {
     }
 }
 
+fn validate_release_override_requirement(
+    submission: &StudentSubmission,
+    req: &ReleaseNowRequest,
+) -> Result<(), GradingError> {
+    let override_required = submission.is_flagged
+        && submission.flag_reason.as_deref() == Some("merge_incomplete_override_required");
+    if !override_required {
+        return Ok(());
+    }
+
+    if req.grader_override_confirmed.unwrap_or(false) {
+        return Ok(());
+    }
+
+    Err(GradingError::Conflict(
+        "Explicit grader override confirmation is required before release.".to_owned(),
+    ))
+}
+
 fn canonical_text_set(value: &Value) -> HashSet<String> {
     canonical_text_values(value)
         .into_iter()
@@ -2854,7 +2874,68 @@ fn value_to_display_text(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use serde_json::json;
+
+    fn sample_submission(is_flagged: bool, flag_reason: Option<&str>) -> StudentSubmission {
+        StudentSubmission {
+            id: "sub-1".to_owned(),
+            attempt_id: "attempt-1".to_owned(),
+            schedule_id: "sched-1".to_owned(),
+            exam_id: "exam-1".to_owned(),
+            published_version_id: "ver-1".to_owned(),
+            student_id: "student-1".to_owned(),
+            student_name: "Student".to_owned(),
+            student_email: Some("student@example.com".to_owned()),
+            cohort_name: "Cohort".to_owned(),
+            submitted_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            time_spent_seconds: 120,
+            grading_status: OverallGradingStatus::ReadyToRelease,
+            assigned_teacher_id: None,
+            assigned_teacher_name: None,
+            is_flagged,
+            flag_reason: flag_reason.map(ToOwned::to_owned),
+            is_overdue: false,
+            due_date: None,
+            section_statuses: json!({
+                "listening": "auto_graded",
+                "reading": "auto_graded",
+                "writing": "needs_review",
+                "speaking": "pending"
+            }).into(),
+            created_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+            updated_at: Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn release_requires_explicit_override_for_merge_incomplete_submissions() {
+        let submission = sample_submission(true, Some("merge_incomplete_override_required"));
+        let no_override = ReleaseNowRequest {
+            revision_reason: None,
+            grader_override_confirmed: None,
+        };
+
+        let denied = validate_release_override_requirement(&submission, &no_override);
+        assert!(matches!(denied, Err(GradingError::Conflict(_))));
+
+        let with_override = ReleaseNowRequest {
+            revision_reason: Some("manual approve".to_owned()),
+            grader_override_confirmed: Some(true),
+        };
+        assert!(validate_release_override_requirement(&submission, &with_override).is_ok());
+    }
+
+    #[test]
+    fn release_override_gate_is_not_applied_for_other_submission_flags() {
+        let submission = sample_submission(true, Some("manual_review_priority"));
+        let req = ReleaseNowRequest {
+            revision_reason: None,
+            grader_override_confirmed: None,
+        };
+
+        assert!(validate_release_override_requirement(&submission, &req).is_ok());
+    }
 
     #[test]
     fn writing_task_array_supports_string_writing_answers() {

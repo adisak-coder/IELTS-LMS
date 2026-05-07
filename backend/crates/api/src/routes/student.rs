@@ -543,15 +543,47 @@ pub async fn apply_mutation_batch(
     {
         Ok(result) => result,
         Err(err) => {
-            tracing::warn!(
-                event = "student_save_lifecycle",
-                stage = "flush",
-                status = "failed",
-                schedule_id = %schedule_id,
-                attempt_id = %attempt_id,
-                flush_cycle_id = flush_cycle_id.as_deref().unwrap_or("missing"),
-                error = %err
+            if let DeliveryError::Conflict {
+                reason: Some(DeliveryConflictReason::AttemptSubmitted),
+                ..
+            } = &err
+            {
+                state.telemetry.observe_post_submit_grace_rejected();
+                state
+                    .telemetry
+                    .observe_student_answer_loss_risk("post_submit_grace_elapsed");
+            }
+            let expected_section_transition_conflict = matches!(
+                &err,
+                DeliveryError::Conflict {
+                    reason: Some(
+                        DeliveryConflictReason::SectionMismatch
+                            | DeliveryConflictReason::ObjectiveLocked
+                    ),
+                    ..
+                }
             );
+            if expected_section_transition_conflict {
+                tracing::info!(
+                    event = "student_save_lifecycle",
+                    stage = "flush",
+                    status = "failed",
+                    schedule_id = %schedule_id,
+                    attempt_id = %attempt_id,
+                    flush_cycle_id = flush_cycle_id.as_deref().unwrap_or("missing"),
+                    error = %err
+                );
+            } else {
+                tracing::warn!(
+                    event = "student_save_lifecycle",
+                    stage = "flush",
+                    status = "failed",
+                    schedule_id = %schedule_id,
+                    attempt_id = %attempt_id,
+                    flush_cycle_id = flush_cycle_id.as_deref().unwrap_or("missing"),
+                    error = %err
+                );
+            }
             return Err(err.into());
         }
     };
@@ -572,6 +604,9 @@ pub async fn apply_mutation_batch(
         result.applied_mutation_count,
         result.applied_mutation_count,
     );
+    if result.accepted_in_grace && result.applied_mutation_count > 0 {
+        state.telemetry.observe_post_submit_grace_accepted();
+    }
     if sampled_success_logs {
         tracing::info!(
             event = "student_save_lifecycle",
@@ -950,6 +985,19 @@ pub async fn submit_student_session(
         writing_answers: None,
         flags: None,
     };
+    let replay_incomplete = match (api_req.client_final_seq, api_req.server_accepted_through_seq) {
+        (Some(client_final_seq), Some(server_accepted_through_seq)) => {
+            server_accepted_through_seq < client_final_seq
+        }
+        (Some(client_final_seq), None) => client_final_seq > 0,
+        _ => false,
+    };
+    if replay_incomplete {
+        state
+            .telemetry
+            .observe_student_answer_loss_risk("pending_seq_gap");
+        state.telemetry.observe_submit_replay_incomplete();
+    }
     let service = delivery_service(&state);
     let started = Instant::now();
     let submit_result = service
@@ -971,6 +1019,9 @@ pub async fn submit_student_session(
                 match reason {
                     DeliveryConflictReason::FinalFlushRequired => {
                         state.telemetry.observe_submit_missing_seq();
+                        state
+                            .telemetry
+                            .observe_student_answer_loss_risk("final_flush_required");
                     }
                     DeliveryConflictReason::FinalPayloadHashMismatch => {
                         state

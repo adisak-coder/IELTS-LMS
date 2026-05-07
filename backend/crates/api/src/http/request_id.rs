@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 pub const REQUEST_ID_HEADER: &str = "x-request-id";
+const SLOW_REQUEST_LOG_THRESHOLD_MS: u128 = 2_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RequestId(pub String);
@@ -38,31 +39,41 @@ pub async fn request_id_middleware(
         .insert(header_name(), HeaderValue::from_str(&request_id).unwrap());
     let started = std::time::Instant::now();
 
-    tracing::info!(
-        request_id = %request_id,
-        method = %method,
-        path = %path,
-        "request started"
-    );
-
     let mut response = next.run(request).await;
     response
         .headers_mut()
         .insert(header_name(), HeaderValue::from_str(&request_id).unwrap());
 
     let duration = started.elapsed();
+    let duration_ms = duration.as_millis();
+    let status = response.status().as_u16();
     state
         .telemetry
-        .observe_request(&method, &path, response.status().as_u16(), duration);
+        .observe_request(&method, &path, status, duration);
     if used_fallback_route_label {
         state.telemetry.observe_request_route_fallback();
     }
-    tracing::info!(
-        request_id = %request_id,
-        status = response.status().as_u16(),
-        duration_ms = duration.as_millis() as u64,
-        "request finished"
-    );
+
+    // Avoid per-request log floods under load. Keep logs for actionable cases only.
+    if status >= 500 {
+        tracing::warn!(
+            request_id = %request_id,
+            method = %method,
+            path = %path,
+            status,
+            duration_ms = duration_ms as u64,
+            "request failed"
+        );
+    } else if status == 429 || duration_ms >= SLOW_REQUEST_LOG_THRESHOLD_MS {
+        tracing::info!(
+            request_id = %request_id,
+            method = %method,
+            path = %path,
+            status,
+            duration_ms = duration_ms as u64,
+            "request completed"
+        );
+    }
 
     response
 }

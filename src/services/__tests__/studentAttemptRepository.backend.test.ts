@@ -1084,7 +1084,7 @@ describe('studentAttemptRepository backend mode', () => {
     }
   });
 
-  it('does not prune objective mutations on SECTION_MISMATCH when runtime section is unavailable', async () => {
+  it('prunes stale objective mutations on SECTION_MISMATCH using section hints when runtime section is unavailable', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
 
     const fetchMock = vi
@@ -1107,13 +1107,23 @@ describe('studentAttemptRepository backend mode', () => {
           schedule: buildSchedule(),
           version: buildVersion(),
           runtime: { status: 'live', currentSectionKey: null },
-          attempt: buildBackendAttempt(),
+          attempt: buildBackendAttempt({ currentModule: 'reading' }),
           attemptCredential: buildAttemptCredential(),
           degradedLiveMode: false,
         }),
       )
+      .mockResolvedValueOnce(jsonResponse({}))
       .mockResolvedValueOnce(
-        jsonConflict('SECTION_MISMATCH', 'Mutation does not belong to the current section.'),
+        jsonResponse({
+          attempt: buildBackendAttempt({
+            currentModule: 'reading',
+            answers: { q1: 'A' },
+            updatedAt: '2026-01-01T09:01:00.000Z',
+            revision: 2,
+          }),
+          appliedMutationCount: 1,
+          serverAcceptedThroughSeq: 1,
+        }),
       );
     global.fetch = fetchMock as typeof fetch;
 
@@ -1128,29 +1138,47 @@ describe('studentAttemptRepository backend mode', () => {
       currentModule: 'reading',
     });
 
-    const pendingMutation: StudentAttemptMutation = {
-      id: 'mutation-1',
-      attemptId: attempt.id,
-      scheduleId: attempt.scheduleId,
-      timestamp: '2026-01-01T09:00:30.000Z',
-      type: 'answer',
-      payload: { questionId: 'q1', value: 'A', module: 'reading' },
-    };
-    await studentAttemptRepository.savePendingMutations(attempt.id, [pendingMutation]);
+    await studentAttemptRepository.savePendingMutations(attempt.id, [
+      {
+        id: 'mutation-stale-runtime-null',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: '2026-01-01T09:00:10.000Z',
+        type: 'answer',
+        payload: { questionId: 'qOld', value: 'B', module: 'listening' },
+      },
+      {
+        id: 'mutation-live-runtime-null',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: '2026-01-01T09:00:20.000Z',
+        type: 'answer',
+        payload: { questionId: 'q1', value: 'A', module: 'reading' },
+      },
+    ]);
 
-    await expect(studentAttemptRepository.saveAttempt(attempt)).rejects.toThrow();
+    await expect(studentAttemptRepository.saveAttempt(attempt)).resolves.toBeUndefined();
 
     const mutationBatchCalls = fetchMock.mock.calls.filter(
       ([url]) => String(url) === '/api/v1/student/sessions/sched-1/mutations:batch',
     );
     expect(mutationBatchCalls).toHaveLength(2);
+    const secondBody = JSON.parse(String(mutationBatchCalls[1]?.[1]?.body));
+    expect(secondBody.mutations.map((mutation: { mutationId: string }) => mutation.mutationId)).toEqual([
+      'mutation-live-runtime-null',
+    ]);
 
     const pendingAfterFailure = await studentAttemptRepository.getPendingMutations(attempt.id);
-    expect(pendingAfterFailure).toEqual([pendingMutation]);
+    expect(pendingAfterFailure).toEqual([]);
 
     const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
     const cached = cachedAttempts.find((candidate) => candidate.id === attempt.id) ?? null;
-    expect(cached?.recovery.lastDroppedMutations).toBeNull();
+    expect(cached?.recovery.lastDroppedMutations).toMatchObject({
+      count: 1,
+      fromModule: 'listening',
+      toModule: 'reading',
+      reason: 'SECTION_MISMATCH',
+    });
   });
 
   it('records dropped slot mutations as slot-scoped reconcile targets', async () => {

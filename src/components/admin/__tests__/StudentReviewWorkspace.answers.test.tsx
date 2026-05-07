@@ -1,6 +1,6 @@
 import React from 'react';
 import { describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 vi.mock('../../../services/gradingRepository', () => {
   return {
@@ -17,6 +17,20 @@ vi.mock('../../../services/examRepository', () => {
   return {
     examRepository: {
       getVersionById: vi.fn(),
+    },
+  };
+});
+
+vi.mock('../../../services/gradingService', () => {
+  return {
+    gradingService: {
+      startReview: vi.fn(),
+      saveReviewDraft: vi.fn(),
+      markGradingComplete: vi.fn(),
+      markReadyToRelease: vi.fn(),
+      releaseResult: vi.fn(),
+      scheduleRelease: vi.fn(),
+      reopenReview: vi.fn(),
     },
   };
 });
@@ -481,5 +495,113 @@ describe('StudentReviewWorkspace objective answers', () => {
     fireEvent.click(screen.getByRole('button', { name: /print writing/i }));
     expect(printSpy).toHaveBeenCalledOnce();
     printSpy.mockRestore();
+  });
+
+  test('retries release with explicit override after backend override-required conflict', async () => {
+    const { createInitialExamState } = await import('../../../services/examAdapterService');
+    const { gradingRepository } = await import('../../../services/gradingRepository');
+    const { gradingService } = await import('../../../services/gradingService');
+    const { examRepository } = await import('../../../services/examRepository');
+    const { StudentReviewWorkspace } = await import('../StudentReviewWorkspace');
+
+    const examState = createInitialExamState('Exam', 'Academic');
+    (examRepository.getVersionById as any).mockResolvedValue({
+      id: 'ver-4',
+      contentSnapshot: examState,
+    });
+
+    (gradingRepository.getSubmissionById as any).mockResolvedValue({
+      id: 'sub-4',
+      submissionId: 'sub-4',
+      scheduleId: 'sched-4',
+      examId: 'exam-4',
+      publishedVersionId: 'ver-4',
+      studentId: 'stu-4',
+      studentName: 'Drew',
+      studentEmail: 'drew@example.com',
+      cohortName: 'Cohort',
+      submittedAt: new Date().toISOString(),
+      timeSpentSeconds: 0,
+      gradingStatus: 'in_progress',
+      assignedTeacherId: undefined,
+      assignedTeacherName: undefined,
+      isFlagged: true,
+      flagReason: 'merge_incomplete_override_required',
+      isOverdue: false,
+      dueDate: undefined,
+      sectionStatuses: {
+        listening: 'pending',
+        reading: 'auto_graded',
+        writing: 'needs_review',
+        speaking: 'pending',
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    (gradingRepository.getSectionSubmissionsBySubmissionId as any).mockResolvedValue([]);
+    (gradingRepository.getWritingSubmissionsBySubmissionId as any).mockResolvedValue([]);
+    (gradingRepository.getReviewDraftBySubmission as any).mockResolvedValue({
+      id: 'draft-4',
+      submissionId: 'sub-4',
+      studentId: 'stu-4',
+      teacherId: 't-1',
+      releaseStatus: 'ready_to_release',
+      sectionDrafts: {},
+      annotations: [],
+      drawings: [],
+      overallFeedback: undefined,
+      studentVisibleNotes: undefined,
+      internalNotes: undefined,
+      teacherSummary: { strengths: [], improvementPriorities: [], recommendedPractice: [] },
+      checklist: {},
+      hasUnsavedChanges: false,
+      lastAutoSaveAt: undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    (gradingService.releaseResult as any)
+      .mockResolvedValueOnce({
+        success: false,
+        error: 'Failed to release result: Error: Explicit grader override confirmation is required before release.',
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          id: 'result-4',
+        },
+      });
+
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <StudentReviewWorkspace
+        submissionId="sub-4"
+        onBack={() => {}}
+        currentTeacherId="t-1"
+        currentTeacherName="Teacher"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: /release now/i }));
+
+    await waitFor(() => {
+      expect(gradingService.releaseResult).toHaveBeenNthCalledWith(
+        1,
+        'sub-4',
+        't-1',
+        'Teacher',
+        false,
+      );
+      expect(gradingService.releaseResult).toHaveBeenNthCalledWith(
+        2,
+        'sub-4',
+        't-1',
+        'Teacher',
+        true,
+      );
+    });
+    expect(confirmSpy).toHaveBeenCalledOnce();
+    confirmSpy.mockRestore();
   });
 });

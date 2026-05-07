@@ -566,6 +566,7 @@ pub struct ActorActionRequest {}
 #[serde(rename_all = "camelCase")]
 pub struct ReleaseNowRequest {
     pub revision_reason: Option<String>,
+    pub grader_override_confirmed: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

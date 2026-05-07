@@ -723,7 +723,8 @@ export class GradingService {
   async releaseResult(
     submissionId: string,
     teacherId: string,
-    teacherName: string
+    teacherName: string,
+    graderOverrideConfirmed = false,
   ): Promise<GradingServiceResult<StudentResult>> {
     try {
       if (isBackendGradingEnabled()) {
@@ -731,6 +732,7 @@ export class GradingService {
           `/v1/grading/submissions/${submissionId}/release-now`,
           {
             actorId: teacherId,
+            graderOverrideConfirmed,
           },
         );
         await gradingRepository.saveStudentResult(result);

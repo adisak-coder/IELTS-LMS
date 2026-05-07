@@ -386,6 +386,57 @@ describe('gradingService backend mode', () => {
     );
   });
 
+  it('sends explicit grader override confirmation when releasing flagged submissions', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_GRADING', 'true');
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      jsonResponse({
+        id: 'result-1',
+        submissionId: 'sub-1',
+        studentId: 'student-1',
+        studentName: 'Student One',
+        releaseStatus: 'released',
+        releasedAt: '2026-01-02T00:00:00.000Z',
+        releasedBy: 'grader-1',
+        overallBand: 6.5,
+        sectionBands: {
+          listening: 6.5,
+          reading: 6.5,
+          writing: 6.5,
+          speaking: 6.5,
+        },
+        writingResults: {},
+        teacherSummary: {
+          strengths: [],
+          improvementPriorities: [],
+          recommendedPractice: [],
+        },
+        version: 1,
+        createdAt: '2026-01-02T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    const result = await gradingService.releaseResult(
+      'sub-1',
+      'grader-1',
+      'Taylor Grader',
+      true,
+    );
+
+    expect(result.success).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/grading/submissions/sub-1/release-now',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toEqual(
+      expect.objectContaining({
+        actorId: 'grader-1',
+        graderOverrideConfirmed: true,
+      }),
+    );
+  });
+
   it('surfaces backend grading failures instead of silently loading local queue data', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_GRADING', 'true');
     const fetchMock = vi.fn().mockResolvedValue(

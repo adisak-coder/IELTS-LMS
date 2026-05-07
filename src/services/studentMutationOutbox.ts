@@ -642,6 +642,17 @@ export function createStudentMutationOutbox(deps: {
             return true;
           }
 
+          if (conflictReason === 'SECTION_MISMATCH' || conflictReason === 'OBJECTIVE_LOCKED') {
+            const retryingAttempt = mergeStudentAttempt(deps.getAttempt() ?? savingAttempt, {
+              recovery: {
+                syncState: deps.isOnline() ? 'saving' : 'offline',
+                pendingMutationCount: deps.mirror.getPendingMutations().length,
+              },
+            });
+            deps.syncAttemptState(retryingAttempt);
+            return false;
+          }
+
           const erroredAttempt = mergeStudentAttempt(deps.getAttempt() ?? savingAttempt, {
             recovery: {
               syncState: deps.isOnline() ? 'error' : 'offline',
@@ -666,6 +677,7 @@ export function buildQueuedMutationUpdate(args: {
   patchSyncState?: AttemptSyncState | null | undefined;
   online: boolean;
   flushDelayMs: number;
+  forceImmediateDurability?: boolean;
 }): {
   nextPendingMutations: StudentAttemptMutation[];
   includesAnswerMutation: boolean;
@@ -680,13 +692,17 @@ export function buildQueuedMutationUpdate(args: {
     nextPendingMutations,
     includesAnswerMutation: mutationIsAnswer,
     durableWriteMode:
-      mutationIsAnswer && shouldDebounceAnswerDurability(args.mutation) ? 'debounced' : 'immediate',
+      args.forceImmediateDurability
+        ? 'immediate'
+        : mutationIsAnswer && shouldDebounceAnswerDurability(args.mutation)
+          ? 'debounced'
+          : 'immediate',
     syncState: args.patchSyncState ?? (args.online ? 'saving' : 'offline'),
     flush:
       args.online
         ? {
             kind: args.mutation.type === 'writing_answer' ? 'writing' : 'objective',
-            delayMs: args.flushDelayMs,
+            delayMs: args.forceImmediateDurability ? 0 : args.flushDelayMs,
           }
         : null,
   };

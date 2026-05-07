@@ -602,7 +602,7 @@ impl Default for AppConfig {
             grading_projection_batch_size: 500,
             auto_submit_batch_size: 50,
             live_update_poll_interval_ms: 250,
-            final_submit_grace_seconds: 15,
+            final_submit_grace_seconds: 300,
             master_key_enabled: false,
             master_key_username: "master".to_owned(),
             master_key_password: "".to_owned(),

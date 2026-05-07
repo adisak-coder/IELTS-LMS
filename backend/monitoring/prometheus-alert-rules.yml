@@ -1,0 +1,32 @@
+groups:
+  - name: ielts-student-answer-integrity
+    rules:
+      - alert: StudentAnswerLossRiskDetected
+        expr: increase(student_answer_loss_risk_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: page
+          slo: answer-integrity
+        annotations:
+          summary: "Student answer loss risk signal detected"
+          description: "Submit-time risk signals (pending seq gap / final flush risk) have increased in the last 5 minutes."
+
+      - alert: SubmitReplayIncompleteDetected
+        expr: increase(backend_submit_replay_incomplete_total[5m]) > 0
+        for: 2m
+        labels:
+          severity: page
+          slo: answer-integrity
+        annotations:
+          summary: "Replay incomplete at submit detected"
+          description: "Client final seq exceeded server accepted seq at seal time. Investigate mutation flush lag and grace merges."
+
+      - alert: PostSubmitGraceRejectedSpike
+        expr: increase(backend_post_submit_grace_rejected_total[10m]) >= 20
+        for: 5m
+        labels:
+          severity: warning
+          slo: answer-integrity
+        annotations:
+          summary: "Post-submit grace rejections elevated"
+          description: "New post-submit mutations are arriving after grace-window expiry. Check network delay and client flush behavior."

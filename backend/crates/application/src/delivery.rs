@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use ielts_backend_domain::{
     attempt::{
         AttemptPhase, HeartbeatEventType, ModuleType, MutationCommand, MutationEnvelope,
@@ -115,6 +115,7 @@ impl DeliveryError {
 pub struct DeliveryService {
     pool: MySqlPool,
     auth_service: Option<AuthService>,
+    final_submit_grace_seconds: i64,
 }
 
 impl DeliveryService {
@@ -122,14 +123,17 @@ impl DeliveryService {
         Self {
             pool,
             auth_service: None,
+            final_submit_grace_seconds: 15,
         }
     }
 
     pub fn with_auth(pool: MySqlPool, config: AppConfig) -> Self {
+        let final_submit_grace_seconds = config.final_submit_grace_seconds;
         let auth_service = AuthService::new(pool.clone(), config);
         Self {
             pool,
             auth_service: Some(auth_service),
+            final_submit_grace_seconds,
         }
     }
 
@@ -140,7 +144,9 @@ impl DeliveryService {
         _violation_idempotency_usable_hours: i64,
         _heartbeat_min_write_interval_secs: u64,
     ) -> Self {
-        Self::new(pool)
+        let mut service = Self::new(pool);
+        service.final_submit_grace_seconds = 15;
+        service
     }
 
     pub fn with_auth_runtime_tuning(
@@ -151,7 +157,9 @@ impl DeliveryService {
         _violation_idempotency_usable_hours: i64,
         _heartbeat_min_write_interval_secs: u64,
     ) -> Self {
-        Self::with_auth(pool, config)
+        let mut service = Self::with_auth(pool, config.clone());
+        service.final_submit_grace_seconds = config.final_submit_grace_seconds;
+        service
     }
 
     fn auth_service(&self) -> Result<&AuthService, DeliveryError> {
@@ -569,11 +577,30 @@ impl DeliveryService {
         .bind(schedule_id.to_string())
         .fetch_optional(tx.as_mut())
         .await?;
-        let objective_mutation_gate =
-            objective_mutation_gate(runtime_gate.as_ref(), Some(attempt.proctor_status));
-        let active_section_key = runtime_gate
+        let now = Utc::now();
+        let post_submit_grace_active = attempt
+            .submitted_at
             .as_ref()
-            .and_then(|gate| gate.current_section_key.as_deref());
+            .map(|submitted_at| {
+                is_within_post_submit_grace_window(
+                    submitted_at.to_owned(),
+                    now,
+                    self.final_submit_grace_seconds,
+                )
+            })
+            .unwrap_or(false);
+        let objective_mutation_gate = if post_submit_grace_active {
+            ObjectiveMutationGate::allow()
+        } else {
+            objective_mutation_gate(runtime_gate.as_ref(), Some(attempt.proctor_status))
+        };
+        let active_section_key = if post_submit_grace_active {
+            None
+        } else {
+            runtime_gate
+                .as_ref()
+                .and_then(|gate| gate.current_section_key.as_deref())
+        };
 
         let version = self
             .load_version(attempt.published_version_id.clone())
@@ -656,6 +683,7 @@ impl DeliveryService {
                 applied_mutation_count: 0,
                 server_accepted_through_seq: existing_max_seq,
                 revision: attempt.revision,
+                accepted_in_grace: false,
                 refreshed_attempt_credential: None,
             };
 
@@ -672,6 +700,17 @@ impl DeliveryService {
 
             tx.commit().await?;
             return Ok(response);
+        }
+
+        if attempt.submitted_at.is_some() && !post_submit_grace_active {
+            return Err(DeliveryError::Conflict {
+                message: "Attempt is already sealed and no longer accepts new mutations."
+                    .to_owned(),
+                reason: Some(DeliveryConflictReason::AttemptSubmitted),
+                latest_revision: Some(attempt.revision),
+                server_accepted_through_seq: Some(existing_max_seq),
+                active_session_id: None,
+            });
         }
 
         let mut applied_mutation_count: usize = 0;
@@ -698,17 +737,46 @@ impl DeliveryService {
 
         let server_accepted_through_seq =
             existing_max_seq + i64::try_from(new_mutations.len()).unwrap_or(i64::MAX);
-        let now = Utc::now();
-        let recovery = merge_recovery(
-            recovery,
-            json!({
-                "lastPersistedAt": now,
-                "pendingMutationCount": 0,
-                "syncState": "saved",
-                "serverAcceptedThroughSeq": server_accepted_through_seq,
-                "clientSessionId": req.client_session_id.clone()
-            }),
-        );
+        let recovery = if post_submit_grace_active {
+            merge_recovery(
+                recovery,
+                json!({
+                    "lastPersistedAt": now,
+                    "pendingMutationCount": 0,
+                    "syncState": "saved",
+                    "serverAcceptedThroughSeq": server_accepted_through_seq,
+                    "clientSessionId": req.client_session_id.clone(),
+                    "postSubmitGraceAcceptedAt": now,
+                    "postSubmitGraceLastAppliedMutationCount": applied_mutation_count,
+                }),
+            )
+        } else {
+            merge_recovery(
+                recovery,
+                json!({
+                    "lastPersistedAt": now,
+                    "pendingMutationCount": 0,
+                    "syncState": "saved",
+                    "serverAcceptedThroughSeq": server_accepted_through_seq,
+                    "clientSessionId": req.client_session_id.clone()
+                }),
+            )
+        };
+
+        let final_submission = if post_submit_grace_active {
+            Some(merge_post_submit_submission_snapshot(
+                attempt.final_submission.clone(),
+                &answers,
+                &writing_answers,
+                &flags,
+                now,
+                applied_mutation_count,
+                self.final_submit_grace_seconds,
+                server_accepted_through_seq,
+            ))
+        } else {
+            attempt.final_submission.clone()
+        };
 
         let mut next_seq = existing_max_seq;
         for mutation in &new_mutations {
@@ -749,6 +817,7 @@ impl DeliveryService {
                 violations_snapshot = ?,
                 current_question_id = ?,
                 recovery = ?,
+                final_submission = ?,
                 updated_at = NOW(),
                 revision = revision + 1
             WHERE id = ?
@@ -762,6 +831,7 @@ impl DeliveryService {
         .bind(violations_snapshot)
         .bind(current_question_id)
         .bind(recovery)
+        .bind(final_submission)
         .bind(&req.attempt_id)
         .execute(tx.as_mut())
         .await?;
@@ -817,6 +887,7 @@ impl DeliveryService {
             applied_mutation_count,
             server_accepted_through_seq,
             revision: attempt.revision,
+            accepted_in_grace: post_submit_grace_active,
             refreshed_attempt_credential: None,
         };
 
@@ -1159,12 +1230,25 @@ impl DeliveryService {
             .filter(|value| !value.trim().is_empty())
             .map(ToOwned::to_owned)
             .unwrap_or_else(|| format!("submission-{}", Uuid::new_v4().simple()));
+        let replay_incomplete = match (req.client_final_seq, req.server_accepted_through_seq) {
+            (Some(client_final_seq), Some(server_accepted_through_seq)) => {
+                server_accepted_through_seq < client_final_seq
+            }
+            (Some(client_final_seq), None) => client_final_seq > 0,
+            _ => false,
+        };
         let final_submission = json!({
             "submissionId": submission_id,
             "submittedAt": now,
             "answers": final_answers,
             "writingAnswers": final_writing_answers,
-            "flags": final_flags
+            "flags": final_flags,
+            "finalFlush": {
+                "clientFinalSeq": req.client_final_seq,
+                "serverAcceptedThroughSeq": req.server_accepted_through_seq,
+                "replayIncomplete": replay_incomplete,
+                "finalPatchApplied": req.final_answer_patch.is_some()
+            }
         });
         let recovery = merge_recovery(
             attempt.recovery.clone().into(),
@@ -2920,6 +3004,90 @@ fn merge_object_values(base: &Value, patch: &Value) -> Value {
     Value::Object(merged)
 }
 
+fn is_within_post_submit_grace_window(
+    submitted_at: DateTime<Utc>,
+    now: DateTime<Utc>,
+    grace_seconds: i64,
+) -> bool {
+    if grace_seconds <= 0 {
+        return false;
+    }
+    let deadline = submitted_at + ChronoDuration::seconds(grace_seconds);
+    now <= deadline
+}
+
+fn merge_post_submit_submission_snapshot(
+    existing: Option<Value>,
+    answers: &Value,
+    writing_answers: &Value,
+    flags: &Value,
+    now: DateTime<Utc>,
+    applied_mutation_count: usize,
+    grace_window_seconds: i64,
+    server_accepted_through_seq: i64,
+) -> Value {
+    let mut merged = ensure_object(existing.unwrap_or_else(|| json!({})));
+    merged.insert("answers".to_owned(), answers.clone());
+    merged.insert("writingAnswers".to_owned(), writing_answers.clone());
+    merged.insert("flags".to_owned(), flags.clone());
+
+    let mut grace_merge = merged
+        .get("graceMerge")
+        .cloned()
+        .map(ensure_object)
+        .unwrap_or_default();
+    let merge_count = grace_merge
+        .get("mergeCount")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .saturating_add(1);
+    let applied_total = grace_merge
+        .get("appliedMutationTotal")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .saturating_add(i64::try_from(applied_mutation_count).unwrap_or(i64::MAX));
+    if !grace_merge.contains_key("firstAcceptedAt") {
+        grace_merge.insert("firstAcceptedAt".to_owned(), Value::String(now.to_rfc3339()));
+    }
+    grace_merge.insert("acceptedInGrace".to_owned(), Value::Bool(true));
+    grace_merge.insert("lastAcceptedAt".to_owned(), Value::String(now.to_rfc3339()));
+    grace_merge.insert("mergeCount".to_owned(), Value::from(merge_count));
+    grace_merge.insert(
+        "lastAppliedMutationCount".to_owned(),
+        Value::from(i64::try_from(applied_mutation_count).unwrap_or(i64::MAX)),
+    );
+    grace_merge.insert("appliedMutationTotal".to_owned(), Value::from(applied_total));
+    grace_merge.insert(
+        "graceWindowSeconds".to_owned(),
+        Value::from(grace_window_seconds.max(0)),
+    );
+    merged.insert("graceMerge".to_owned(), Value::Object(grace_merge));
+
+    let mut final_flush = merged
+        .get("finalFlush")
+        .cloned()
+        .map(ensure_object)
+        .unwrap_or_default();
+    final_flush.insert(
+        "serverAcceptedThroughSeq".to_owned(),
+        Value::from(server_accepted_through_seq),
+    );
+    let client_final_seq = final_flush
+        .get("clientFinalSeq")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    if client_final_seq > 0 {
+        let replay_incomplete = server_accepted_through_seq < client_final_seq;
+        final_flush.insert("replayIncomplete".to_owned(), Value::Bool(replay_incomplete));
+        if !replay_incomplete {
+            final_flush.insert("replayCompletedAt".to_owned(), Value::String(now.to_rfc3339()));
+        }
+    }
+    merged.insert("finalFlush".to_owned(), Value::Object(final_flush));
+
+    Value::Object(merged)
+}
+
 fn merge_recovery(existing: Value, patch: Value) -> Value {
     let mut base = ensure_object(existing);
     if let Some(patch_map) = patch.as_object() {
@@ -3953,5 +4121,59 @@ mod tests {
         }))
         .expect("shape accepted");
         assert!(matches!(parsed, MutationCommand::Network(_)));
+    }
+
+    #[test]
+    fn post_submit_grace_window_allows_only_within_configured_duration() {
+        let submitted_at = Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap();
+        let inside = submitted_at + chrono::Duration::minutes(4) + chrono::Duration::seconds(59);
+        let outside = submitted_at + chrono::Duration::minutes(5) + chrono::Duration::seconds(1);
+
+        assert!(is_within_post_submit_grace_window(
+            submitted_at,
+            inside,
+            300
+        ));
+        assert!(!is_within_post_submit_grace_window(
+            submitted_at,
+            outside,
+            300
+        ));
+    }
+
+    #[test]
+    fn merge_post_submit_submission_snapshot_marks_grace_acceptance_and_replay_completion() {
+        let now = Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap();
+        let existing = json!({
+            "submissionId": "submission-1",
+            "submittedAt": "2026-01-10T09:00:00Z",
+            "answers": {"q1": "old"},
+            "writingAnswers": {"task1": "old"},
+            "flags": {"q1": false},
+            "finalFlush": {
+                "clientFinalSeq": 10,
+                "serverAcceptedThroughSeq": 7,
+                "replayIncomplete": true
+            }
+        });
+
+        let merged = merge_post_submit_submission_snapshot(
+            Some(existing),
+            &json!({"q1": "new"}),
+            &json!({"task1": "new"}),
+            &json!({"q1": true}),
+            now,
+            3,
+            300,
+            11,
+        );
+
+        assert_eq!(merged["answers"]["q1"], "new");
+        assert_eq!(merged["writingAnswers"]["task1"], "new");
+        assert_eq!(merged["flags"]["q1"], true);
+        assert_eq!(merged["graceMerge"]["acceptedInGrace"], true);
+        assert_eq!(merged["graceMerge"]["lastAppliedMutationCount"], 3);
+        assert_eq!(merged["finalFlush"]["replayIncomplete"], false);
+        assert_eq!(merged["finalFlush"]["replayCompletedAt"], now.to_rfc3339());
     }
 }

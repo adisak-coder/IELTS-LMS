@@ -63,6 +63,14 @@ function isWritingTaskEntry(value: unknown): value is WritingTaskEntry {
   );
 }
 
+function requiresExplicitReleaseOverride(errorMessage: string): boolean {
+  const normalized = errorMessage.toLowerCase();
+  return (
+    normalized.includes('explicit grader override confirmation is required') ||
+    normalized.includes('merge_incomplete_override_required')
+  );
+}
+
 export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace({ 
   submissionId, 
   onBack, 
@@ -357,11 +365,28 @@ export const StudentReviewWorkspace = React.memo(function StudentReviewWorkspace
     setReleaseAction('release_now');
     setReleaseError(null);
     try {
-      const result = await gradingService.releaseResult(
+      let result = await gradingService.releaseResult(
         submissionId,
         currentTeacherId,
         currentTeacherName,
+        false,
       );
+      if (!result.success) {
+        const releaseMessage = result.error ?? 'Failed to release result';
+        if (requiresExplicitReleaseOverride(releaseMessage)) {
+          const confirmed = window.confirm(
+            'This submission requires explicit grader override before release. Continue?',
+          );
+          if (confirmed) {
+            result = await gradingService.releaseResult(
+              submissionId,
+              currentTeacherId,
+              currentTeacherName,
+              true,
+            );
+          }
+        }
+      }
       if (result.success) {
         await loadData();
       } else {

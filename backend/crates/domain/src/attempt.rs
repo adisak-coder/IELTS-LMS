@@ -722,6 +722,8 @@ pub struct StudentMutationBatchResponse {
     pub applied_mutation_count: usize,
     pub server_accepted_through_seq: i64,
     pub revision: i32,
+    #[serde(default)]
+    pub accepted_in_grace: bool,
     pub refreshed_attempt_credential: Option<crate::auth::IssueAttemptToken>,
 }
 

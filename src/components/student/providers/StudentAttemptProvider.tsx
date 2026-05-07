@@ -103,6 +103,7 @@ type AttemptPatch = Omit<Partial<StudentAttempt>, 'integrity' | 'recovery'> & {
 
 const StudentAttemptContext = createContext<StudentAttemptContextValue | null>(null);
 const ANSWER_DURABLE_WRITE_DEBOUNCE_MS = 100;
+const BOUNDARY_IMMEDIATE_DURABILITY_THRESHOLD_SECONDS = 20;
 
 function pendingMutationOldestAgeMs(mutations: StudentAttemptMutation[]): number | null {
   let oldest = Number.POSITIVE_INFINITY;
@@ -455,15 +456,30 @@ export function StudentAttemptProvider({
       return;
     }
 
+    const isObjectiveMutation =
+      mutationType === 'answer' || mutationType === 'flag' || mutationType === 'writing_answer';
+    const runtimeModule =
+      runtimeState.runtimeSnapshot?.currentSectionKey ?? runtimeState.currentModule ?? null;
+    const authoritativeModule = runtimeModule ?? currentAttempt.currentModule;
+    const existingModule = isObjectiveMutation ? (payload as { module?: unknown }).module : undefined;
     const payloadWithModule: StudentAttemptMutationPayload<StudentAttemptMutationType> =
-      (mutationType === 'answer' || mutationType === 'flag' || mutationType === 'writing_answer') &&
-      'module' in payload &&
-      payload.module === undefined
+      isObjectiveMutation &&
+      (typeof existingModule !== 'string' || existingModule.trim().length === 0)
         ? {
             ...payload,
-            module: currentAttempt.currentModule,
+            module: authoritativeModule,
           }
         : payload;
+    const reportedRemaining =
+      runtimeState.runtimeSnapshot?.currentSectionRemainingSeconds ??
+      runtimeState.displayTimeRemaining ??
+      runtimeState.timeRemaining;
+    const forceImmediateDurability =
+      isObjectiveMutation &&
+      runtimeState.phase === 'exam' &&
+      Number.isFinite(reportedRemaining) &&
+      reportedRemaining >= 0 &&
+      reportedRemaining <= BOUNDARY_IMMEDIATE_DURABILITY_THRESHOLD_SECONDS;
     const mutation: StudentAttemptMutation = {
       id: generateId('mutation'),
       attemptId: currentAttempt.id,
@@ -478,7 +494,8 @@ export function StudentAttemptProvider({
       mutation,
       patchSyncState: patch.recovery?.syncState,
       online: navigator.onLine,
-      flushDelayMs: delayMs,
+      flushDelayMs: forceImmediateDurability ? 0 : delayMs,
+      forceImmediateDurability,
     });
     setPendingMutations(enqueue.nextPendingMutations, {
       durableWriteMode: enqueue.durableWriteMode,
@@ -502,7 +519,17 @@ export function StudentAttemptProvider({
     if (enqueue.flush) {
       scheduleFlush(enqueue.flush.kind, enqueue.flush.delayMs);
     }
-  }, [persistenceEnabled, scheduleFlush, setPendingMutations, syncAttemptState]);
+  }, [
+    persistenceEnabled,
+    runtimeState.currentModule,
+    runtimeState.displayTimeRemaining,
+    runtimeState.phase,
+    runtimeState.runtimeSnapshot,
+    runtimeState.timeRemaining,
+    scheduleFlush,
+    setPendingMutations,
+    syncAttemptState,
+  ]);
 
   const flushPending = useCallback(async () => {
     if (flushInFlightRef.current) {

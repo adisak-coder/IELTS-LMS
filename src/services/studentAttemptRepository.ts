@@ -47,8 +47,8 @@ const STORAGE_KEY_MUTATION_WATERMARK_PREFIX = 'ielts-student-mutation-watermark:
 const MAX_HEARTBEAT_EVENTS_PER_ATTEMPT = 200;
 const MAX_HEARTBEAT_FLUSH_EVENTS = 50;
 const MUTATION_BATCH_CHUNK_SIZE = 100;
-const MAX_PENDING_MUTATIONS_PER_ATTEMPT = 1_000;
-const MAX_PENDING_MUTATION_BYTES_PER_ATTEMPT = 512 * 1024;
+const MAX_PENDING_MUTATIONS_PER_ATTEMPT = 5_000;
+const MAX_PENDING_MUTATION_BYTES_PER_ATTEMPT = 2 * 1024 * 1024;
 const STUDENT_LIFECYCLE_LOG_SAMPLE_RATE = 0.2;
 const STUDENT_LIFECYCLE_SAMPLE_HEADER = 'x-student-lifecycle-sampled';
 const STUDENT_FLUSH_CYCLE_ID_HEADER = 'x-student-flush-cycle-id';
@@ -1502,6 +1502,20 @@ class LocalStorageStudentAttemptCache implements IStudentAttemptRepository {
   }
 
   async submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
+    if ((attempt.recovery.pendingMutationCount ?? 0) > 0) {
+      emitStudentObservabilityMetric(
+        'student_answer_loss_risk_total',
+        withStudentObservabilityDimensions({
+          scheduleId: attempt.scheduleId,
+          attemptId: attempt.id,
+          endpoint: '/v1/student/sessions/:scheduleId/submit',
+          reason: 'submit_with_pending_mutations',
+          pendingMutationCount: attempt.recovery.pendingMutationCount,
+          syncState: attempt.recovery.syncState,
+        }),
+      );
+    }
+
     const submittedAttempt = normalizeStudentAttempt({
       ...attempt,
       phase: 'post-exam',
@@ -2150,6 +2164,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       const serverAttempt = session.attempt ? mapBackendStudentAttempt(session.attempt) : null;
       const runtimeStatus = session.runtime?.status ?? null;
       const runtimeSectionKey = session.runtime?.currentSectionKey ?? null;
+      const sectionHint = runtimeSectionKey ?? serverAttempt?.currentModule ?? currentAttempt.currentModule;
       const runtimeTerminal = runtimeStatus === 'completed' || runtimeStatus === 'cancelled';
 
       const dropped = first.remainingMutations.filter((mutation) => {
@@ -2159,14 +2174,14 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
         if (runtimeTerminal) {
           return true;
         }
-        if (!runtimeSectionKey) {
+        if (!sectionHint) {
           return false;
         }
         const moduleKey = mutationModuleKey(mutation);
         if (!moduleKey) {
           return false;
         }
-        return moduleKey !== runtimeSectionKey;
+        return moduleKey !== sectionHint;
       });
       const prunedMutations = first.remainingMutations.filter((mutation) => !dropped.includes(mutation));
 
@@ -2220,7 +2235,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
           at: new Date().toISOString(),
           count: dropped.length,
           fromModule,
-          toModule: runtimeSectionKey,
+          toModule: sectionHint,
           reason: reason ?? 'UNKNOWN',
           ...(affectedAnswers.size > 0
             ? { affectedAnswers: [...affectedAnswers] }
@@ -2330,6 +2345,24 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
   }
 
   async submitAttempt(attempt: StudentAttempt): Promise<StudentAttempt> {
+    const pendingBeforeSubmit = await this.cache.getPendingMutations(attempt.id);
+    if (pendingBeforeSubmit.length > 0 || (attempt.recovery.pendingMutationCount ?? 0) > 0) {
+      emitStudentObservabilityMetric(
+        'student_answer_loss_risk_total',
+        withStudentObservabilityDimensions({
+          scheduleId: attempt.scheduleId,
+          attemptId: attempt.id,
+          endpoint: studentSessionTransport.paths.submit(attempt.scheduleId),
+          reason: 'submit_with_pending_mutations',
+          pendingMutationCount: Math.max(
+            pendingBeforeSubmit.length,
+            attempt.recovery.pendingMutationCount ?? 0,
+          ),
+          syncState: attempt.recovery.syncState,
+        }),
+      );
+    }
+
     if (!(await this.ensureAttemptCredential(attempt))) {
       throw new Error('Missing attempt credential for student session.');
     }
