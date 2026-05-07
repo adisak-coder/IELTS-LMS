@@ -144,6 +144,15 @@ export function QuestionRenderer({
     extraCopyPosition: 'top' | 'bottom' = 'bottom',
   ) => (
     <div id={`question-${slotId}`} className={getSlotClassName(slotId)}>
+      {extraCopy && extraCopyPosition === 'top' ? (
+        <FormattedText
+          as="p"
+          className="mb-2 text-[length:var(--student-meta-font-size)] font-medium text-gray-600"
+          text={extraCopy}
+          highlightEnabled={highlightEnabled}
+          highlightColor={highlightColor}
+        />
+      ) : null}
       <div className={isCompactPane ? 'flex flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
         <span className="min-w-[2rem] font-bold text-gray-900">{slotNumber}.</span>
         <ProtectedInput
@@ -566,6 +575,7 @@ export function QuestionRenderer({
                 getSlotId(index, `${diagramBlock.id}:${label.id}`),
               ),
             `Label ${index + 1}`,
+            'top',
           )}
         </React.Fragment>
       ))}

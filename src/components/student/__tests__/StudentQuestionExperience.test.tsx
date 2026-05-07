@@ -422,8 +422,15 @@ describe('student question experience', () => {
     expect(screen.getByText('Answers')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Answer for question 12' })).toHaveValue('existing');
     expect(screen.getByRole('textbox', { name: 'Answer for question 13' })).toBeInTheDocument();
-    expect(screen.getByText(/label 1/i)).toBeInTheDocument();
-    expect(screen.getByText(/label 2/i)).toBeInTheDocument();
+    const firstSlot = document.getElementById('question-diagram-1:label-a');
+    expect(firstSlot).not.toBeNull();
+    expect(firstSlot?.firstElementChild).toHaveTextContent(/label 1/i);
+    expect(within(firstSlot as HTMLElement).getByText(/label 1/i)).toHaveClass('text-[length:var(--student-meta-font-size)]');
+
+    const secondSlot = document.getElementById('question-diagram-1:label-b');
+    expect(secondSlot).not.toBeNull();
+    expect(secondSlot?.firstElementChild).toHaveTextContent(/label 2/i);
+    expect(within(secondSlot as HTMLElement).getByText(/label 2/i)).toHaveClass('text-[length:var(--student-meta-font-size)]');
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Answer for question 13' }), {
       target: { value: 'wheel' },
@@ -463,10 +470,17 @@ describe('student question experience', () => {
     );
 
     expect(screen.getByText(/image url is missing or inaccessible/i)).toBeInTheDocument();
-    const firstAnswer = screen.getByRole('textbox', { name: 'Answer for question 12' });
+    screen.getByRole('textbox', { name: 'Answer for question 12' });
     expect(screen.getByRole('textbox', { name: 'Answer for question 13' })).toBeInTheDocument();
-    expect(screen.getByText(/label 1/i)).toBeInTheDocument();
-    expect(screen.getByText(/label 2/i)).toBeInTheDocument();
+    const firstSlot = document.getElementById('question-diagram-1:label-a');
+    expect(firstSlot).not.toBeNull();
+    expect(firstSlot?.firstElementChild).toHaveTextContent(/label 1/i);
+    expect(within(firstSlot as HTMLElement).getByText(/label 1/i)).toHaveClass('text-[length:var(--student-meta-font-size)]');
+
+    const secondSlot = document.getElementById('question-diagram-1:label-b');
+    expect(secondSlot).not.toBeNull();
+    expect(secondSlot?.firstElementChild).toHaveTextContent(/label 2/i);
+    expect(within(secondSlot as HTMLElement).getByText(/label 2/i)).toHaveClass('text-[length:var(--student-meta-font-size)]');
   });
 
   it('can render diagram-labeling answers without duplicating the diagram reference', () => {
