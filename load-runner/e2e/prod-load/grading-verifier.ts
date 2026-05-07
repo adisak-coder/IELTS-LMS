@@ -29,6 +29,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export async function createGradingVerifier(config: GradingVerifyConfig): Promise<{
   verifySubmission: (submissionId: string, expected: ExpectedAnswerSnapshot) => Promise<GradingVerifyResult>;
+  findLatestSubmissionIdForStudent: (scheduleId: string, candidates: string[]) => Promise<string | null>;
   dispose: () => Promise<void>;
 }> {
   const api: APIRequestContext = await request.newContext({
@@ -42,6 +43,63 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
   if (!loginRes.ok()) {
     throw new Error(`GRADING_VERIFY_LOGIN_FAILED: status=${loginRes.status()} body=${await loginRes.text().catch(() => '')}`);
   }
+
+  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const isUuid = (value: unknown): value is string => typeof value === 'string' && uuidPattern.test(value);
+
+  const findLatestSubmissionIdForStudent = async (scheduleId: string, candidates: string[]): Promise<string | null> => {
+    const normalized = candidates.map((item) => item.trim().toLowerCase()).filter(Boolean);
+    if (normalized.length === 0) return null;
+    const detailRes = await api.get(`/api/v1/grading/sessions/${scheduleId}?page=1&pageSize=500`);
+    if (!detailRes.ok()) {
+      throw new Error(
+        `GRADING_VERIFY_SESSION_DETAIL_FAILED: status=${detailRes.status()} body=${await detailRes.text().catch(() => '')}`,
+      );
+    }
+    const detailJson = (await detailRes.json().catch(() => null)) as unknown;
+    const data = isRecord(detailJson) ? detailJson['data'] : null;
+    const submissionsValue = isRecord(data) ? data['submissions'] : null;
+    const submissions = Array.isArray(submissionsValue) ? submissionsValue : [];
+
+    const score = (submission: Record<string, unknown>): number => {
+      let points = 0;
+      const studentId = typeof submission['studentId'] === 'string' ? submission['studentId'].trim().toLowerCase() : '';
+      const studentEmail = typeof submission['studentEmail'] === 'string' ? submission['studentEmail'].trim().toLowerCase() : '';
+      const studentName = typeof submission['studentName'] === 'string' ? submission['studentName'].trim().toLowerCase() : '';
+      const attemptId = typeof submission['attemptId'] === 'string' ? submission['attemptId'].trim().toLowerCase() : '';
+      for (const candidate of normalized) {
+        if (candidate === studentId) points += 6;
+        if (candidate === studentEmail) points += 6;
+        if (candidate === studentName) points += 4;
+        if (candidate === attemptId) points += 3;
+      }
+      return points;
+    };
+
+    let bestId: string | null = null;
+    let bestScore = 0;
+    let bestSubmittedAt = 0;
+    for (const item of submissions) {
+      if (!isRecord(item)) continue;
+      const id = item['id'];
+      if (!isUuid(id)) continue;
+      const points = score(item);
+      if (points <= 0) continue;
+      const submittedAtRaw = item['submittedAt'];
+      const submittedAtMs =
+        typeof submittedAtRaw === 'string'
+          ? Date.parse(submittedAtRaw)
+          : typeof submittedAtRaw === 'number'
+            ? submittedAtRaw
+            : 0;
+      if (points > bestScore || (points === bestScore && submittedAtMs > bestSubmittedAt)) {
+        bestScore = points;
+        bestSubmittedAt = submittedAtMs;
+        bestId = id;
+      }
+    }
+    return bestId;
+  };
 
   const verifySubmission = async (
     submissionId: string,
@@ -123,9 +181,9 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
 
   return {
     verifySubmission,
+    findLatestSubmissionIdForStudent,
     dispose: async () => {
       await api.dispose();
     },
   };
 }
-

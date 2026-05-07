@@ -2137,7 +2137,11 @@ fn build_writing_task_ids(config_snapshot: &Value) -> HashSet<String> {
         .and_then(Value::as_array)
     {
         for task in tasks {
-            if let Some(id) = task.get("id").and_then(Value::as_str) {
+            if let Some(id) = task
+                .get("id")
+                .or_else(|| task.get("taskId"))
+                .and_then(Value::as_str)
+            {
                 ids.insert(id.to_owned());
             }
         }
@@ -3069,6 +3073,43 @@ mod tests {
             "payload": payload
         }))
         .expect("valid mutation command")
+    }
+
+    #[test]
+    fn build_writing_task_ids_supports_legacy_task_id_field() {
+        let config_snapshot = json!({
+            "sections": {
+                "writing": {
+                    "tasks": [
+                        { "taskId": "task-1" },
+                        { "taskId": "task-2" }
+                    ]
+                }
+            }
+        });
+
+        let ids = build_writing_task_ids(&config_snapshot);
+        assert!(ids.contains("task-1"));
+        assert!(ids.contains("task-2"));
+    }
+
+    #[test]
+    fn build_writing_task_ids_prefers_explicit_id_and_falls_back_to_task_id() {
+        let config_snapshot = json!({
+            "sections": {
+                "writing": {
+                    "tasks": [
+                        { "id": "task1", "taskId": "legacy-task-1" },
+                        { "taskId": "task2" }
+                    ]
+                }
+            }
+        });
+
+        let ids = build_writing_task_ids(&config_snapshot);
+        assert!(ids.contains("task1"));
+        assert!(ids.contains("task2"));
+        assert!(!ids.contains("legacy-task-1"));
     }
 
     #[test]

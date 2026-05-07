@@ -99,6 +99,13 @@ iframe{width:100%;height:72vh;border:1px solid #334155;border-radius:8px;backgro
 <label>k6 Base URL</label><input id="k6BaseUrl" placeholder="https://your-host"/>
 <div class="row"><div style="flex:1"><label>K6 Script</label><input id="k6Script" value="k6/prod-start-exam-200.js"/></div><div style="flex:1"><label>K6 Students</label><input id="k6Students" value="100"/></div></div>
 </div>
+<div class="group">
+<h3>5) Grading Verify</h3>
+<label><input type="checkbox" id="gradingVerifyEnabled" /> Enable grading verification (100% answer match)</label>
+<label>Admin Email</label><input id="gradingVerifyAdminEmail" placeholder="admin@example.com"/>
+<label>Admin Password</label><input id="gradingVerifyAdminPassword" type="password" placeholder="••••••••"/>
+<label><input type="checkbox" id="gradingVerifyStrict" checked/> Strict mode (fail user on mismatch)</label>
+</div>
 <label><input type="checkbox" id="deleteAfterFinish" checked/> Delete artifacts after finish</label>
 <div class="row"><button id="startBtn">Start</button><button class="stop" id="stopBtn">Stop</button></div>
 <label>Logs</label><pre id="logs"></pre>
@@ -120,10 +127,10 @@ function validateForm(){
   startBtn.disabled=false;
 }
 
-document.getElementById('startBtn').onclick=async()=>{ const payload={registerUrl:v('registerUrl'),usersFile:v('usersFile'),testMode:v('testMode'),userCount:Number(v('userCount')),userOffset:Number(v('userOffset')),headedUsers:Number(v('headedUsers')),maxConcurrentUsers:Number(v('maxConcurrent')),dashboardPort:Number(v('dashboardPort')),liveMode:v('liveMode'),screenshotMs:Number(v('screenshotMs')),jpegQuality:Number(v('jpegQuality')),k6BaseUrl:v('k6BaseUrl'),k6Script:v('k6Script'),k6Students:Number(v('k6Students')),deleteAfterFinish:c('deleteAfterFinish')}; const resp=await fetch('/api/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}); const data=await resp.json().catch(()=>({})); if(!resp.ok){ alert(data.error||('Start failed: HTTP '+resp.status)); return; } alert('Started'); await refresh(); };
+document.getElementById('startBtn').onclick=async()=>{ const payload={registerUrl:v('registerUrl'),usersFile:v('usersFile'),testMode:v('testMode'),userCount:Number(v('userCount')),userOffset:Number(v('userOffset')),headedUsers:Number(v('headedUsers')),maxConcurrentUsers:Number(v('maxConcurrent')),dashboardPort:Number(v('dashboardPort')),liveMode:v('liveMode'),screenshotMs:Number(v('screenshotMs')),jpegQuality:Number(v('jpegQuality')),k6BaseUrl:v('k6BaseUrl'),k6Script:v('k6Script'),k6Students:Number(v('k6Students')),gradingVerifyEnabled:c('gradingVerifyEnabled'),gradingVerifyStrict:c('gradingVerifyStrict'),gradingVerifyAdminEmail:v('gradingVerifyAdminEmail'),gradingVerifyAdminPassword:v('gradingVerifyAdminPassword'),deleteAfterFinish:c('deleteAfterFinish')}; const resp=await fetch('/api/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}); const data=await resp.json().catch(()=>({})); if(!resp.ok){ alert(data.error||('Start failed: HTTP '+resp.status)); return; } alert('Started'); await refresh(); };
 document.getElementById('stopBtn').onclick=async()=>{ await fetch('/api/stop',{method:'POST'}); await refresh(); };
 ['testMode','registerUrl','usersFile'].forEach((id)=>document.getElementById(id).addEventListener('input',validateForm));
-const es=new EventSource('/api/logs'); es.onmessage=(e)=>{ const m=JSON.parse(e.data); logsEl.textContent+=m.line+'\n'; logsEl.scrollTop=logsEl.scrollHeight;};
+const es=new EventSource('/api/logs'); es.onmessage=(e)=>{ const m=JSON.parse(e.data); logsEl.textContent+=m.line+'\\n'; logsEl.scrollTop=logsEl.scrollHeight;};
 validateForm();
 refresh(); setInterval(refresh,3000);
 </script></body></html>`);
@@ -192,6 +199,10 @@ app.post('/api/start', (req, res) => {
     K6_SCRIPT: String(b.k6Script || 'k6/prod-start-exam-200.js'),
     K6_STUDENTS: String(b.k6Students || b.userCount || 100),
     K6_BASE_URL: String(b.k6BaseUrl || ''),
+    GRADING_VERIFY_ENABLED: b.gradingVerifyEnabled ? 'true' : 'false',
+    GRADING_VERIFY_STRICT: b.gradingVerifyStrict ? 'true' : 'false',
+    GRADING_VERIFY_ADMIN_EMAIL: String(b.gradingVerifyAdminEmail || ''),
+    GRADING_VERIFY_ADMIN_PASSWORD: String(b.gradingVerifyAdminPassword || ''),
     LIVE_EVENT_ENDPOINT: `http://127.0.0.1:${port}/api/live-event`,
     LIVE_EVENT_TOKEN: liveEventToken,
   };
@@ -199,6 +210,10 @@ app.post('/api/start', (req, res) => {
   if (mode !== 'k6') {
     if (!env.REGISTER_URL) return res.status(400).json({ error: 'REGISTER_URL is required.' });
     if (!env.USERS_FILE) return res.status(400).json({ error: 'USERS_FILE is required.' });
+  }
+  if (env.GRADING_VERIFY_ENABLED === 'true') {
+    if (!env.GRADING_VERIFY_ADMIN_EMAIL) return res.status(400).json({ error: 'GRADING_VERIFY_ADMIN_EMAIL is required.' });
+    if (!env.GRADING_VERIFY_ADMIN_PASSWORD) return res.status(400).json({ error: 'GRADING_VERIFY_ADMIN_PASSWORD is required.' });
   }
 
   if (mode === 'headless') env.HEADED_USERS = '0';

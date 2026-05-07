@@ -2111,7 +2111,18 @@ fn index_objective_block_sections(
                 }
             }
         }
-        "MULTI_MCQ" | "SINGLE_MCQ" => {
+        "MULTI_MCQ" => {
+            if let Some(block_id) = block_id {
+                register_answer_section(sections, block_id, section_key);
+            }
+        }
+        "SINGLE_MCQ" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                if !questions.is_empty() {
+                    register_question_array_sections(block, section_key, sections);
+                    return;
+                }
+            }
             if let Some(block_id) = block_id {
                 register_answer_section(sections, block_id, section_key);
             }
@@ -2393,6 +2404,224 @@ mod tests {
         assert_eq!(
             filter_answers_for_section(&answers, &answer_sections, "listening"),
             json!({ "tree-listening::tree::root-b::leaf-x": "dog" })
+        );
+    }
+
+    #[test]
+    fn objective_sections_include_single_mcq_question_ids() {
+        let answers = json!({
+            "reading-q1": "A",
+            "listening-legacy-block": "B"
+        });
+        let content_snapshot = json!({
+            "listening": {
+                "parts": [{
+                    "blocks": [{
+                        "id": "listening-legacy-block",
+                        "type": "SINGLE_MCQ",
+                        "options": [{ "id": "A" }, { "id": "B" }]
+                    }]
+                }]
+            },
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "reading-block-1",
+                        "type": "SINGLE_MCQ",
+                        "questions": [{
+                            "id": "reading-q1",
+                            "options": [{ "id": "A" }, { "id": "B" }]
+                        }]
+                    }]
+                }]
+            }
+        });
+
+        let answer_sections = build_objective_answer_sections(&content_snapshot);
+        assert_eq!(
+            filter_answers_for_section(&answers, &answer_sections, "reading"),
+            json!({ "reading-q1": "A" })
+        );
+        assert_eq!(
+            filter_answers_for_section(&answers, &answer_sections, "listening"),
+            json!({ "listening-legacy-block": "B" })
+        );
+    }
+
+    #[test]
+    fn objective_sections_route_all_supported_block_answer_shapes() {
+        let answers = json!({
+            "r-tfng-q1": "T",
+            "r-cloze-q1": "alpha",
+            "r-matching-q1": "i",
+            "r-map-q1": "A",
+            "r-short-q1": "fox",
+            "r-sentence-q1": ["first", "second"],
+            "r-sentence-q1:b1": "first",
+            "r-sentence-q1:b2": "second",
+            "r-note-q1": ["note answer"],
+            "r-note-q1:n1": "note answer",
+            "l-multi": ["A", "C"],
+            "l-single-q1": "B",
+            "l-single-legacy": "Y",
+            "l-diagram": ["nose", "ear"],
+            "l-diagram:l1": "nose",
+            "l-diagram:l2": "ear",
+            "l-flow": ["step-1", "step-2"],
+            "l-flow:s1": "step-1",
+            "l-flow:s2": "step-2",
+            "l-table": ["r1c1", "r1c2"],
+            "l-table:c1": "r1c1",
+            "l-table:c2": "r1c2",
+            "l-classify": ["Alpha", "Beta"],
+            "l-classify:i1": "Alpha",
+            "l-classify:i2": "Beta",
+            "l-match-features": ["X", "Y"],
+            "l-match-features:f1": "X",
+            "l-match-features:f2": "Y"
+        });
+        let content_snapshot = json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [
+                        {
+                            "id": "r-tfng",
+                            "type": "TFNG",
+                            "mode": "TFNG",
+                            "questions": [{ "id": "r-tfng-q1" }]
+                        },
+                        {
+                            "id": "r-cloze",
+                            "type": "CLOZE",
+                            "questions": [{ "id": "r-cloze-q1" }]
+                        },
+                        {
+                            "id": "r-matching",
+                            "type": "MATCHING",
+                            "headings": [{ "id": "h1", "text": "Heading 1" }],
+                            "questions": [{ "id": "r-matching-q1" }]
+                        },
+                        {
+                            "id": "r-map",
+                            "type": "MAP",
+                            "questions": [{ "id": "r-map-q1" }]
+                        },
+                        {
+                            "id": "r-short",
+                            "type": "SHORT_ANSWER",
+                            "questions": [{ "id": "r-short-q1" }]
+                        },
+                        {
+                            "id": "r-sentence",
+                            "type": "SENTENCE_COMPLETION",
+                            "questions": [{
+                                "id": "r-sentence-q1",
+                                "blanks": [{ "id": "b1" }, { "id": "b2" }]
+                            }]
+                        },
+                        {
+                            "id": "r-note",
+                            "type": "NOTE_COMPLETION",
+                            "questions": [{
+                                "id": "r-note-q1",
+                                "blanks": [{ "id": "n1" }]
+                            }]
+                        }
+                    ]
+                }]
+            },
+            "listening": {
+                "parts": [{
+                    "blocks": [
+                        {
+                            "id": "l-multi",
+                            "type": "MULTI_MCQ",
+                            "requiredSelections": 2,
+                            "options": [{ "id": "A" }, { "id": "B" }, { "id": "C" }]
+                        },
+                        {
+                            "id": "l-single-question-set",
+                            "type": "SINGLE_MCQ",
+                            "questions": [{
+                                "id": "l-single-q1",
+                                "options": [{ "id": "A" }, { "id": "B" }]
+                            }]
+                        },
+                        {
+                            "id": "l-single-legacy",
+                            "type": "SINGLE_MCQ",
+                            "options": [{ "id": "X" }, { "id": "Y" }]
+                        },
+                        {
+                            "id": "l-diagram",
+                            "type": "DIAGRAM_LABELING",
+                            "labels": [{ "id": "l1" }, { "id": "l2" }]
+                        },
+                        {
+                            "id": "l-flow",
+                            "type": "FLOW_CHART",
+                            "steps": [{ "id": "s1" }, { "id": "s2" }]
+                        },
+                        {
+                            "id": "l-table",
+                            "type": "TABLE_COMPLETION",
+                            "cells": [{ "id": "c1" }, { "id": "c2" }]
+                        },
+                        {
+                            "id": "l-classify",
+                            "type": "CLASSIFICATION",
+                            "categories": ["Alpha", "Beta"],
+                            "items": [{ "id": "i1" }, { "id": "i2" }]
+                        },
+                        {
+                            "id": "l-match-features",
+                            "type": "MATCHING_FEATURES",
+                            "options": ["X", "Y"],
+                            "features": [{ "id": "f1" }, { "id": "f2" }]
+                        }
+                    ]
+                }]
+            }
+        });
+
+        let answer_sections = build_objective_answer_sections(&content_snapshot);
+        assert_eq!(
+            filter_answers_for_section(&answers, &answer_sections, "reading"),
+            json!({
+                "r-tfng-q1": "T",
+                "r-cloze-q1": "alpha",
+                "r-matching-q1": "i",
+                "r-map-q1": "A",
+                "r-short-q1": "fox",
+                "r-sentence-q1": ["first", "second"],
+                "r-sentence-q1:b1": "first",
+                "r-sentence-q1:b2": "second",
+                "r-note-q1": ["note answer"],
+                "r-note-q1:n1": "note answer"
+            })
+        );
+        assert_eq!(
+            filter_answers_for_section(&answers, &answer_sections, "listening"),
+            json!({
+                "l-multi": ["A", "C"],
+                "l-single-q1": "B",
+                "l-single-legacy": "Y",
+                "l-diagram": ["nose", "ear"],
+                "l-diagram:l1": "nose",
+                "l-diagram:l2": "ear",
+                "l-flow": ["step-1", "step-2"],
+                "l-flow:s1": "step-1",
+                "l-flow:s2": "step-2",
+                "l-table": ["r1c1", "r1c2"],
+                "l-table:c1": "r1c1",
+                "l-table:c2": "r1c2",
+                "l-classify": ["Alpha", "Beta"],
+                "l-classify:i1": "Alpha",
+                "l-classify:i2": "Beta",
+                "l-match-features": ["X", "Y"],
+                "l-match-features:f1": "X",
+                "l-match-features:f2": "Y"
+            })
         );
     }
 }
