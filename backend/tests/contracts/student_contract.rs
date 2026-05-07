@@ -217,7 +217,17 @@ async fn mutation_batch_persists_answers_and_returns_the_server_watermark() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    start_runtime(database.pool(), schedule_id, "listening").await;
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &contract_actor(),
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: Some("contract runtime start".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
     let attempt_id = bootstrap["data"]["attempt"]["id"]
         .as_str()
         .unwrap()
@@ -295,7 +305,17 @@ async fn mutation_batch_ack_mode_returns_only_commit_metadata() {
     ));
     let (bootstrap, client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    start_runtime(database.pool(), schedule_id, "listening").await;
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &contract_actor(),
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: Some("contract runtime start".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
     let attempt_id = bootstrap["data"]["attempt"]["id"]
         .as_str()
         .unwrap()
@@ -1551,7 +1571,7 @@ async fn mutation_batch_rejects_objective_mutations_outside_the_current_section(
 }
 
 #[tokio::test]
-async fn mutation_batch_surfaces_section_mismatch_with_reason() {
+async fn mutation_batch_accepts_recent_previous_section_answer_during_section_transition() {
     let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
     let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
@@ -1560,9 +1580,20 @@ async fn mutation_batch_surfaces_section_mismatch_with_reason() {
         AppConfig::default(),
         database.pool().clone(),
     ));
-    let (bootstrap, client_session_id) =
+    let (bootstrap, _client_session_id) =
         bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
-    start_runtime(database.pool(), schedule_id, "listening").await;
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &contract_actor(),
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: Some("contract runtime start".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    transition_runtime_from_listening_to_reading(database.pool(), schedule_id).await;
     let attempt_id = bootstrap["data"]["attempt"]["id"]
         .as_str()
         .unwrap()
@@ -1582,21 +1613,95 @@ async fn mutation_batch_surfaces_section_mismatch_with_reason() {
                 ))
                 .header("content-type", "application/json")
                 .body(Body::from(
-                    serde_json::to_vec(&StudentMutationBatchRequest {
-                        attempt_id,
-                        student_key: student_key.clone(),
-                        client_session_id,
-                        mutations: vec![ielts_backend_domain::attempt::MutationEnvelope {
-                            id: "mutation-1".to_owned(),
-                            seq: 1,
-                            timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 5, 0).unwrap(),
-                            command: command(
-                                MutationType::WritingAnswer,
-                                json!({"taskId": "stale", "value": "hello"}),
-                            ),
-                            base_revision: None,
-                        }],
-                    })
+                    serde_json::to_vec(&json!({
+                        "attemptId": attempt_id,
+                        "mutations": [
+                            {
+                                "mutationId": "mutation-late-listening-1",
+                                "baseRevision": 1,
+                                "type": "SetChoice",
+                                "questionId": "q1",
+                                "value": "T"
+                            },
+                            {
+                                "mutationId": "mutation-live-reading-1",
+                                "baseRevision": 1,
+                                "type": "SetChoice",
+                                "questionId": "r1",
+                                "value": "T"
+                            }
+                        ]
+                    }))
+                    .unwrap(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let json = json_body(response).await;
+    assert_eq!(status, StatusCode::OK, "{json}");
+    assert_eq!(json["data"]["appliedMutationCount"], 2);
+    assert_eq!(json["data"]["serverAcceptedThroughSeq"], 2);
+    assert_eq!(json["data"]["attempt"]["answers"]["q1"], "T");
+    assert_eq!(json["data"]["attempt"]["answers"]["r1"], "T");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn mutation_batch_surfaces_section_mismatch_with_reason() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+    let (bootstrap, _client_session_id) =
+        bootstrap_attempt(&app, &auth, schedule_id, "alice", &student_key).await;
+    SchedulingService::new(database.pool().clone())
+        .apply_runtime_command(
+            &contract_actor(),
+            schedule_id,
+            RuntimeCommandRequest {
+                action: RuntimeCommandAction::StartRuntime,
+                reason: Some("contract runtime start".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    let attempt_id = bootstrap["data"]["attempt"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let attempt_token = bootstrap["data"]["attemptCredential"]["attemptToken"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let response = app
+        .oneshot(
+            with_attempt_token(Request::builder(), &attempt_token)
+                .method("POST")
+                .uri(format!(
+                    "/api/v1/student/sessions/{}/mutations:batch",
+                    schedule_id
+                ))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::to_vec(&json!({
+                        "attemptId": attempt_id,
+                        "mutations": [{
+                            "mutationId": "mutation-1",
+                            "baseRevision": 1,
+                            "type": "SetEssayText",
+                            "taskId": "task1",
+                            "value": "hello"
+                        }]
+                    }))
                     .unwrap(),
                 ))
                 .unwrap(),
@@ -2625,6 +2730,60 @@ async fn start_runtime(pool: &sqlx::MySqlPool, schedule_id: Uuid, section_key: &
         "#,
     )
     .bind(section_key)
+    .bind(schedule_id.to_string())
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn transition_runtime_from_listening_to_reading(
+    pool: &sqlx::MySqlPool,
+    schedule_id: Uuid,
+) {
+    let runtime_id: String =
+        sqlx::query_scalar("SELECT id FROM exam_session_runtimes WHERE schedule_id = ?")
+            .bind(schedule_id.to_string())
+            .fetch_one(pool)
+            .await
+            .unwrap();
+
+    sqlx::query(
+        r#"
+        UPDATE exam_session_runtime_sections
+        SET status = 'completed', actual_end_at = NOW(), completion_reason = 'time_expired'
+        WHERE runtime_id = ? AND section_key = 'listening'
+        "#,
+    )
+    .bind(&runtime_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        UPDATE exam_session_runtime_sections
+        SET status = 'live', available_at = COALESCE(available_at, NOW()), actual_start_at = COALESCE(actual_start_at, NOW())
+        WHERE runtime_id = ? AND section_key = 'reading'
+        "#,
+    )
+    .bind(&runtime_id)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    sqlx::query(
+        r#"
+        UPDATE exam_session_runtimes
+        SET
+            status = 'live',
+            active_section_key = 'reading',
+            current_section_key = 'reading',
+            waiting_for_next_section = false,
+            actual_start_at = COALESCE(actual_start_at, NOW()),
+            updated_at = NOW()
+        WHERE schedule_id = ?
+        "#,
+    )
     .bind(schedule_id.to_string())
     .execute(pool)
     .await

@@ -572,7 +572,7 @@ impl DeliveryService {
         }
 
         let runtime_gate = sqlx::query_as::<_, RuntimeGateRow>(
-            "SELECT status, actual_end_at, current_section_key, waiting_for_next_section FROM exam_session_runtimes WHERE schedule_id = ?",
+            "SELECT id, status, current_section_key, waiting_for_next_section FROM exam_session_runtimes WHERE schedule_id = ?",
         )
         .bind(schedule_id.to_string())
         .fetch_optional(tx.as_mut())
@@ -600,6 +600,14 @@ impl DeliveryService {
             runtime_gate
                 .as_ref()
                 .and_then(|gate| gate.current_section_key.as_deref())
+        };
+        let transition_grace_section_keys = if post_submit_grace_active {
+            HashSet::new()
+        } else if let Some(runtime_gate) = runtime_gate.as_ref() {
+            self.load_recently_completed_section_keys_for_grace(tx.as_mut(), &runtime_gate.id, now)
+                .await?
+        } else {
+            HashSet::new()
         };
 
         let version = self
@@ -721,6 +729,7 @@ impl DeliveryService {
                 &writing_task_ids,
                 objective_mutation_gate,
                 active_section_key,
+                &transition_grace_section_keys,
                 &mut answers,
                 &mut writing_answers,
                 &mut flags,
@@ -905,6 +914,33 @@ impl DeliveryService {
         tx.commit().await?;
 
         Ok(response)
+    }
+
+    async fn load_recently_completed_section_keys_for_grace(
+        &self,
+        conn: &mut MySqlConnection,
+        runtime_id: &str,
+        now: DateTime<Utc>,
+    ) -> Result<HashSet<String>, DeliveryError> {
+        let rows = sqlx::query_as::<_, RuntimeSectionGraceRow>(
+            r#"
+            SELECT section_key, actual_end_at
+            FROM exam_session_runtime_sections
+            WHERE runtime_id = ? AND status = 'completed' AND actual_end_at IS NOT NULL
+            "#,
+        )
+        .bind(runtime_id)
+        .fetch_all(conn)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter(|row| {
+                now <= row.actual_end_at
+                    + ChronoDuration::seconds(self.final_submit_grace_seconds)
+            })
+            .map(|row| row.section_key)
+            .collect())
     }
 
     pub async fn record_heartbeat(
@@ -1095,7 +1131,7 @@ impl DeliveryService {
         }
 
         let runtime_gate = sqlx::query_as::<_, RuntimeGateRow>(
-            "SELECT status, actual_end_at, current_section_key, waiting_for_next_section FROM exam_session_runtimes WHERE schedule_id = ?",
+            "SELECT id, status, current_section_key, waiting_for_next_section FROM exam_session_runtimes WHERE schedule_id = ?",
         )
         .bind(schedule_id.to_string())
         .fetch_optional(tx.as_mut())
@@ -2037,10 +2073,16 @@ fn validate_contiguous_sequences(
 
 #[derive(sqlx::FromRow)]
 struct RuntimeGateRow {
+    id: String,
     status: String,
-    actual_end_at: Option<DateTime<Utc>>,
     current_section_key: Option<String>,
     waiting_for_next_section: bool,
+}
+
+#[derive(sqlx::FromRow)]
+struct RuntimeSectionGraceRow {
+    section_key: String,
+    actual_end_at: DateTime<Utc>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -2668,6 +2710,7 @@ fn apply_mutation(
     writing_task_ids: &HashSet<String>,
     objective_mutation_gate: ObjectiveMutationGate,
     active_section_key: Option<&str>,
+    transition_grace_section_keys: &HashSet<String>,
     answers: &mut Value,
     writing_answers: &mut Value,
     flags: &mut Value,
@@ -2699,7 +2742,12 @@ fn apply_mutation(
                 );
                 return Ok(false);
             }
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            enforce_section_membership(
+                active_section_key,
+                transition_grace_section_keys,
+                &question_id,
+                answer_schema,
+            )?;
             let value = payload.value.clone();
             let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
                 DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
@@ -2729,7 +2777,12 @@ fn apply_mutation(
                 );
                 return Ok(false);
             }
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            enforce_section_membership(
+                active_section_key,
+                transition_grace_section_keys,
+                &question_id,
+                answer_schema,
+            )?;
             let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
                 DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
             })?;
@@ -2758,7 +2811,12 @@ fn apply_mutation(
                 );
                 return Ok(false);
             }
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            enforce_section_membership(
+                active_section_key,
+                transition_grace_section_keys,
+                &question_id,
+                answer_schema,
+            )?;
             let slot_index = usize::try_from(payload.slot_index).unwrap_or(usize::MAX);
             let value = payload.value.clone();
             let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
@@ -2787,7 +2845,12 @@ fn apply_mutation(
                 );
                 return Ok(false);
             }
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            enforce_section_membership(
+                active_section_key,
+                transition_grace_section_keys,
+                &question_id,
+                answer_schema,
+            )?;
             let slot_index = usize::try_from(payload.slot_index).unwrap_or(usize::MAX);
             let constraint = answer_schema.constraints.get(&question_id).ok_or_else(|| {
                 DeliveryError::Validation("Mutation references an unknown `questionId`.".to_owned())
@@ -2816,7 +2879,9 @@ fn apply_mutation(
                 return Ok(false);
             }
             if let Some(active_section_key) = active_section_key {
-                if active_section_key != "writing" {
+                if active_section_key != "writing"
+                    && !transition_grace_section_keys.contains("writing")
+                {
                     return Err(DeliveryError::conflict_reason(
                         DeliveryConflictReason::SectionMismatch,
                         "Mutation belongs to an inactive section.",
@@ -2854,7 +2919,9 @@ fn apply_mutation(
                 return Ok(false);
             }
             if let Some(active_section_key) = active_section_key {
-                if active_section_key != "writing" {
+                if active_section_key != "writing"
+                    && !transition_grace_section_keys.contains("writing")
+                {
                     return Err(DeliveryError::conflict_reason(
                         DeliveryConflictReason::SectionMismatch,
                         "Mutation belongs to an inactive section.",
@@ -2885,7 +2952,12 @@ fn apply_mutation(
                 );
                 return Ok(false);
             }
-            enforce_section_membership(active_section_key, &question_id, answer_schema)?;
+            enforce_section_membership(
+                active_section_key,
+                transition_grace_section_keys,
+                &question_id,
+                answer_schema,
+            )?;
             let flag_value = payload.value.as_bool().ok_or_else(|| {
                 DeliveryError::Validation("Flag values must be boolean.".to_owned())
             })?;
@@ -3140,6 +3212,7 @@ fn set_array_slot_answer(
 
 fn enforce_section_membership(
     active_section_key: Option<&str>,
+    transition_grace_section_keys: &HashSet<String>,
     question_id: &str,
     answer_schema: &AnswerSchema,
 ) -> Result<(), DeliveryError> {
@@ -3152,6 +3225,9 @@ fn enforce_section_membership(
         })?;
     if let Some(active_section_key) = active_section_key {
         if expected != active_section_key {
+            if transition_grace_section_keys.contains(expected) {
+                return Ok(());
+            }
             return Err(DeliveryError::conflict_reason(
                 DeliveryConflictReason::SectionMismatch,
                 format!(
@@ -3322,8 +3398,8 @@ mod tests {
     #[test]
     fn objective_mutation_gate_blocks_when_runtime_or_proctor_disallow() {
         let base = RuntimeGateRow {
+            id: "runtime-1".to_owned(),
             status: "paused".to_owned(),
-            actual_end_at: None,
             current_section_key: Some("reading".to_owned()),
             waiting_for_next_section: false,
         };
@@ -3432,6 +3508,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3462,6 +3539,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("writing"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3492,6 +3570,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3558,6 +3637,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             None,
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3609,6 +3689,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3638,6 +3719,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3666,6 +3748,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("writing"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3694,6 +3777,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             None,
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3749,6 +3833,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3778,6 +3863,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3844,6 +3930,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3871,6 +3958,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("reading"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
@@ -3895,6 +3983,7 @@ mod tests {
             &writing_task_ids,
             ObjectiveMutationGate::allow(),
             Some("writing"),
+            &HashSet::new(),
             &mut answers,
             &mut writing_answers,
             &mut flags,
