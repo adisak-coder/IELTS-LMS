@@ -731,7 +731,10 @@ async fn objective_block_matrix_answers_are_received_and_sectioned() {
         .iter()
         .find(|entry| entry["section"] == "reading")
         .expect("reading section");
-    assert_eq!(reading_section["answers"]["answers"], expected_reading_answers);
+    assert_eq!(
+        reading_section["answers"]["answers"],
+        expected_reading_answers
+    );
 
     let listening_section = section_items
         .iter()
@@ -764,7 +767,6 @@ async fn objective_block_matrix_answers_are_received_and_sectioned() {
 }
 
 #[tokio::test]
-#[ignore = "Known gap: objective auto-scoring projection still emits placeholder zero scores"]
 async fn objective_block_matrix_auto_scoring_is_correct_per_block() {
     let database = mysql::TestDatabase::new(GRADING_MIGRATIONS).await;
     let schedule = seed_schedule_with_content(

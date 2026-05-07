@@ -1508,6 +1508,18 @@ impl GradingService {
         let answer_sections = build_objective_answer_sections(content_snapshot);
         let listening_answers = filter_answers_for_section(&answers, &answer_sections, "listening");
         let reading_answers = filter_answers_for_section(&answers, &answer_sections, "reading");
+        let listening_auto_results = compute_objective_auto_grading_results(
+            "listening",
+            &listening_answers,
+            content_snapshot,
+            submitted_at,
+        );
+        let reading_auto_results = compute_objective_auto_grading_results(
+            "reading",
+            &reading_answers,
+            content_snapshot,
+            submitted_at,
+        );
         let mut section_rows_synced: u64 = 0;
         let mut writing_task_rows_synced: u64 = 0;
 
@@ -1559,7 +1571,17 @@ impl GradingService {
             .bind(section)
             .bind(&payload)
             .bind(if matches!(status, SectionGradingStatus::AutoGraded) {
-                Some(json!({ "generatedAt": submitted_at, "totalScore": 0, "maxScore": 0, "percentage": 0, "questionResults": [] }))
+                Some(match section {
+                    "listening" => listening_auto_results.clone(),
+                    "reading" => reading_auto_results.clone(),
+                    _ => json!({
+                        "generatedAt": submitted_at,
+                        "totalScore": 0,
+                        "maxScore": 0,
+                        "percentage": 0,
+                        "questionResults": []
+                    }),
+                })
             } else {
                 None
             })
@@ -2240,6 +2262,593 @@ fn register_answer_section(
     sections
         .entry(answer_key.to_owned())
         .or_insert_with(|| section_key.to_owned());
+}
+
+#[derive(Debug, Clone)]
+struct ObjectiveAnswerSpec {
+    question_id: String,
+    expected: ObjectiveExpectedAnswer,
+    scoring_rule: String,
+    correct_answer: Value,
+}
+
+#[derive(Debug, Clone)]
+enum ObjectiveExpectedAnswer {
+    TextAnyOf(HashSet<String>),
+    ExactSet(HashSet<String>),
+}
+
+impl ObjectiveExpectedAnswer {
+    fn matches(&self, value: &Value) -> bool {
+        match self {
+            Self::TextAnyOf(expected) => canonical_text_values(value)
+                .first()
+                .is_some_and(|answer| expected.contains(answer)),
+            Self::ExactSet(expected) => canonical_text_set(value) == *expected,
+        }
+    }
+}
+
+fn compute_objective_auto_grading_results(
+    section_key: &str,
+    section_answers: &Value,
+    content_snapshot: &Value,
+    submitted_at: DateTime<Utc>,
+) -> Value {
+    let answer_map = section_answers.as_object();
+    let specs = build_objective_scoring_specs(content_snapshot, section_key);
+    let mut total_score = 0i64;
+    let mut max_score = 0i64;
+    let mut question_results = Vec::with_capacity(specs.len());
+
+    for spec in specs {
+        max_score += 1;
+        let student_answer = answer_map
+            .and_then(|answers| answers.get(&spec.question_id))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let is_correct = spec.expected.matches(&student_answer);
+        if is_correct {
+            total_score += 1;
+        }
+
+        question_results.push(json!({
+            "questionId": spec.question_id,
+            "studentAnswer": value_to_display_text(&student_answer),
+            "correctAnswer": value_to_display_text(&spec.correct_answer),
+            "isCorrect": is_correct,
+            "awardedScore": i64::from(is_correct),
+            "maxScore": 1,
+            "scoringRule": spec.scoring_rule,
+            "hasOverride": false
+        }));
+    }
+
+    let percentage = if max_score > 0 {
+        (total_score as f64 / max_score as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    json!({
+        "generatedAt": submitted_at,
+        "totalScore": total_score,
+        "maxScore": max_score,
+        "percentage": percentage,
+        "questionResults": question_results
+    })
+}
+
+fn build_objective_scoring_specs(
+    content_snapshot: &Value,
+    section_key: &str,
+) -> Vec<ObjectiveAnswerSpec> {
+    let mut specs = Vec::<ObjectiveAnswerSpec>::new();
+    let mut seen = HashSet::<String>::new();
+
+    match section_key {
+        "reading" => {
+            if let Some(passages) = content_snapshot
+                .get("reading")
+                .and_then(|reading| reading.get("passages"))
+                .and_then(Value::as_array)
+            {
+                for passage in passages {
+                    if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
+                        for block in blocks {
+                            index_objective_block_scoring_specs(block, &mut specs, &mut seen);
+                        }
+                    }
+                }
+            }
+        }
+        "listening" => {
+            if let Some(parts) = content_snapshot
+                .get("listening")
+                .and_then(|listening| listening.get("parts"))
+                .and_then(Value::as_array)
+            {
+                for part in parts {
+                    if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
+                        for block in blocks {
+                            index_objective_block_scoring_specs(block, &mut specs, &mut seen);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    specs
+}
+
+fn index_objective_block_scoring_specs(
+    block: &Value,
+    specs: &mut Vec<ObjectiveAnswerSpec>,
+    seen: &mut HashSet<String>,
+) {
+    if register_sub_answer_tree_scoring_specs(block, specs, seen) {
+        return;
+    }
+
+    let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+        return;
+    };
+    let block_id = block.get("id").and_then(Value::as_str);
+    let fallback_rule = block
+        .get("answerRule")
+        .and_then(Value::as_str)
+        .unwrap_or("exact_match");
+
+    match block_type {
+        "TFNG" | "CLOZE" | "MATCHING" | "MAP" | "SHORT_ANSWER" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                for question in questions {
+                    let Some(question_id) = question.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let accepted = resolve_accepted_answers(
+                        question.get("correctAnswer"),
+                        question.get("acceptedAnswers"),
+                    );
+                    if accepted.is_empty() {
+                        continue;
+                    }
+                    let scoring_rule = question
+                        .get("answerRule")
+                        .and_then(Value::as_str)
+                        .unwrap_or(fallback_rule);
+                    insert_text_answer_spec(
+                        specs,
+                        seen,
+                        question_id,
+                        accepted,
+                        scoring_rule.to_owned(),
+                    );
+                }
+            }
+        }
+        "SENTENCE_COMPLETION" | "NOTE_COMPLETION" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                for question in questions {
+                    let Some(question_id) = question.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let scoring_rule = question
+                        .get("answerRule")
+                        .and_then(Value::as_str)
+                        .unwrap_or(fallback_rule)
+                        .to_owned();
+                    if let Some(blanks) = question.get("blanks").and_then(Value::as_array) {
+                        for blank in blanks {
+                            let Some(blank_id) = blank.get("id").and_then(Value::as_str) else {
+                                continue;
+                            };
+                            let accepted = resolve_accepted_answers(
+                                blank.get("correctAnswer"),
+                                blank.get("acceptedAnswers"),
+                            );
+                            if accepted.is_empty() {
+                                continue;
+                            }
+                            insert_text_answer_spec(
+                                specs,
+                                seen,
+                                &format!("{question_id}:{blank_id}"),
+                                accepted,
+                                scoring_rule.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        "MULTI_MCQ" => {
+            let Some(block_id) = block_id else {
+                return;
+            };
+            let expected = block
+                .get("options")
+                .and_then(Value::as_array)
+                .map(|options| {
+                    options
+                        .iter()
+                        .filter(|entry| {
+                            entry
+                                .get("isCorrect")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        })
+                        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+                        .map(ToOwned::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            insert_exact_set_spec(specs, seen, block_id, expected, "multi_choice".to_owned());
+        }
+        "SINGLE_MCQ" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                if !questions.is_empty() {
+                    for question in questions {
+                        let Some(question_id) = question.get("id").and_then(Value::as_str) else {
+                            continue;
+                        };
+                        let expected =
+                            question
+                                .get("options")
+                                .and_then(Value::as_array)
+                                .and_then(|options| {
+                                    options.iter().find_map(|entry| {
+                                        entry
+                                            .get("isCorrect")
+                                            .and_then(Value::as_bool)
+                                            .filter(|flag| *flag)
+                                            .and_then(|_| entry.get("id"))
+                                            .and_then(Value::as_str)
+                                            .map(ToOwned::to_owned)
+                                    })
+                                });
+                        if let Some(expected) = expected {
+                            insert_text_answer_spec(
+                                specs,
+                                seen,
+                                question_id,
+                                vec![expected],
+                                "single_choice".to_owned(),
+                            );
+                        }
+                    }
+                    return;
+                }
+            }
+            let Some(block_id) = block_id else {
+                return;
+            };
+            let expected = block
+                .get("options")
+                .and_then(Value::as_array)
+                .and_then(|options| {
+                    options.iter().find_map(|entry| {
+                        entry
+                            .get("isCorrect")
+                            .and_then(Value::as_bool)
+                            .filter(|flag| *flag)
+                            .and_then(|_| entry.get("id"))
+                            .and_then(Value::as_str)
+                            .map(ToOwned::to_owned)
+                    })
+                });
+            if let Some(expected) = expected {
+                insert_text_answer_spec(
+                    specs,
+                    seen,
+                    block_id,
+                    vec![expected],
+                    "single_choice".to_owned(),
+                );
+            }
+        }
+        "DIAGRAM_LABELING" => {
+            register_text_slot_specs(block, block_id, "labels", "diagram_label", specs, seen);
+        }
+        "FLOW_CHART" => {
+            register_text_slot_specs(block, block_id, "steps", "flow_chart", specs, seen);
+        }
+        "TABLE_COMPLETION" => {
+            register_text_slot_specs(block, block_id, "cells", "table_completion", specs, seen);
+        }
+        "CLASSIFICATION" => {
+            let Some(block_id) = block_id else {
+                return;
+            };
+            if let Some(items) = block.get("items").and_then(Value::as_array) {
+                for item in items {
+                    let Some(item_id) = item.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let accepted = resolve_accepted_answers(item.get("correctCategory"), None);
+                    if accepted.is_empty() {
+                        continue;
+                    }
+                    insert_text_answer_spec(
+                        specs,
+                        seen,
+                        &format!("{block_id}:{item_id}"),
+                        accepted,
+                        "classification".to_owned(),
+                    );
+                }
+            }
+        }
+        "MATCHING_FEATURES" => {
+            let Some(block_id) = block_id else {
+                return;
+            };
+            if let Some(features) = block.get("features").and_then(Value::as_array) {
+                for feature in features {
+                    let Some(feature_id) = feature.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let accepted = resolve_accepted_answers(feature.get("correctMatch"), None);
+                    if accepted.is_empty() {
+                        continue;
+                    }
+                    insert_text_answer_spec(
+                        specs,
+                        seen,
+                        &format!("{block_id}:{feature_id}"),
+                        accepted,
+                        "matching_features".to_owned(),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn register_sub_answer_tree_scoring_specs(
+    block: &Value,
+    specs: &mut Vec<ObjectiveAnswerSpec>,
+    seen: &mut HashSet<String>,
+) -> bool {
+    let enabled = block
+        .get("subAnswerModeEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return false;
+    }
+
+    let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+        return false;
+    };
+    let Some(roots) = block.get("answerTree").and_then(Value::as_array) else {
+        return false;
+    };
+    if roots.is_empty() {
+        return false;
+    }
+
+    for root in roots {
+        let Some(root_id) = root.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut stack: Vec<&Value> = vec![root];
+        while let Some(node) = stack.pop() {
+            let children = node.get("children").and_then(Value::as_array);
+            let is_leaf = children.map(|entries| entries.is_empty()).unwrap_or(true);
+            if is_leaf {
+                let Some(node_id) = node.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let accepted = resolve_accepted_answers(
+                    node.get("correctAnswer"),
+                    node.get("acceptedAnswers"),
+                );
+                if accepted.is_empty() {
+                    continue;
+                }
+                insert_text_answer_spec(
+                    specs,
+                    seen,
+                    &format!("{block_id}::tree::{root_id}::{node_id}"),
+                    accepted,
+                    "sub_answer_tree".to_owned(),
+                );
+                continue;
+            }
+
+            if let Some(children) = children {
+                for child in children {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+
+    true
+}
+
+fn register_text_slot_specs(
+    block: &Value,
+    block_id: Option<&str>,
+    slot_key: &str,
+    scoring_rule: &str,
+    specs: &mut Vec<ObjectiveAnswerSpec>,
+    seen: &mut HashSet<String>,
+) {
+    let Some(block_id) = block_id else {
+        return;
+    };
+    if let Some(slots) = block.get(slot_key).and_then(Value::as_array) {
+        for slot in slots {
+            let Some(slot_id) = slot.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let accepted =
+                resolve_accepted_answers(slot.get("correctAnswer"), slot.get("acceptedAnswers"));
+            if accepted.is_empty() {
+                continue;
+            }
+            insert_text_answer_spec(
+                specs,
+                seen,
+                &format!("{block_id}:{slot_id}"),
+                accepted,
+                scoring_rule.to_owned(),
+            );
+        }
+    }
+}
+
+fn insert_text_answer_spec(
+    specs: &mut Vec<ObjectiveAnswerSpec>,
+    seen: &mut HashSet<String>,
+    question_id: &str,
+    accepted_answers: Vec<String>,
+    scoring_rule: String,
+) {
+    if seen.contains(question_id) {
+        return;
+    }
+    let normalized = accepted_answers
+        .iter()
+        .map(|value| canonicalize_answer_for_matching(value))
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>();
+    if normalized.is_empty() {
+        return;
+    }
+    seen.insert(question_id.to_owned());
+
+    specs.push(ObjectiveAnswerSpec {
+        question_id: question_id.to_owned(),
+        expected: ObjectiveExpectedAnswer::TextAnyOf(normalized),
+        scoring_rule,
+        correct_answer: Value::String(accepted_answers.join(" | ")),
+    });
+}
+
+fn insert_exact_set_spec(
+    specs: &mut Vec<ObjectiveAnswerSpec>,
+    seen: &mut HashSet<String>,
+    question_id: &str,
+    expected_values: Vec<String>,
+    scoring_rule: String,
+) {
+    if seen.contains(question_id) {
+        return;
+    }
+
+    let normalized = expected_values
+        .iter()
+        .map(|value| canonicalize_answer_for_matching(value))
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>();
+    if normalized.is_empty() {
+        return;
+    }
+    seen.insert(question_id.to_owned());
+
+    specs.push(ObjectiveAnswerSpec {
+        question_id: question_id.to_owned(),
+        expected: ObjectiveExpectedAnswer::ExactSet(normalized),
+        scoring_rule,
+        correct_answer: Value::Array(
+            expected_values
+                .into_iter()
+                .map(Value::String)
+                .collect::<Vec<_>>(),
+        ),
+    });
+}
+
+fn resolve_accepted_answers(
+    correct_answer: Option<&Value>,
+    accepted_answers: Option<&Value>,
+) -> Vec<String> {
+    let mut seen = HashSet::<String>::new();
+    let mut resolved = Vec::<String>::new();
+
+    if let Some(values) = accepted_answers.and_then(Value::as_array) {
+        for value in values.iter().filter_map(Value::as_str) {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let canonical = canonicalize_answer_for_matching(trimmed);
+            if canonical.is_empty() || !seen.insert(canonical) {
+                continue;
+            }
+            resolved.push(trimmed.to_owned());
+        }
+    }
+
+    if resolved.is_empty() {
+        if let Some(correct) = correct_answer.and_then(Value::as_str) {
+            let trimmed = correct.trim();
+            if !trimmed.is_empty() {
+                resolved.push(trimmed.to_owned());
+            }
+        }
+    }
+
+    resolved
+}
+
+fn canonical_text_values(value: &Value) -> Vec<String> {
+    match value {
+        Value::String(text) => {
+            let normalized = canonicalize_answer_for_matching(text);
+            if normalized.is_empty() {
+                Vec::new()
+            } else {
+                vec![normalized]
+            }
+        }
+        Value::Array(values) => values
+            .iter()
+            .flat_map(canonical_text_values)
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    }
+}
+
+fn canonical_text_set(value: &Value) -> HashSet<String> {
+    canonical_text_values(value)
+        .into_iter()
+        .filter(|entry| !entry.is_empty())
+        .collect::<HashSet<_>>()
+}
+
+fn canonicalize_answer_for_matching(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for ch in value.chars().flat_map(char::to_lowercase) {
+        match ch {
+            '’' | '‘' | '`' | '\'' => {}
+            '‐' | '‑' | '‒' | '–' | '—' | '−' | '-' => output.push(' '),
+            '.' | ',' | ';' | ':' | '!' | '?' | '/' | '\\' | '(' | ')' | '[' | ']' | '{' | '}'
+            | '"' => output.push(' '),
+            _ => output.push(ch),
+        }
+    }
+    output.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn value_to_display_text(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::String(text) => text.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(value_to_display_text)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(", "),
+        _ => value.to_string(),
+    }
 }
 
 #[cfg(test)]

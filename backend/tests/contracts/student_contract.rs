@@ -1988,8 +1988,8 @@ async fn submit_blocks_while_runtime_live_with_unanswered_policy_block_but_allow
                 reason: Some("contract runtime end".to_owned()),
             },
         )
-    .await
-    .unwrap();
+        .await
+        .unwrap();
 
     let completed_submit = app
         .oneshot(

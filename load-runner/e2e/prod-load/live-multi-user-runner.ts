@@ -243,7 +243,7 @@ async function defaultLoginOrRegister(page: Page, user: VirtualUser, registerUrl
 
   const continueButton = page.getByRole('button', { name: /continue|register|start|enter|join|sign in|login/i }).first();
   if (await continueButton.count()) {
-    await continueButton.click();
+    await continueButton.click({ noWaitAfter: true, timeout: 5000 }).catch(() => {});
   } else {
     await page.keyboard.press('Enter').catch(() => {});
   }
@@ -271,7 +271,7 @@ async function defaultLoginOrRegister(page: Page, user: VirtualUser, registerUrl
       })
       .first();
     if (await proceedButton.count()) {
-      await proceedButton.click().catch(() => {});
+      await proceedButton.click({ noWaitAfter: true, timeout: 5000 }).catch(() => {});
     }
 
     await page.waitForTimeout(500);
@@ -291,7 +291,7 @@ async function defaultLoginOrRegister(page: Page, user: VirtualUser, registerUrl
     }
     const retryButton = page.getByRole('button', { name: /continue|register|start|enter|join|sign in|login/i }).first();
     if (await retryButton.count()) {
-      await retryButton.click().catch(() => {});
+      await retryButton.click({ noWaitAfter: true, timeout: 5000 }).catch(() => {});
     }
     await page.waitForTimeout(400);
   }
@@ -324,7 +324,7 @@ async function defaultWaitForExamLive(page: Page, ctx: ScenarioContext): Promise
         })
         .first();
       if (await proceedButton.count()) {
-        await proceedButton.click().catch(() => {});
+        await proceedButton.click({ noWaitAfter: true, timeout: 5000 }).catch(() => {});
       }
     }
 
@@ -375,28 +375,36 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
 
     const finishButton = page.getByRole('button', { name: 'Finish' }).first();
     if (await finishButton.isVisible().catch(() => false)) {
-      await finishButton.click().catch(() => finishButton.click({ force: true }));
+      await finishButton
+        .click({ noWaitAfter: true, timeout: 5000 })
+        .catch(() => finishButton.click({ force: true, noWaitAfter: true, timeout: 5000 }));
       await page.waitForTimeout(500);
       continue;
     }
 
     const reviewSubmit = page.getByRole('button', { name: 'Review & Submit' }).first();
     if (await reviewSubmit.isVisible().catch(() => false)) {
-      await reviewSubmit.click().catch(() => reviewSubmit.click({ force: true }));
+      await reviewSubmit
+        .click({ noWaitAfter: true, timeout: 5000 })
+        .catch(() => reviewSubmit.click({ force: true, noWaitAfter: true, timeout: 5000 }));
       await page.waitForTimeout(500);
       continue;
     }
 
     const submitSection = page.getByRole('button', { name: 'Submit Section' }).first();
     if (await submitSection.isVisible().catch(() => false)) {
-      await submitSection.click().catch(() => submitSection.click({ force: true }));
+      await submitSection
+        .click({ noWaitAfter: true, timeout: 5000 })
+        .catch(() => submitSection.click({ force: true, noWaitAfter: true, timeout: 5000 }));
       await page.waitForTimeout(500);
       continue;
     }
 
     const confirmSubmit = page.getByRole('button', { name: 'Confirm Submission' }).first();
     if (await confirmSubmit.isVisible().catch(() => false)) {
-      await confirmSubmit.click().catch(() => confirmSubmit.click({ force: true }));
+      await confirmSubmit
+        .click({ noWaitAfter: true, timeout: 5000 })
+        .catch(() => confirmSubmit.click({ force: true, noWaitAfter: true, timeout: 5000 }));
       await page.waitForTimeout(700);
       continue;
     }
@@ -428,7 +436,7 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
 
     const nextButton = page.getByRole('button', { name: /next|continue|save and next/i }).first();
     if (await nextButton.isVisible().catch(() => false)) {
-      await nextButton.click().catch(() => {});
+      await nextButton.click({ noWaitAfter: true, timeout: 5000 }).catch(() => {});
       await page.waitForTimeout(400);
       continue;
     }
