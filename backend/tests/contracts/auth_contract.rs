@@ -375,7 +375,10 @@ async fn student_entry_transitions_from_queued_to_authenticated_after_runtime_st
             admin
                 .with_csrf(Request::builder())
                 .method("POST")
-                .uri(format!("/api/v1/schedules/{}/runtime/commands", schedule.id))
+                .uri(format!(
+                    "/api/v1/schedules/{}/runtime/commands",
+                    schedule.id
+                ))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::to_vec(&RuntimeCommandRequest {

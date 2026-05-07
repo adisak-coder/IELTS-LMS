@@ -2736,10 +2736,7 @@ async fn start_runtime(pool: &sqlx::MySqlPool, schedule_id: Uuid, section_key: &
     .unwrap();
 }
 
-async fn transition_runtime_from_listening_to_reading(
-    pool: &sqlx::MySqlPool,
-    schedule_id: Uuid,
-) {
+async fn transition_runtime_from_listening_to_reading(pool: &sqlx::MySqlPool, schedule_id: Uuid) {
     let runtime_id: String =
         sqlx::query_scalar("SELECT id FROM exam_session_runtimes WHERE schedule_id = ?")
             .bind(schedule_id.to_string())

@@ -20,7 +20,7 @@ use ielts_backend_domain::attempt::{
 use ielts_backend_domain::auth::UserRole;
 use ielts_backend_domain::schedule::AuditActionType;
 use serde_json::{json, Value};
-use sqlx::query_scalar;
+use sqlx::{query_as, query_scalar, FromRow};
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -49,6 +49,15 @@ fn delivery_service(state: &AppState) -> DeliveryService {
 const STUDENT_LIFECYCLE_SAMPLE_HEADER: &str = "x-student-lifecycle-sampled";
 const STUDENT_FLUSH_CYCLE_ID_HEADER: &str = "x-student-flush-cycle-id";
 const STUDENT_SUBMIT_CYCLE_ID_HEADER: &str = "x-student-submit-cycle-id";
+const PREVIEW_RUNTIME_COHORT_PREFIX: &str = "__preview_runtime__:";
+const PREVIEW_RUNTIME_INSTITUTION: &str = "preview-runtime";
+const PREVIEW_CANDIDATE_NAME: &str = "Preview Candidate";
+
+#[derive(Debug, FromRow)]
+struct PreviewScheduleRow {
+    cohort_name: String,
+    institution: Option<String>,
+}
 
 fn header_bool(headers: &HeaderMap, key: &str) -> bool {
     headers
@@ -80,7 +89,13 @@ pub async fn get_student_session(
         UserRole::Builder,
         UserRole::Proctor,
     ])?;
-    let access = authorize_student(&state, &principal, schedule_id).await?;
+    let access = authorize_student(
+        &state,
+        &principal,
+        schedule_id,
+        query.candidate_id.as_deref(),
+    )
+    .await?;
     let service = delivery_service(&state);
     let started = Instant::now();
 
@@ -96,7 +111,7 @@ pub async fn get_student_session(
                 schedule_id,
                 wcode,
                 access.legacy_student_key.clone(),
-                None,
+                query.candidate_id.clone(),
                 &ielts_backend_application::auth::AuthenticatedSession {
                     user: principal.user.clone(),
                     session: principal.session.clone(),
@@ -106,7 +121,12 @@ pub async fn get_student_session(
             .await?
     } else {
         service
-            .get_session_context(schedule_id, wcode, access.legacy_student_key.clone(), None)
+            .get_session_context(
+                schedule_id,
+                wcode,
+                access.legacy_student_key.clone(),
+                query.candidate_id.clone(),
+            )
             .await?
     };
     state
@@ -127,7 +147,7 @@ pub async fn get_student_static_session(
         UserRole::Builder,
         UserRole::Proctor,
     ])?;
-    authorize_student(&state, &principal, schedule_id).await?;
+    authorize_student(&state, &principal, schedule_id, None).await?;
     let service = delivery_service(&state);
     let started = Instant::now();
     let session = service.get_static_session_context(schedule_id).await?;
@@ -150,7 +170,13 @@ pub async fn get_student_live_session(
         UserRole::Builder,
         UserRole::Proctor,
     ])?;
-    let access = authorize_student(&state, &principal, schedule_id).await?;
+    let access = authorize_student(
+        &state,
+        &principal,
+        schedule_id,
+        query.candidate_id.as_deref(),
+    )
+    .await?;
     let service = delivery_service(&state);
     let started = Instant::now();
 
@@ -334,7 +360,13 @@ pub async fn save_precheck(
         UserRole::Builder,
         UserRole::Proctor,
     ])?;
-    let access = authorize_student(&state, &principal, schedule_id).await?;
+    let access = authorize_student(
+        &state,
+        &principal,
+        schedule_id,
+        Some(req.candidate_id.as_str()),
+    )
+    .await?;
     let service = delivery_service(&state);
     let started = Instant::now();
 
@@ -405,7 +437,13 @@ pub async fn bootstrap_student_session(
             ));
         }
     }
-    let access = authorize_student(&state, &principal, schedule_id).await?;
+    let access = authorize_student(
+        &state,
+        &principal,
+        schedule_id,
+        Some(req.candidate_id.as_str()),
+    )
+    .await?;
     let service = delivery_service(&state);
     let started = Instant::now();
 
@@ -985,7 +1023,10 @@ pub async fn submit_student_session(
         writing_answers: None,
         flags: None,
     };
-    let replay_incomplete = match (api_req.client_final_seq, api_req.server_accepted_through_seq) {
+    let replay_incomplete = match (
+        api_req.client_final_seq,
+        api_req.server_accepted_through_seq,
+    ) {
         (Some(client_final_seq), Some(server_accepted_through_seq)) => {
             server_accepted_through_seq < client_final_seq
         }
@@ -1158,8 +1199,10 @@ async fn authorize_student(
     state: &AppState,
     principal: &AuthenticatedUser,
     schedule_id: Uuid,
+    candidate_id: Option<&str>,
 ) -> Result<StudentAccess, ApiError> {
-    AuthService::new(state.db_pool(), state.config.clone())
+    let auth_service = AuthService::new(state.db_pool(), state.config.clone());
+    if let Ok(access) = auth_service
         .authorize_student_schedule(
             &ielts_backend_application::auth::AuthenticatedSession {
                 user: principal.user.clone(),
@@ -1168,13 +1211,83 @@ async fn authorize_student(
             schedule_id,
         )
         .await
-        .map_err(|_| {
-            ApiError::new(
-                StatusCode::FORBIDDEN,
-                "FORBIDDEN",
-                "The authenticated student is not enrolled for this schedule.",
-            )
-        })
+    {
+        return Ok(access);
+    }
+
+    if matches!(principal.user.role, UserRole::Admin | UserRole::Builder)
+        && is_preview_runtime_schedule(state, schedule_id).await?
+    {
+        let normalized_candidate_id = normalize_candidate_id(candidate_id);
+        let student_key = build_student_key(schedule_id, &normalized_candidate_id);
+        return Ok(StudentAccess {
+            registration_id: Uuid::nil(),
+            wcode: String::new(),
+            email: principal.user.email.clone(),
+            student_id: normalized_candidate_id,
+            student_name: principal
+                .user
+                .display_name
+                .clone()
+                .unwrap_or_else(|| PREVIEW_CANDIDATE_NAME.to_owned()),
+            legacy_student_key: Some(student_key),
+        });
+    }
+
+    Err(ApiError::new(
+        StatusCode::FORBIDDEN,
+        "FORBIDDEN",
+        "The authenticated student is not enrolled for this schedule.",
+    ))
+}
+
+fn normalize_candidate_id(candidate_id: Option<&str>) -> String {
+    let fallback = "W000000";
+    let Some(raw) = candidate_id else {
+        return fallback.to_owned();
+    };
+
+    let trimmed = raw.trim().to_ascii_uppercase();
+    if trimmed.len() == 7
+        && trimmed.starts_with('W')
+        && trimmed[1..].chars().all(|ch| ch.is_ascii_digit())
+    {
+        return trimmed;
+    }
+
+    fallback.to_owned()
+}
+
+fn build_student_key(schedule_id: Uuid, candidate_id: &str) -> String {
+    format!("student-{schedule_id}-{candidate_id}")
+}
+
+async fn is_preview_runtime_schedule(
+    state: &AppState,
+    schedule_id: Uuid,
+) -> Result<bool, ApiError> {
+    let schedule = query_as::<_, PreviewScheduleRow>(
+        "SELECT cohort_name, institution FROM exam_schedules WHERE id = ?",
+    )
+    .bind(schedule_id.to_string())
+    .fetch_optional(&state.db_pool())
+    .await
+    .map_err(|err| {
+        ApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DATABASE_ERROR",
+            &err.to_string(),
+        )
+    })?;
+
+    let Some(schedule) = schedule else {
+        return Ok(false);
+    };
+
+    Ok(schedule
+        .cohort_name
+        .starts_with(PREVIEW_RUNTIME_COHORT_PREFIX)
+        && schedule.institution.as_deref() == Some(PREVIEW_RUNTIME_INSTITUTION))
 }
 
 fn access_key(access: &StudentAccess) -> String {

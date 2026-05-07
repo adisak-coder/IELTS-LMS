@@ -936,8 +936,7 @@ impl DeliveryService {
         Ok(rows
             .into_iter()
             .filter(|row| {
-                now <= row.actual_end_at
-                    + ChronoDuration::seconds(self.final_submit_grace_seconds)
+                now <= row.actual_end_at + ChronoDuration::seconds(self.final_submit_grace_seconds)
             })
             .map(|row| row.section_key)
             .collect())
@@ -3119,7 +3118,10 @@ fn merge_post_submit_submission_snapshot(
         .unwrap_or(0)
         .saturating_add(i64::try_from(applied_mutation_count).unwrap_or(i64::MAX));
     if !grace_merge.contains_key("firstAcceptedAt") {
-        grace_merge.insert("firstAcceptedAt".to_owned(), Value::String(now.to_rfc3339()));
+        grace_merge.insert(
+            "firstAcceptedAt".to_owned(),
+            Value::String(now.to_rfc3339()),
+        );
     }
     grace_merge.insert("acceptedInGrace".to_owned(), Value::Bool(true));
     grace_merge.insert("lastAcceptedAt".to_owned(), Value::String(now.to_rfc3339()));
@@ -3128,7 +3130,10 @@ fn merge_post_submit_submission_snapshot(
         "lastAppliedMutationCount".to_owned(),
         Value::from(i64::try_from(applied_mutation_count).unwrap_or(i64::MAX)),
     );
-    grace_merge.insert("appliedMutationTotal".to_owned(), Value::from(applied_total));
+    grace_merge.insert(
+        "appliedMutationTotal".to_owned(),
+        Value::from(applied_total),
+    );
     grace_merge.insert(
         "graceWindowSeconds".to_owned(),
         Value::from(grace_window_seconds.max(0)),
@@ -3150,9 +3155,15 @@ fn merge_post_submit_submission_snapshot(
         .unwrap_or(0);
     if client_final_seq > 0 {
         let replay_incomplete = server_accepted_through_seq < client_final_seq;
-        final_flush.insert("replayIncomplete".to_owned(), Value::Bool(replay_incomplete));
+        final_flush.insert(
+            "replayIncomplete".to_owned(),
+            Value::Bool(replay_incomplete),
+        );
         if !replay_incomplete {
-            final_flush.insert("replayCompletedAt".to_owned(), Value::String(now.to_rfc3339()));
+            final_flush.insert(
+                "replayCompletedAt".to_owned(),
+                Value::String(now.to_rfc3339()),
+            );
         }
     }
     merged.insert("finalFlush".to_owned(), Value::Object(final_flush));

@@ -515,13 +515,11 @@ pub async fn student_entry(
                 poll_after_ms: 1500,
                 queued_at: row.created_at,
             };
-            return Ok(
-                (
-                    StatusCode::ACCEPTED,
-                    ApiResponse::success_with_request_id(payload, request_id.0),
-                )
-                    .into_response(),
-            );
+            return Ok((
+                StatusCode::ACCEPTED,
+                ApiResponse::success_with_request_id(payload, request_id.0),
+            )
+                .into_response());
         }
     } else if state.config.storm_admission_enabled {
         let queue_key = format!("{schedule_id}:{normalized_wcode}");
@@ -589,13 +587,11 @@ pub async fn student_entry(
             poll_after_ms: 1500,
             queued_at: row.created_at,
         };
-        return Ok(
-            (
-                StatusCode::ACCEPTED,
-                ApiResponse::success_with_request_id(payload, request_id.0),
-            )
-                .into_response(),
-        );
+        return Ok((
+            StatusCode::ACCEPTED,
+            ApiResponse::success_with_request_id(payload, request_id.0),
+        )
+            .into_response());
     }
 
     let auth_service = AuthService::new(state.db_pool(), state.config.clone());
@@ -664,13 +660,11 @@ pub async fn student_entry(
         &issued.response.csrf_token,
     );
 
-    Ok(
-        (
-            jar,
-            ApiResponse::success_with_request_id(issued.response, request_id.0),
-        )
-            .into_response(),
+    Ok((
+        jar,
+        ApiResponse::success_with_request_id(issued.response, request_id.0),
     )
+        .into_response())
 }
 
 fn with_auth_cookies(
