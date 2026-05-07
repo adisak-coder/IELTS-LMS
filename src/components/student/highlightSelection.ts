@@ -161,9 +161,18 @@ const BLOCK_BOUNDARY_TAGS = new Set([
 ]);
 
 function selectionCrossesBlockBoundary(container: HTMLElement, range: Range): boolean {
-  const startBlock = findNearestBlockBoundary(container, range.startContainer);
-  const endBlock = findNearestBlockBoundary(container, range.endContainer);
-  return startBlock !== endBlock;
+  const segments = collectIntersectingTextSegments(container, range);
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const firstBlock = findNearestBlockBoundary(container, segments[0]!.textNode);
+  for (const segment of segments) {
+    if (findNearestBlockBoundary(container, segment.textNode) !== firstBlock) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function applyHighlightToClonedRange(
@@ -218,35 +227,44 @@ function applySplitRangeHighlight(
   range: Range,
   highlightClassName: string,
 ): boolean {
-  const textNodes: Text[] = [];
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  let currentNode = walker.nextNode();
-  while (currentNode) {
-    if (
-      currentNode.nodeType === Node.TEXT_NODE &&
-      currentNode.textContent &&
-      currentNode.textContent.length > 0 &&
-      range.intersectsNode(currentNode)
-    ) {
-      textNodes.push(currentNode as Text);
-    }
-    currentNode = walker.nextNode();
-  }
-
+  const segments = collectIntersectingTextSegments(container, range);
   let didApplyHighlight = false;
-  for (const textNode of textNodes) {
-    const offsets = getTextNodeSelectionOffsets(range, textNode);
-    if (!offsets) {
-      continue;
-    }
-
-    const { startOffset, endOffset } = offsets;
-    if (wrapTextNodeSegment(textNode, startOffset, endOffset, highlightClassName)) {
+  for (const segment of segments) {
+    if (wrapTextNodeSegment(segment.textNode, segment.startOffset, segment.endOffset, highlightClassName)) {
       didApplyHighlight = true;
     }
   }
 
   return didApplyHighlight;
+}
+
+function collectIntersectingTextSegments(
+  container: HTMLElement,
+  range: Range,
+): Array<{ textNode: Text; startOffset: number; endOffset: number }> {
+  const segments: Array<{ textNode: Text; startOffset: number; endOffset: number }> = [];
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+  let currentNode = walker.nextNode();
+  while (currentNode) {
+    const textNode = currentNode as Text;
+    if (
+      textNode.textContent &&
+      textNode.textContent.length > 0 &&
+      range.intersectsNode(textNode)
+    ) {
+      const offsets = getTextNodeSelectionOffsets(range, textNode);
+      if (offsets) {
+        segments.push({
+          textNode,
+          startOffset: offsets.startOffset,
+          endOffset: offsets.endOffset,
+        });
+      }
+    }
+    currentNode = walker.nextNode();
+  }
+
+  return segments;
 }
 
 function getTextNodeSelectionOffsets(
