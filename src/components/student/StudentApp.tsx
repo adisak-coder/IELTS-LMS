@@ -1238,6 +1238,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             security={examState.config.security}
             showSubmitButton={showSubmitControls}
             tabletMode={tabletMode}
+            registerLiveWritingAnswer={registerLiveWritingAnswer}
           />
         ) : null}
         {runtimeState.currentModule === 'speaking' ? (

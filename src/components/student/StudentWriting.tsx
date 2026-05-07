@@ -28,6 +28,7 @@ interface StudentWritingProps {
   studentId?: string | undefined;
   showSubmitButton?: boolean | undefined;
   tabletMode?: boolean | undefined;
+  registerLiveWritingAnswer?: ((taskId: string, text: string) => void) | undefined;
 }
 
 export function StudentWriting({
@@ -45,6 +46,7 @@ export function StudentWriting({
   studentId,
   showSubmitButton = true,
   tabletMode = false,
+  registerLiveWritingAnswer,
 }: StudentWritingProps) {
   const isTabletMode = Boolean(tabletMode);
   const attemptContext = useOptionalStudentAttempt();
