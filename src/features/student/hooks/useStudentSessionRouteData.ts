@@ -20,6 +20,12 @@ import {
   emitStudentObservabilityMetric,
   withStudentObservabilityDimensions,
 } from '../../../utils/studentObservability';
+import {
+  compareFreshnessDimension,
+  extractLiveSnapshotFreshness,
+  mergeLiveSnapshotFreshness,
+  type LiveSnapshotFreshness,
+} from '../liveSnapshotFreshness';
 
 const PROFILE_STORAGE_PREFIX = 'ielts-student-profile:';
 const LIVE_SESSION_STATUS_CODE = 200;
@@ -62,6 +68,18 @@ function buildDefaultAnswerInvariantRollout(): StudentAnswerInvariantRollout {
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+function parseFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function parseIsoTimestampMs(value: unknown): number | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function parseNullableBoolean(value: unknown): boolean | null {
@@ -172,6 +190,42 @@ interface StudentSessionRouteData {
   state: ExamState | null;
   refreshRuntime: () => Promise<void>;
   retry: () => Promise<void>;
+}
+
+function buildLiveMetricEndpoint(scheduleId: string) {
+  return `/v1/student/sessions/${scheduleId}/live`;
+}
+
+function extractAttemptSyncState(live: unknown): string {
+  const record = asRecord(live);
+  const attempt = record ? asRecord(record['attempt']) : null;
+  const recovery = attempt ? asRecord(attempt['recovery']) : null;
+  const syncState = recovery ? recovery['syncState'] : null;
+  return typeof syncState === 'string' && syncState.trim().length > 0 ? syncState : 'idle';
+}
+
+function resolveAnswerInvariantRollout(live: unknown): StudentAnswerInvariantRollout {
+  const runtime = asRecord(asRecord(live)?.['runtime']);
+  if (!runtime) {
+    return buildDefaultAnswerInvariantRollout();
+  }
+
+  const enabled = parseNullableBoolean(runtime['localWriterAnswerInvariantEnabled']);
+  const killSwitch = parseNullableBoolean(runtime['localWriterAnswerInvariantKillSwitch']);
+  const cohort = parseNullableString(runtime['localWriterAnswerInvariantCohort']);
+  const configFingerprint = parseNullableString(runtime['localWriterAnswerInvariantConfigFingerprint']);
+
+  if (enabled === null && killSwitch === null && cohort === null && configFingerprint === null) {
+    return buildDefaultAnswerInvariantRollout();
+  }
+
+  return {
+    enabled: enabled ?? (getEnvBoolean(ANSWER_INVARIANT_ENV_ENABLED) ?? true),
+    killSwitch: killSwitch ?? (getEnvBoolean(ANSWER_INVARIANT_ENV_KILL_SWITCH) ?? false),
+    cohort,
+    configFingerprint,
+    source: 'runtime',
+  };
 }
 
 type DiagramSnapshotIssue = {
@@ -749,6 +803,15 @@ export function useStudentSessionRouteData(
         ...version.contentSnapshot,
         config: version.configSnapshot,
       } satisfies ExamState);
+
+      let loadedStatic: LoadedStaticSnapshot = {
+        examState,
+        scheduleEntity,
+        versionId: version.id,
+      };
+      setSchedule(scheduleEntity);
+      setState(examState);
+      staticVersionIdRef.current = version.id;
 
       let live = await backendGet<BackendLiveSession>(buildBackendLiveSessionEndpoint(scheduleId, candidateId));
       const reloadedStatic = await maybeRebootstrapStaticOnVersionMismatch(live);
