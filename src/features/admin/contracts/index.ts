@@ -18,13 +18,7 @@ import {
 /**
  * Admin navigation modes
  */
-export type AdminView =
-  | 'exams'
-  | 'scheduling'
-  | 'grading'
-  | 'results'
-  | 'save-lifecycle'
-  | 'settings';
+export type AdminView = 'exams' | 'scheduling' | 'grading' | 'results' | 'settings';
 
 /**
  * Props passed to AdminRoot from parent (AppShell or router)

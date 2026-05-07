@@ -67,54 +67,6 @@ fn header_string(headers: &HeaderMap, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-async fn write_student_save_lifecycle_event(
-    state: &AppState,
-    schedule_id: Uuid,
-    attempt_id: &str,
-    stage: &str,
-    status: &str,
-    cycle_id: Option<&str>,
-    requested_mutation_count: Option<i64>,
-    applied_mutation_count: Option<i64>,
-    server_accepted_through_seq: Option<i64>,
-    duration_ms: Option<i64>,
-    error_message: Option<&str>,
-) {
-    let pool = state.db_pool();
-    let _ = sqlx::query(
-        r#"
-        INSERT INTO student_save_lifecycle_events (
-            id,
-            schedule_id,
-            attempt_id,
-            stage,
-            status,
-            cycle_id,
-            requested_mutation_count,
-            applied_mutation_count,
-            server_accepted_through_seq,
-            duration_ms,
-            error_message,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-        "#,
-    )
-    .bind(Uuid::new_v4().to_string())
-    .bind(schedule_id.to_string())
-    .bind(attempt_id)
-    .bind(stage)
-    .bind(status)
-    .bind(cycle_id)
-    .bind(requested_mutation_count)
-    .bind(applied_mutation_count)
-    .bind(server_accepted_through_seq)
-    .bind(duration_ms)
-    .bind(error_message)
-    .execute(&pool)
-    .await;
-}
-
 pub async fn get_student_session(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
@@ -600,20 +552,6 @@ pub async fn apply_mutation_batch(
                 flush_cycle_id = flush_cycle_id.as_deref().unwrap_or("missing"),
                 error = %err
             );
-            write_student_save_lifecycle_event(
-                &state,
-                schedule_id,
-                &attempt_id,
-                "flush",
-                "failed",
-                flush_cycle_id.as_deref(),
-                Some(requested_mutation_count as i64),
-                None,
-                None,
-                None,
-                Some(&err.to_string()),
-            )
-            .await;
             return Err(err.into());
         }
     };
@@ -647,20 +585,6 @@ pub async fn apply_mutation_batch(
             server_accepted_through_seq = result.server_accepted_through_seq,
             duration_ms = duration.as_millis() as u64
         );
-        write_student_save_lifecycle_event(
-            &state,
-            schedule_id,
-            &attempt_id,
-            "flush",
-            "succeeded",
-            flush_cycle_id.as_deref(),
-            Some(requested_mutation_count as i64),
-            Some(result.applied_mutation_count as i64),
-            Some(result.server_accepted_through_seq),
-            Some(duration.as_millis() as i64),
-            None,
-        )
-        .await;
     }
 
     if contains_violation {
@@ -1065,20 +989,6 @@ pub async fn submit_student_session(
                 submit_cycle_id = submit_cycle_id.as_deref().unwrap_or("missing"),
                 error = %err
             );
-            write_student_save_lifecycle_event(
-                &state,
-                schedule_id,
-                &attempt_id,
-                "submit",
-                "failed",
-                submit_cycle_id.as_deref(),
-                None,
-                None,
-                None,
-                None,
-                Some(&err.to_string()),
-            )
-            .await;
             return Err(err.into());
         }
     };
@@ -1102,20 +1012,6 @@ pub async fn submit_student_session(
             submit_cycle_id = submit_cycle_id.as_deref().unwrap_or("missing"),
             duration_ms = duration.as_millis() as u64
         );
-        write_student_save_lifecycle_event(
-            &state,
-            schedule_id,
-            &attempt_id,
-            "submit",
-            "succeeded",
-            submit_cycle_id.as_deref(),
-            None,
-            None,
-            None,
-            Some(duration.as_millis() as i64),
-            None,
-        )
-        .await;
     }
     Ok(ApiResponse::success_with_request_id(
         submission,

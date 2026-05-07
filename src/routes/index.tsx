@@ -46,11 +46,6 @@ const AdminSettingsRoute = lazy(() =>
     default: module.SettingsRoute,
   })),
 );
-const AdminSaveLifecycleRoute = lazy(() =>
-  import('../features/admin/routes/SaveLifecycleRoute').then((module) => ({
-    default: module.SaveLifecycleRoute,
-  })),
-);
 const AdminAnswerHistoryRoute = lazy(() =>
   import('../features/answer-history/routes/AnswerHistoryRoute').then((module) => ({
     default: module.AdminAnswerHistoryRoute,
@@ -215,14 +210,6 @@ export const appRoutes = [
                 <AdminSettingsRoute />
               </Suspense>
             ), ['admin', 'builder']),
-          },
-          {
-            path: 'save-lifecycle',
-            element: withAuth((
-              <Suspense fallback={<RouteLoadingFallback />}>
-                <AdminSaveLifecycleRoute />
-              </Suspense>
-            ), ['admin']),
           },
           {
             path: 'answer-history/:submissionId',

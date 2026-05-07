@@ -136,7 +136,6 @@ pub fn build_router(state: AppState) -> Router {
             "/api/v1/proctor",
             Router::new()
                 .route("/sessions", get(proctor::list_sessions))
-                .route("/save-lifecycle", get(proctor::list_save_lifecycle_events))
                 .route("/sessions/:schedule_id", get(proctor::get_session))
                 .route(
                     "/sessions/:schedule_id/presence",

@@ -30,6 +30,7 @@ import { stripBoldMarkdown } from '../../utils/boldMarkdown';
 import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
+import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 
 interface QuestionRendererProps {
   question:
@@ -45,7 +46,7 @@ interface QuestionRendererProps {
   block: QuestionBlock;
   number: number;
   answer: QuestionAnswer;
-  onChange: (val: QuestionAnswer) => void;
+  onChange: (val: QuestionAnswer, meta?: StudentAnswerMutationMeta) => void;
   isFlagged?: boolean | undefined;
   isActive?: boolean | undefined;
   slotIds?: string[] | undefined;
@@ -121,11 +122,17 @@ export function QuestionRenderer({
     );
   };
 
-  const updateIndexedAnswer = (index: number, value: string, total: number) => {
+  const updateIndexedAnswer = (index: number, value: string, total: number, slotId?: string) => {
     const next = Array.from({ length: total }, (_, candidateIndex) =>
       candidateIndex === index ? value : (stringArrayAnswer[candidateIndex] ?? ''),
     );
-    onChange(next);
+    onChange(next, {
+      slotIndex: index,
+      slotId,
+      slotCount: total,
+      slotValue: value,
+      interactionType: 'typing',
+    });
   };
 
   const renderTextField = (
@@ -474,7 +481,9 @@ export function QuestionRenderer({
                     type="text"
                     name={getSlotId(index, `${q.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
-                    onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
+                    onChange={(event) =>
+                      updateIndexedAnswer(index, event.target.value, blanks, getSlotId(index, `${q.id}:${index}`))
+                    }
                     className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
@@ -516,7 +525,14 @@ export function QuestionRenderer({
                     type="text"
                     name={getSlotId(index, `${noteQuestion.id}:${index}`)}
                     value={stringArrayAnswer[index] ?? ''}
-                    onChange={(event) => updateIndexedAnswer(index, event.target.value, blanks)}
+                    onChange={(event) =>
+                      updateIndexedAnswer(
+                        index,
+                        event.target.value,
+                        blanks,
+                        getSlotId(index, `${noteQuestion.id}:${index}`),
+                      )
+                    }
                     className={`rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'w-28'} ${tabletMode && !isCompactPane ? 'max-w-full' : ''}`}
                     placeholder="Answer..."
                     security={security}
@@ -542,7 +558,13 @@ export function QuestionRenderer({
             getSlotId(index, `${diagramBlock.id}:${label.id}`),
             number + index,
             stringArrayAnswer[index] ?? '',
-            (nextValue) => updateIndexedAnswer(index, nextValue, diagramBlock.labels.length),
+            (nextValue) =>
+              updateIndexedAnswer(
+                index,
+                nextValue,
+                diagramBlock.labels.length,
+                getSlotId(index, `${diagramBlock.id}:${label.id}`),
+              ),
             `Label ${index + 1}`,
           )}
         </React.Fragment>
@@ -592,7 +614,13 @@ export function QuestionRenderer({
           getSlotId(index, `${flowChartBlock.id}:${step.id}`),
           number + index,
           stringArrayAnswer[index] ?? '',
-          (nextValue) => updateIndexedAnswer(index, nextValue, flowChartBlock.steps.length),
+          (nextValue) =>
+            updateIndexedAnswer(
+              index,
+              nextValue,
+              flowChartBlock.steps.length,
+              getSlotId(index, `${flowChartBlock.id}:${step.id}`),
+            ),
           step.label,
         ),
       )}
@@ -677,7 +705,7 @@ export function QuestionRenderer({
                             name={slot.slotId}
                             value={stringArrayAnswer[slot.index] ?? ''}
                             onChange={(event) =>
-                              updateIndexedAnswer(slot.index, event.target.value, tableBlock.cells.length)
+                              updateIndexedAnswer(slot.index, event.target.value, tableBlock.cells.length, slot.slotId)
                             }
                             className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
                             placeholder="Enter answer..."
@@ -715,7 +743,14 @@ export function QuestionRenderer({
                 <div className={isCompactPane ? 'flex w-full flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
-                    onChange={(event) => updateIndexedAnswer(index, event.target.value, classificationBlock.items.length)}
+                    onChange={(event) =>
+                      updateIndexedAnswer(
+                        index,
+                        event.target.value,
+                        classificationBlock.items.length,
+                        slotId,
+                      )
+                    }
                     className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Category selection for question ${number + index}`}
                   >
@@ -751,7 +786,14 @@ export function QuestionRenderer({
                 <div className={isCompactPane ? 'flex w-full flex-col items-stretch gap-2' : 'flex items-center gap-3'}>
                   <select
                     value={typeof stringArrayAnswer[index] === 'string' ? stringArrayAnswer[index] : ''}
-                    onChange={(event) => updateIndexedAnswer(index, event.target.value, matchingFeaturesBlock.features.length)}
+                    onChange={(event) =>
+                      updateIndexedAnswer(
+                        index,
+                        event.target.value,
+                        matchingFeaturesBlock.features.length,
+                        slotId,
+                      )
+                    }
                     className={`rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 ${isCompactPane ? 'w-full min-w-0' : 'min-w-[11rem]'}`}
                     aria-label={`Matching selection for question ${number + index}`}
                   >

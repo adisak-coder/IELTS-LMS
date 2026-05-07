@@ -156,6 +156,50 @@ describe('student question experience', () => {
     expect(answerInput).not.toHaveClass('text-sm');
   });
 
+  it('emits slot metadata for table completion edits so shared answer keys persist per question slot', () => {
+    const onChange = vi.fn();
+    const block: TableCompletionBlock = {
+      id: 'table-meta',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Metric', 'Value'],
+      rows: [
+        ['Temperature', ''],
+        ['Humidity', ''],
+      ],
+      cells: [
+        { id: 'cell-1', row: 0, col: 1, correctAnswer: 'Warm' },
+        { id: 'cell-2', row: 1, col: 1, correctAnswer: 'High' },
+      ],
+      answerRule: 'ONE_WORD',
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={11}
+        answer={['', '']}
+        onChange={onChange}
+        slotIds={['table-meta:cell-1', 'table-meta:cell-2']}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Answer for question 12' }), {
+      target: { value: 'HIGH' },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith(
+      ['', 'HIGH'],
+      expect.objectContaining({
+        slotIndex: 1,
+        slotId: 'table-meta:cell-2',
+        slotCount: 2,
+        slotValue: 'HIGH',
+      }),
+    );
+  });
+
   it('does not show decorative option tags for matching feature questions', () => {
     const block: MatchingFeaturesBlock = {
       id: 'features-1',
@@ -385,7 +429,15 @@ describe('student question experience', () => {
       target: { value: 'wheel' },
     });
 
-    expect(onChange).toHaveBeenCalledWith(['existing', 'wheel']);
+    expect(onChange).toHaveBeenCalledWith(
+      ['existing', 'wheel'],
+      expect.objectContaining({
+        slotIndex: 1,
+        slotId: 'diagram-1:label-b',
+        slotCount: 2,
+        slotValue: 'wheel',
+      }),
+    );
   });
 
   it('shows diagram-labeling fallback fields with label prompts', () => {
@@ -584,6 +636,85 @@ describe('student question experience', () => {
     const readingHighlighter = container.querySelector('[data-student-highlightable="true"]');
     expect(readingHighlighter).not.toBeNull();
     expect(readingHighlighter).toHaveClass('student-accessible-table-typography');
+  });
+
+  it('routes table completion changes through student reading with shared answer key slot metadata', () => {
+    const onAnswerChange = vi.fn();
+    const state = {
+      title: 'Reading Test',
+      type: 'Academic',
+      activeModule: 'reading',
+      activePassageId: 'passage-1',
+      activeListeningPartId: 'part-1',
+      config: {
+        type: 'Academic',
+        delivery: {
+          launchMode: 'proctor_start',
+          transitionMode: 'auto_with_proctor_override',
+          allowedExtensionMinutes: [5],
+        },
+        sections: {
+          listening: { enabled: false, order: 1, duration: 30, autoContinue: true, allowedQuestionTypes: ['TABLE_COMPLETION'] },
+          reading: { enabled: true, order: 2, duration: 60, autoContinue: true, allowedQuestionTypes: ['TABLE_COMPLETION'] },
+          writing: { enabled: false, order: 3, duration: 60, autoContinue: true, allowedQuestionTypes: ['TABLE_COMPLETION'] },
+          speaking: { enabled: false, order: 4, duration: 15, autoContinue: true, allowedQuestionTypes: ['TABLE_COMPLETION'] },
+        },
+      },
+      reading: {
+        passages: [
+          {
+            id: 'passage-1',
+            title: 'Passage 1',
+            content: 'Complete the table.',
+            images: [],
+            blocks: [
+              {
+                id: 'table-block-1',
+                type: 'TABLE_COMPLETION',
+                instruction: 'Fill the blanks.',
+                headers: ['A', 'B'],
+                rows: [
+                  ['x', ''],
+                  ['y', ''],
+                ],
+                cells: [
+                  { id: 'cell-1', row: 0, col: 1, correctAnswer: 'ONE' },
+                  { id: 'cell-2', row: 1, col: 1, correctAnswer: 'TWO' },
+                ],
+                answerRule: 'ONE_WORD',
+              },
+            ],
+          },
+        ],
+      },
+      listening: { parts: [] },
+      writing: { task1Prompt: '', task2Prompt: '' },
+      speaking: { part1Topics: [], cueCard: '', part3Discussion: [] },
+    } as ExamState;
+
+    render(
+      <StudentReading
+        state={state}
+        answers={{ 'table-block-1': ['', ''] }}
+        onAnswerChange={onAnswerChange}
+        currentQuestionId="table-block-1:cell-2"
+        onNavigate={() => {}}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Answer for question 2' }), {
+      target: { value: 'TWO' },
+    });
+
+    expect(onAnswerChange).toHaveBeenLastCalledWith(
+      'table-block-1',
+      ['', 'TWO'],
+      expect.objectContaining({
+        slotIndex: 1,
+        slotId: 'table-block-1:cell-2',
+        slotCount: 2,
+      }),
+    );
   });
 
   it('keeps reading split-screen side by side in tablet mode with simple highlight guidance', () => {

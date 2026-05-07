@@ -107,7 +107,9 @@ export function StudentListening({
 }: StudentListeningProps) {
   const resolveSharedAnswerMeta = (
     value: QuestionAnswer,
+    slotId: string | undefined,
     defaultEntryAnswerIndex: number | undefined,
+    slotCount: number,
     incomingMeta?: StudentAnswerMutationMeta,
   ): StudentAnswerMutationMeta | undefined => {
     if (incomingMeta?.slotIndex !== undefined || typeof defaultEntryAnswerIndex !== 'number') {
@@ -120,7 +122,10 @@ export function StudentListening({
     return {
       ...incomingMeta,
       slotIndex: defaultEntryAnswerIndex,
+      slotId,
+      slotCount,
       slotValue: value,
+      interactionType: 'typing',
     };
   };
 
@@ -581,7 +586,13 @@ export function StudentListening({
                                 onAnswerChange(
                                   firstEntry?.answerKey ?? q.id,
                                   val,
-                                  resolveSharedAnswerMeta(val, firstEntry?.answerIndex, meta),
+                                  resolveSharedAnswerMeta(
+                                    val,
+                                    firstEntry?.id,
+                                    firstEntry?.answerIndex,
+                                    questionEntries.length,
+                                    meta,
+                                  ),
                                 )
                               }
                               registerLiveAnswer={({ value }) =>
