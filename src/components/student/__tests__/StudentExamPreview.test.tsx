@@ -59,4 +59,83 @@ describe('StudentExamPreview', () => {
     expect(shell.style.fontSize).not.toBe(initialFontSize);
     expect(shell.style.fontSize).toContain('clamp');
   });
+
+  it('keeps long objective typing in preview without clearing the value', () => {
+    const state = createExamState();
+    state.activeModule = 'listening';
+    state.activeListeningPartId = 'part-1';
+    state.listening.parts = [
+      {
+        id: 'part-1',
+        title: 'Part 1',
+        audioUrl: '',
+        transcript: '',
+        pins: [],
+        blocks: [
+          {
+            id: 'short-1',
+            type: 'SHORT_ANSWER',
+            instruction: 'Answer the question.',
+            questions: [{ id: 'q-1', prompt: 'Name?', correctAnswer: 'Alice' }],
+            answerRule: 'ONE_WORD',
+          },
+        ],
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <StudentExamPreview state={state} examId="exam-1" initialModule="listening" />
+      </MemoryRouter>,
+    );
+
+    const input = screen.getByRole('textbox', { name: /answer for question 1/i }) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: 'abcdefghijklmnop' } });
+    expect(input.value).toBe('abcdefghijklmnop');
+  });
+
+  it('preserves sibling slot values in preview during slot-targeted updates', () => {
+    const state = createExamState();
+    state.activeModule = 'reading';
+    state.activePassageId = 'passage-1';
+    state.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Sample',
+        blocks: [
+          {
+            id: 'table-1',
+            type: 'TABLE_COMPLETION',
+            instruction: 'Complete the table.',
+            headers: ['A', 'B'],
+            rows: [
+              ['x', ''],
+              ['y', ''],
+            ],
+            cells: [
+              { id: 'cell-1', row: 0, col: 1, correctAnswer: 'one' },
+              { id: 'cell-2', row: 1, col: 1, correctAnswer: 'two' },
+            ],
+            answerRule: 'ONE_WORD',
+          },
+        ],
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <StudentExamPreview state={state} examId="exam-1" initialModule="reading" />
+      </MemoryRouter>,
+    );
+
+    const q1Input = screen.getByRole('textbox', { name: /answer for question 1/i }) as HTMLInputElement;
+    const q2Input = screen.getByRole('textbox', { name: /answer for question 2/i }) as HTMLInputElement;
+
+    fireEvent.change(q1Input, { target: { value: 'ONE' } });
+    fireEvent.change(q2Input, { target: { value: 'TWO' } });
+
+    expect(q1Input.value).toBe('ONE');
+    expect(q2Input.value).toBe('TWO');
+  });
 });

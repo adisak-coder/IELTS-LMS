@@ -7,6 +7,7 @@ import {
   type StudentQuestionDescriptor,
 } from '@services/examAdapterService';
 import type { ExamState, ModuleType, QuestionAnswer } from '../../types';
+import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { AccessibilitySettings } from './AccessibilitySettings';
 import { QuestionNavigator } from './QuestionNavigator';
 import { StudentFooter } from './StudentFooter';
@@ -180,11 +181,55 @@ function StudentExamPreviewInner({
     uiActions.setShowNavigator(false);
   };
 
-  const handleAnswerChange = (answerKey: string, answer: QuestionAnswer) => {
-    setAnswers((current) => ({
-      ...current,
-      [answerKey]: answer,
-    }));
+  const handleAnswerChange = (
+    answerKey: string,
+    answer: QuestionAnswer,
+    meta?: StudentAnswerMutationMeta,
+  ) => {
+    setAnswers((current) => {
+      const hasSlotIntent =
+        typeof meta?.slotIndex === 'number' &&
+        Number.isInteger(meta.slotIndex) &&
+        meta.slotIndex >= 0;
+
+      if (!hasSlotIntent) {
+        return {
+          ...current,
+          [answerKey]: answer,
+        };
+      }
+
+      const slotIndex = meta.slotIndex as number;
+      const currentValue = current[answerKey];
+      const currentSlots = Array.isArray(currentValue) ? currentValue : [];
+      const requestedSlotCount =
+        typeof meta?.slotCount === 'number' &&
+        Number.isInteger(meta.slotCount) &&
+        meta.slotCount > 0
+          ? meta.slotCount
+          : currentSlots.length;
+      const nextSlotCount = Math.max(requestedSlotCount, currentSlots.length, slotIndex + 1);
+      const nextSlots = Array.from({ length: nextSlotCount }, (_, index) => currentSlots[index] ?? '');
+
+      let nextSlotValue = typeof meta?.slotValue === 'string' ? meta.slotValue : '';
+      if (nextSlotValue === '' && Array.isArray(answer)) {
+        const candidate = answer[slotIndex];
+        nextSlotValue = typeof candidate === 'string' ? candidate : '';
+      } else if (nextSlotValue === '' && typeof answer === 'string') {
+        nextSlotValue = answer;
+      } else if (nextSlotValue === '' && (answer === null || answer === undefined)) {
+        nextSlotValue = '';
+      } else if (nextSlotValue === '') {
+        nextSlotValue = String(answer);
+      }
+
+      nextSlots[slotIndex] = nextSlotValue;
+
+      return {
+        ...current,
+        [answerKey]: nextSlots,
+      };
+    });
   };
 
   const handleFlagToggle = (slotId: string) => {
