@@ -143,11 +143,12 @@ export function StudentFooter({
                     const isFlagged = root.members.some((member) => Boolean(flags[member.id]));
                     const isAnswered = root.members.some((member) => isQuestionAnswered(member, answers));
                     const displayLabel = String(root.rootNumber);
+                    const targetQuestionId = root.representative.id;
 
                     return (
                       <button
-                        key={question.id}
-                        onClick={() => onNavigate(question.id)}
+                        key={targetQuestionId}
+                        onClick={() => onNavigate(targetQuestionId)}
                         className={`relative text-[length:var(--student-chip-font-size)] flex items-center justify-center min-w-[1.6rem] md:min-w-[1.8rem] lg:min-w-[2rem] h-6 md:h-7 lg:h-8 px-1 md:px-1.5 rounded-sm font-bold border ${
                           isCurrent
                             ? 'bg-blue-800 border-blue-800 text-white'
