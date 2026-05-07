@@ -26,6 +26,7 @@ import type {
 import type { ExamSchedule, ExamSessionRuntime } from '../../../types/domain';
 import type { ProctorPresence } from '../../../types/domain';
 import type { ProctorScheduleMetrics } from '../contracts';
+import { isPreviewRuntimeCohortName } from '@builder/services/previewRuntimeSessionService';
 
 function mapBackendSessionSummary(payload: {
   attemptId: string;
@@ -290,7 +291,14 @@ export function useProctorRouteController(): ProctorRouteController {
 
   const applyMonitoringState = useCallback(
     (nextSummaries: typeof summaries, details: ProctorSessionDetailPayload[]) => {
-      if (nextSummaries.length === 0) {
+      const filteredSummaries = nextSummaries.filter(
+        (summary) => !isPreviewRuntimeCohortName(summary.schedule.cohortName),
+      );
+      const filteredDetails = details.filter(
+        (detail) => !isPreviewRuntimeCohortName(detail.schedule.cohortName),
+      );
+
+      if (filteredSummaries.length === 0) {
         scheduleStudentIdsRef.current.clear();
         setSchedules([]);
         setRuntimeSnapshots([]);
@@ -306,7 +314,7 @@ export function useProctorRouteController(): ProctorRouteController {
       }
 
       const metrics: Record<string, ProctorScheduleMetrics> = {};
-      for (const summary of nextSummaries) {
+      for (const summary of filteredSummaries) {
         metrics[summary.schedule.id] = {
           studentCount: summary.studentCount ?? 0,
           activeCount: summary.activeCount ?? 0,
@@ -316,18 +324,18 @@ export function useProctorRouteController(): ProctorRouteController {
         };
       }
 
-      const degradedMode = nextSummaries.some((summary) => summary.degradedLiveMode);
+      const degradedMode = filteredSummaries.some((summary) => summary.degradedLiveMode);
       setSummaryPollIntervalMs(degradedMode ? 2_000 : 4_000);
       setDetailPollIntervalMs(degradedMode ? 3_000 : 6_000);
       setScheduleMetrics(metrics);
-      setSchedules(nextSummaries.map((summary) => mapBackendSchedule(summary.schedule)));
+      setSchedules(filteredSummaries.map((summary) => mapBackendSchedule(summary.schedule)));
       setRuntimeSnapshots(
-        nextSummaries.map((summary) =>
+        filteredSummaries.map((summary) =>
           mapBackendRuntime(summary.runtime, mapBackendSchedule(summary.schedule)),
         ),
       );
 
-      for (const detail of details) {
+      for (const detail of filteredDetails) {
         const scheduleId = detail.schedule.id;
         scheduleStudentIdsRef.current.set(
           scheduleId,
@@ -337,7 +345,7 @@ export function useProctorRouteController(): ProctorRouteController {
 
       setRuntimeSnapshots((current) => {
         const bySchedule = new Map(current.map((runtime) => [runtime.scheduleId, runtime]));
-        for (const detail of details) {
+        for (const detail of filteredDetails) {
           const schedule = mapBackendSchedule(detail.schedule);
           bySchedule.set(detail.schedule.id, {
             ...mapBackendRuntime(detail.runtime, schedule),
@@ -348,21 +356,21 @@ export function useProctorRouteController(): ProctorRouteController {
       });
 
       setSessions(
-        details
+        filteredDetails
           .flatMap((detail) => detail.sessions)
           .map(mapBackendSessionSummary)
           .sort(sortSessionsByLastActivity),
       );
       setAlerts(
-        details
+        filteredDetails
           .flatMap((detail) => detail.alerts)
           .map(mapBackendAlert)
           .sort(sortAlertsByTimestamp),
       );
-      setAuditLogs(details.flatMap((detail) => detail.auditLogs).map(mapBackendAuditLog));
-      setNotes(details.flatMap((detail) => detail.notes).map(mapBackendNote));
+      setAuditLogs(filteredDetails.flatMap((detail) => detail.auditLogs).map(mapBackendAuditLog));
+      setNotes(filteredDetails.flatMap((detail) => detail.notes).map(mapBackendNote));
       setViolationRules(
-        details.flatMap((detail) => detail.violationRules).map(mapBackendViolationRule),
+        filteredDetails.flatMap((detail) => detail.violationRules).map(mapBackendViolationRule),
       );
     },
     [],

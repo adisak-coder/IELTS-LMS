@@ -1,11 +1,16 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ErrorSurface, LoadingSurface } from '@components/ui';
 import { StudentAppWrapper } from '@components/student/StudentAppWrapper';
 import { useBuilderRouteController } from '@builder/hooks/useBuilderRouteController';
-import { getEnabledModules, getFirstQuestionIdForModule } from '@services/examAdapterService';
-import type { StudentAttempt } from '../../../types/studentAttempt';
-import type { ExamState, ModuleType } from '../../../types';
+import { getEnabledModules } from '@services/examAdapterService';
+import { useAuthSession } from '../../auth/authSession';
+import { useStudentSessionRouteData } from '@student/hooks/useStudentSessionRouteData';
+import {
+  resolvePreviewRuntimeSession,
+  type PreviewRuntimeSession,
+} from '../services/previewRuntimeSessionService';
+import type { ModuleType } from '../../../types';
 
 const MODULE_KEYS: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'];
 
@@ -13,7 +18,10 @@ export function ExamPreviewRoute() {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [previewRevision, setPreviewRevision] = useState(0);
+  const { session } = useAuthSession();
+  const [previewSession, setPreviewSession] = useState<PreviewRuntimeSession | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(false);
 
   const requestedModule = useMemo<ModuleType | null>(() => {
     const raw = searchParams.get('module');
@@ -57,59 +65,85 @@ export function ExamPreviewRoute() {
     );
   }
 
-  const enabledModules = getEnabledModules(controller.state.config);
+  if (!controller.exam) {
+    return (
+      <ErrorSurface
+        title="Preview unavailable"
+        description="Exam metadata not found."
+      />
+    );
+  }
+
+  if (!session?.user?.id) {
+    return (
+      <ErrorSurface
+        title="Preview unavailable"
+        description="Author session not available."
+      />
+    );
+  }
+
+  const resolvedExam = controller.exam;
+  const resolvedState = controller.state;
+  const resolvedAuthorUserId = session.user.id;
+
+  const enabledModules = getEnabledModules(resolvedState.config);
   const previewModule =
     requestedModule && enabledModules.includes(requestedModule)
       ? requestedModule
       : enabledModules[0] ?? 'reading';
-  const now = new Date().toISOString();
-  const attemptSnapshot: StudentAttempt = {
-    id: `preview-attempt:${examId}`,
-    scheduleId: `preview-schedule:${examId}`,
-    studentKey: `preview-student:${examId}`,
-    examId,
-    revision: null,
-    publishedVersionId: null,
-    examTitle: controller.state.title,
-    candidateId: '',
-    candidateName: 'Preview Candidate',
-    candidateEmail: 'preview@example.local',
-    phase: 'exam',
-    currentModule: previewModule,
-    currentQuestionId: getInitialQuestionId(controller.state, previewModule),
-    answers: {},
-    writingAnswers: {},
-    flags: {},
-    violations: [],
-    proctorStatus: 'active',
-    proctorNote: null,
-    proctorUpdatedAt: null,
-    proctorUpdatedBy: null,
-    lastWarningId: null,
-    lastAcknowledgedWarningId: null,
-    submittedAt: null,
-    integrity: {
-      preCheck: null,
-      deviceFingerprintHash: null,
-      clientSessionId: null,
-      lastDisconnectAt: null,
-      lastReconnectAt: null,
-      lastHeartbeatAt: null,
-      lastHeartbeatStatus: 'idle',
-    },
-    recovery: {
-      lastRecoveredAt: null,
-      lastLocalMutationAt: null,
-      lastPersistedAt: null,
-      lastDroppedMutations: null,
-      pendingMutationCount: 0,
-      serverAcceptedThroughSeq: 0,
-      clientSessionId: null,
-      syncState: 'idle',
-    },
-    createdAt: now,
-    updatedAt: now,
-  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    setSessionLoading(true);
+    setSessionError(null);
+    setPreviewSession(null);
+
+    void (async () => {
+      try {
+        const resolved = await resolvePreviewRuntimeSession({
+          exam: resolvedExam,
+          state: resolvedState,
+          authorUserId: resolvedAuthorUserId,
+          requestedModule,
+        });
+
+        if (cancelled) {
+          return;
+        }
+
+        if (resolved.module !== previewModule) {
+          const nextParams = new URLSearchParams(searchParams);
+          nextParams.set('module', resolved.module);
+          setSearchParams(nextParams, { replace: true });
+        }
+
+        setPreviewSession(resolved);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        setSessionError(error instanceof Error ? error.message : 'Failed to start preview runtime.');
+      } finally {
+        if (!cancelled) {
+          setSessionLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    resolvedAuthorUserId,
+    resolvedExam,
+    resolvedState,
+    previewModule,
+    requestedModule,
+    searchParams,
+    setSearchParams,
+  ]);
 
   const handleModuleChange = (nextModule: ModuleType) => {
     if (nextModule === previewModule) {
@@ -119,8 +153,83 @@ export function ExamPreviewRoute() {
     const nextParams = new URLSearchParams(searchParams);
     nextParams.set('module', nextModule);
     setSearchParams(nextParams, { replace: true });
-    setPreviewRevision((current) => current + 1);
   };
+
+  if (sessionLoading) {
+    return <LoadingSurface label="Starting runtime preview…" />;
+  }
+
+  if (sessionError) {
+    return (
+      <ErrorSurface
+        title="Preview session failed"
+        description={sessionError}
+      />
+    );
+  }
+
+  if (!previewSession) {
+    return <LoadingSurface label="Preparing preview session…" />;
+  }
+
+  return (
+    <RuntimePreviewSurface
+      examId={examId}
+      enabledModules={enabledModules}
+      previewModule={previewModule}
+      onModuleChange={handleModuleChange}
+      previewSession={previewSession}
+      onExit={() => navigate(`/builder/${examId}/builder`, { replace: true })}
+    />
+  );
+}
+
+function RuntimePreviewSurface({
+  examId,
+  enabledModules,
+  previewModule,
+  onModuleChange,
+  previewSession,
+  onExit,
+}: {
+  examId: string;
+  enabledModules: ModuleType[];
+  previewModule: ModuleType;
+  onModuleChange: (nextModule: ModuleType) => void;
+  previewSession: PreviewRuntimeSession;
+  onExit: () => void;
+}) {
+  const {
+    answerInvariantRollout,
+    attemptSnapshot,
+    error,
+    isLoading,
+    refreshRuntime,
+    runtimeSnapshot,
+    state,
+  } = useStudentSessionRouteData(previewSession.scheduleId, previewSession.studentId);
+
+  if (isLoading) {
+    return <LoadingSurface label="Loading runtime preview…" />;
+  }
+
+  if (error) {
+    return (
+      <ErrorSurface
+        title="Runtime preview failed"
+        description={error}
+      />
+    );
+  }
+
+  if (!state) {
+    return (
+      <ErrorSurface
+        title="Runtime preview unavailable"
+        description="Preview state not found."
+      />
+    );
+  }
 
   return (
     <>
@@ -130,7 +239,7 @@ export function ExamPreviewRoute() {
           <select
             aria-label="Preview section"
             value={previewModule}
-            onChange={(event) => handleModuleChange(event.target.value as ModuleType)}
+            onChange={(event) => onModuleChange(event.target.value as ModuleType)}
             className="ml-2 rounded-md border border-gray-200 bg-white px-2 py-1 text-xs font-semibold text-gray-800"
           >
             {enabledModules.map((module) => (
@@ -143,26 +252,18 @@ export function ExamPreviewRoute() {
       </div>
 
       <StudentAppWrapper
-        key={`preview-${examId}-${previewModule}-${previewRevision}`}
-        state={controller.state}
-        onExit={() => navigate(`/builder/${examId}/builder`, { replace: true })}
+        key={`preview-runtime-${examId}-${previewModule}-${previewSession.scheduleId}`}
+        state={state}
+        onExit={onExit}
         attemptSnapshot={attemptSnapshot}
+        scheduleId={previewSession.scheduleId}
+        onRuntimeRefresh={refreshRuntime}
+        runtimeSnapshot={runtimeSnapshot}
+        answerInvariantRollout={answerInvariantRollout}
         showSubmitControls={false}
         persistenceEnabled={false}
         enableMonitoring={false}
       />
     </>
   );
-}
-
-function getInitialQuestionId(state: ExamState, module: ModuleType): string | null {
-  if (module === 'reading' || module === 'listening') {
-    return getFirstQuestionIdForModule(state, module);
-  }
-
-  if (module === 'writing') {
-    return state.config.sections.writing.tasks[0]?.id ?? 'task1';
-  }
-
-  return null;
 }

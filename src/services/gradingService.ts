@@ -16,6 +16,7 @@ import {
   filterStudentSubmissions,
   mapScheduleStatusToGradingStatus,
 } from './gradingFilters';
+import { isPreviewRuntimeCohortName } from '../features/builder/services/previewRuntimeSessionService';
 import {
   GradingSession,
   StudentSubmission,
@@ -68,6 +69,10 @@ export class GradingService {
       const sessions: GradingSession[] = [];
       
       for (const schedule of schedules) {
+        if (isPreviewRuntimeCohortName(schedule.cohortName)) {
+          continue;
+        }
+
         // Check if session already exists
         const existing = await gradingRepository.getSessionById(schedule.id);
         if (existing) {

@@ -612,6 +612,262 @@ async fn grading_review_and_result_release_flow_round_trips() {
 }
 
 #[tokio::test]
+async fn objective_block_matrix_answers_are_received_and_sectioned() {
+    let database = mysql::TestDatabase::new(GRADING_MIGRATIONS).await;
+    let schedule = seed_schedule_with_content(
+        database.pool(),
+        "cambridge-19-academic-block-matrix",
+        "Cambridge 19 Academic Block Matrix",
+        matrix_content_snapshot(),
+    )
+    .await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+
+    let submitted_answers = matrix_submitted_answers();
+    let expected_reading_answers = json!({
+        "r-tfng-q1": "T",
+        "r-cloze-q1": "alpha",
+        "r-matching-q1": "i",
+        "r-map-q1": "A",
+        "r-short-q1": "fox",
+        "r-sentence-q1": ["first", "second"],
+        "r-sentence-q1:b1": "first",
+        "r-sentence-q1:b2": "second",
+        "r-note-q1": ["note answer"],
+        "r-note-q1:n1": "note answer"
+    });
+    let expected_listening_answers = json!({
+        "l-multi": ["A", "C"],
+        "l-single-q1": "B",
+        "l-single-legacy": "Y",
+        "l-diagram": ["nose", "ear"],
+        "l-diagram:l1": "nose",
+        "l-diagram:l2": "ear",
+        "l-flow": ["step-1", "step-2"],
+        "l-flow:s1": "step-1",
+        "l-flow:s2": "step-2",
+        "l-table": ["r1c1", "r1c2"],
+        "l-table:c1": "r1c1",
+        "l-table:c2": "r1c2",
+        "l-classify": ["Alpha", "Beta"],
+        "l-classify:i1": "Alpha",
+        "l-classify:i2": "Beta",
+        "l-match-features": ["X", "Y"],
+        "l-match-features:f1": "X",
+        "l-match-features:f2": "Y"
+    });
+    let submitted_writing_answers = json!({
+        "task1": "<div>Matrix Task 1 response</div>",
+        "task2": {
+            "label": "Task 2",
+            "prompt": "Discuss both views.",
+            "text": "<p>Matrix Task 2 response</p>"
+        }
+    });
+
+    let attempt_id = bootstrap_and_submit(
+        database.pool(),
+        schedule_id,
+        "matrix-candidate",
+        submitted_answers.clone(),
+        submitted_writing_answers.clone(),
+        json!({"r-tfng-q1": true}),
+    )
+    .await;
+
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Admin,
+        "admin-matrix@example.com",
+        "Matrix Admin",
+    )
+    .await;
+    let mut config = AppConfig::default();
+    config.grading_sync_on_read_fallback = true;
+    let app = build_router(AppState::with_pool(config, database.pool().clone()));
+
+    let session_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(
+                Request::builder().uri(format!("/api/v1/grading/sessions/{}", schedule.id)),
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(session_detail.status(), StatusCode::OK);
+    let session_detail_json = json_body(session_detail).await;
+    let submission_id = Uuid::parse_str(
+        session_detail_json["data"]["submissions"][0]["id"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        session_detail_json["data"]["submissions"][0]["attemptId"],
+        attempt_id.to_string()
+    );
+
+    let section_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/grading/submissions/{}/sections",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(section_detail.status(), StatusCode::OK);
+    let section_detail_json = json_body(section_detail).await;
+    let section_items = section_detail_json["data"]
+        .as_array()
+        .expect("section submissions array");
+    let reading_section = section_items
+        .iter()
+        .find(|entry| entry["section"] == "reading")
+        .expect("reading section");
+    assert_eq!(reading_section["answers"]["answers"], expected_reading_answers);
+
+    let listening_section = section_items
+        .iter()
+        .find(|entry| entry["section"] == "listening")
+        .expect("listening section");
+    assert_eq!(
+        listening_section["answers"]["answers"],
+        expected_listening_answers
+    );
+
+    let writing_section = section_items
+        .iter()
+        .find(|entry| entry["section"] == "writing")
+        .expect("writing section");
+    let writing_tasks = writing_section["answers"]["tasks"]
+        .as_array()
+        .expect("writing tasks array");
+    let task1 = writing_tasks
+        .iter()
+        .find(|entry| entry["taskId"] == "task1")
+        .expect("task1 writing payload");
+    assert_eq!(task1["text"], submitted_writing_answers["task1"]);
+    let task2 = writing_tasks
+        .iter()
+        .find(|entry| entry["taskId"] == "task2")
+        .expect("task2 writing payload");
+    assert_eq!(task2["text"], submitted_writing_answers["task2"]["text"]);
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore = "Known gap: objective auto-scoring projection still emits placeholder zero scores"]
+async fn objective_block_matrix_auto_scoring_is_correct_per_block() {
+    let database = mysql::TestDatabase::new(GRADING_MIGRATIONS).await;
+    let schedule = seed_schedule_with_content(
+        database.pool(),
+        "cambridge-19-academic-block-matrix-scoring",
+        "Cambridge 19 Academic Block Matrix Scoring",
+        matrix_content_snapshot(),
+    )
+    .await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let submitted_writing_answers = json!({
+        "task1": "<div>Matrix Task 1 response</div>",
+        "task2": {
+            "label": "Task 2",
+            "prompt": "Discuss both views.",
+            "text": "<p>Matrix Task 2 response</p>"
+        }
+    });
+
+    bootstrap_and_submit(
+        database.pool(),
+        schedule_id,
+        "matrix-scorer",
+        matrix_submitted_answers(),
+        submitted_writing_answers,
+        json!({}),
+    )
+    .await;
+
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Admin,
+        "admin-scoring@example.com",
+        "Scoring Admin",
+    )
+    .await;
+    let mut config = AppConfig::default();
+    config.grading_sync_on_read_fallback = true;
+    let app = build_router(AppState::with_pool(config, database.pool().clone()));
+
+    let session_detail = app
+        .clone()
+        .oneshot(
+            auth.with_auth(
+                Request::builder().uri(format!("/api/v1/grading/sessions/{}", schedule.id)),
+            )
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(session_detail.status(), StatusCode::OK);
+    let session_detail_json = json_body(session_detail).await;
+    let submission_id = Uuid::parse_str(
+        session_detail_json["data"]["submissions"][0]["id"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+
+    let section_detail = app
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/grading/submissions/{}/sections",
+                submission_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(section_detail.status(), StatusCode::OK);
+    let section_detail_json = json_body(section_detail).await;
+    let section_items = section_detail_json["data"]
+        .as_array()
+        .expect("section submissions array");
+    for section in ["reading", "listening"] {
+        let entry = section_items
+            .iter()
+            .find(|item| item["section"] == section)
+            .expect("objective section");
+        let auto = &entry["autoGradingResults"];
+        let total = auto["totalScore"]
+            .as_i64()
+            .or_else(|| auto["totalScore"].as_f64().map(|v| v as i64))
+            .unwrap_or(0);
+        assert!(
+            total > 0,
+            "expected non-zero auto score for section={section}, got: {auto}"
+        );
+        let question_results = auto["questionResults"]
+            .as_array()
+            .expect("question results array");
+        assert!(
+            !question_results.is_empty(),
+            "expected question-level scoring results for section={section}"
+        );
+    }
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn media_upload_intent_and_completion_round_trip() {
     let database = mysql::TestDatabase::new(GRADING_MIGRATIONS).await;
     let auth = create_authenticated_user(
@@ -748,14 +1004,29 @@ async fn bootstrap_and_submit(
 }
 
 async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule::ExamSchedule {
+    seed_schedule_with_content(
+        pool,
+        "cambridge-19-academic-grading",
+        "Cambridge 19 Academic Grading",
+        default_content_snapshot(),
+    )
+    .await
+}
+
+async fn seed_schedule_with_content(
+    pool: &sqlx::MySqlPool,
+    slug: &str,
+    title: &str,
+    content_snapshot: serde_json::Value,
+) -> ielts_backend_domain::schedule::ExamSchedule {
     let actor = contract_actor();
     let builder_service = BuilderService::new(pool.clone());
     let exam = builder_service
         .create_exam(
             &actor,
             CreateExamRequest {
-                slug: "cambridge-19-academic-grading".to_owned(),
-                title: "Cambridge 19 Academic Grading".to_owned(),
+                slug: slug.to_owned(),
+                title: title.to_owned(),
                 exam_type: ExamType::Academic.as_str().to_owned(),
                 visibility: Visibility::Organization.as_str().to_owned(),
                 organization_id: Some("org-1".to_owned()),
@@ -770,60 +1041,7 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
             &actor,
             exam_id.clone(),
             SaveDraftRequest {
-                content_snapshot: json!({
-                    "reading": {
-                        "passages": [{
-                            "id": "reading-1",
-                            "title": "Reading Passage 1",
-                            "blocks": [{
-                                "id": "reading-short-1",
-                                "type": "SHORT_ANSWER",
-                                "instruction": "Answer the question.",
-                                "questions": [{
-                                    "id": "q-reading-1",
-                                    "prompt": "What is the keyword?",
-                                    "correctAnswer": "Alpha answer",
-                                    "answerRule": "THREE_WORDS"
-                                }]
-                            }, {
-                                "id": "reading-sentence-1",
-                                "type": "SENTENCE_COMPLETION",
-                                "instruction": "Complete the sentence.",
-                                "questions": [{
-                                    "id": "q-slot",
-                                    "sentence": "The two words are __ and __.",
-                                    "blanks": [
-                                        { "id": "b1", "position": 0, "correctAnswer": "cat" },
-                                        { "id": "b2", "position": 1, "correctAnswer": "dog" }
-                                    ]
-                                }]
-                            }]
-                        }]
-                    },
-                    "listening": {
-                        "parts": [{
-                            "id": "listening-1",
-                            "title": "Listening Part 1",
-                            "blocks": [{
-                                "id": "listening-short-1",
-                                "type": "SHORT_ANSWER",
-                                "instruction": "Listen and answer.",
-                                "questions": [{
-                                    "id": "q-listening-1",
-                                    "prompt": "What did you hear?",
-                                    "correctAnswer": "Listening response",
-                                    "answerRule": "THREE_WORDS"
-                                }]
-                            }]
-                        }]
-                    },
-                    "writing": {
-                        "task1Prompt": "Summarise the chart.",
-                        "task2Prompt": "Discuss both views.",
-                        "tasks": [{"id": "task1"}, {"id": "task2"}]
-                    },
-                    "speaking": {"part1Topics": ["topic"], "cueCard": "cue", "part3Discussion": ["discussion"]}
-                }),
+                content_snapshot,
                 config_snapshot: sample_delivery_config(),
                 revision: exam.revision,
             },
@@ -867,6 +1085,247 @@ async fn seed_schedule(pool: &sqlx::MySqlPool) -> ielts_backend_domain::schedule
         )
         .await
         .expect("create schedule")
+}
+
+fn default_content_snapshot() -> serde_json::Value {
+    json!({
+        "reading": {
+            "passages": [{
+                "id": "reading-1",
+                "title": "Reading Passage 1",
+                "blocks": [{
+                    "id": "reading-short-1",
+                    "type": "SHORT_ANSWER",
+                    "instruction": "Answer the question.",
+                    "questions": [{
+                        "id": "q-reading-1",
+                        "prompt": "What is the keyword?",
+                        "correctAnswer": "Alpha answer",
+                        "answerRule": "THREE_WORDS"
+                    }]
+                }, {
+                    "id": "reading-sentence-1",
+                    "type": "SENTENCE_COMPLETION",
+                    "instruction": "Complete the sentence.",
+                    "questions": [{
+                        "id": "q-slot",
+                        "sentence": "The two words are __ and __.",
+                        "blanks": [
+                            { "id": "b1", "position": 0, "correctAnswer": "cat" },
+                            { "id": "b2", "position": 1, "correctAnswer": "dog" }
+                        ]
+                    }]
+                }]
+            }]
+        },
+        "listening": {
+            "parts": [{
+                "id": "listening-1",
+                "title": "Listening Part 1",
+                "blocks": [{
+                    "id": "listening-short-1",
+                    "type": "SHORT_ANSWER",
+                    "instruction": "Listen and answer.",
+                    "questions": [{
+                        "id": "q-listening-1",
+                        "prompt": "What did you hear?",
+                        "correctAnswer": "Listening response",
+                        "answerRule": "THREE_WORDS"
+                    }]
+                }]
+            }]
+        },
+        "writing": {
+            "task1Prompt": "Summarise the chart.",
+            "task2Prompt": "Discuss both views.",
+            "tasks": [{"id": "task1"}, {"id": "task2"}]
+        },
+        "speaking": {"part1Topics": ["topic"], "cueCard": "cue", "part3Discussion": ["discussion"]}
+    })
+}
+
+fn matrix_submitted_answers() -> serde_json::Value {
+    json!({
+        "r-tfng-q1": "T",
+        "r-cloze-q1": "alpha",
+        "r-matching-q1": "i",
+        "r-map-q1": "A",
+        "r-short-q1": "fox",
+        "r-sentence-q1": ["first", "second"],
+        "r-sentence-q1:b1": "first",
+        "r-sentence-q1:b2": "second",
+        "r-note-q1": ["note answer"],
+        "r-note-q1:n1": "note answer",
+        "l-multi": ["A", "C"],
+        "l-single-q1": "B",
+        "l-single-legacy": "Y",
+        "l-diagram": ["nose", "ear"],
+        "l-diagram:l1": "nose",
+        "l-diagram:l2": "ear",
+        "l-flow": ["step-1", "step-2"],
+        "l-flow:s1": "step-1",
+        "l-flow:s2": "step-2",
+        "l-table": ["r1c1", "r1c2"],
+        "l-table:c1": "r1c1",
+        "l-table:c2": "r1c2",
+        "l-classify": ["Alpha", "Beta"],
+        "l-classify:i1": "Alpha",
+        "l-classify:i2": "Beta",
+        "l-match-features": ["X", "Y"],
+        "l-match-features:f1": "X",
+        "l-match-features:f2": "Y"
+    })
+}
+
+fn matrix_content_snapshot() -> serde_json::Value {
+    json!({
+        "reading": {
+            "passages": [{
+                "id": "reading-matrix-p1",
+                "title": "Reading Passage Matrix",
+                "blocks": [
+                    {
+                        "id": "r-tfng",
+                        "type": "TFNG",
+                        "mode": "TFNG",
+                        "questions": [{ "id": "r-tfng-q1", "statement": "Statement 1" }]
+                    },
+                    {
+                        "id": "r-cloze",
+                        "type": "CLOZE",
+                        "questions": [{ "id": "r-cloze-q1", "prompt": "Fill blank" }]
+                    },
+                    {
+                        "id": "r-matching",
+                        "type": "MATCHING",
+                        "headings": [{ "id": "i", "text": "Heading I" }, { "id": "ii", "text": "Heading II" }],
+                        "questions": [{ "id": "r-matching-q1", "statement": "Match this" }]
+                    },
+                    {
+                        "id": "r-map",
+                        "type": "MAP",
+                        "questions": [{ "id": "r-map-q1", "label": "Spot A" }]
+                    },
+                    {
+                        "id": "r-short",
+                        "type": "SHORT_ANSWER",
+                        "questions": [{ "id": "r-short-q1", "prompt": "Name the animal", "correctAnswer": "fox" }]
+                    },
+                    {
+                        "id": "r-sentence",
+                        "type": "SENTENCE_COMPLETION",
+                        "questions": [{
+                            "id": "r-sentence-q1",
+                            "sentence": "Fill __ then __.",
+                            "blanks": [
+                                { "id": "b1", "correctAnswer": "first" },
+                                { "id": "b2", "correctAnswer": "second" }
+                            ]
+                        }]
+                    },
+                    {
+                        "id": "r-note",
+                        "type": "NOTE_COMPLETION",
+                        "questions": [{
+                            "id": "r-note-q1",
+                            "noteText": "Write a note __.",
+                            "blanks": [{ "id": "n1", "correctAnswer": "note answer" }]
+                        }]
+                    }
+                ]
+            }]
+        },
+        "listening": {
+            "parts": [{
+                "id": "listening-matrix-p1",
+                "title": "Listening Part Matrix",
+                "blocks": [
+                    {
+                        "id": "l-multi",
+                        "type": "MULTI_MCQ",
+                        "requiredSelections": 2,
+                        "options": [
+                            { "id": "A", "text": "Option A", "isCorrect": true },
+                            { "id": "B", "text": "Option B", "isCorrect": false },
+                            { "id": "C", "text": "Option C", "isCorrect": true }
+                        ]
+                    },
+                    {
+                        "id": "l-single-question-set",
+                        "type": "SINGLE_MCQ",
+                        "questions": [{
+                            "id": "l-single-q1",
+                            "stem": "Pick one",
+                            "options": [
+                                { "id": "A", "text": "Option A", "isCorrect": false },
+                                { "id": "B", "text": "Option B", "isCorrect": true }
+                            ]
+                        }]
+                    },
+                    {
+                        "id": "l-single-legacy",
+                        "type": "SINGLE_MCQ",
+                        "stem": "Pick one (legacy)",
+                        "options": [
+                            { "id": "X", "text": "Option X", "isCorrect": false },
+                            { "id": "Y", "text": "Option Y", "isCorrect": true }
+                        ]
+                    },
+                    {
+                        "id": "l-diagram",
+                        "type": "DIAGRAM_LABELING",
+                        "imageUrl": "https://example.com/diagram.png",
+                        "labels": [
+                            { "id": "l1", "correctAnswer": "nose" },
+                            { "id": "l2", "correctAnswer": "ear" }
+                        ]
+                    },
+                    {
+                        "id": "l-flow",
+                        "type": "FLOW_CHART",
+                        "steps": [
+                            { "id": "s1", "label": "Step 1", "correctAnswer": "step-1" },
+                            { "id": "s2", "label": "Step 2", "correctAnswer": "step-2" }
+                        ]
+                    },
+                    {
+                        "id": "l-table",
+                        "type": "TABLE_COMPLETION",
+                        "headers": ["Col 1", "Col 2"],
+                        "rows": [["", ""]],
+                        "cells": [
+                            { "id": "c1", "correctAnswer": "r1c1" },
+                            { "id": "c2", "correctAnswer": "r1c2" }
+                        ]
+                    },
+                    {
+                        "id": "l-classify",
+                        "type": "CLASSIFICATION",
+                        "categories": ["Alpha", "Beta"],
+                        "items": [
+                            { "id": "i1", "text": "Item 1", "correctCategory": "Alpha" },
+                            { "id": "i2", "text": "Item 2", "correctCategory": "Beta" }
+                        ]
+                    },
+                    {
+                        "id": "l-match-features",
+                        "type": "MATCHING_FEATURES",
+                        "options": ["X", "Y"],
+                        "features": [
+                            { "id": "f1", "text": "Feature 1", "correctMatch": "X" },
+                            { "id": "f2", "text": "Feature 2", "correctMatch": "Y" }
+                        ]
+                    }
+                ]
+            }]
+        },
+        "writing": {
+            "task1Prompt": "Summarise the chart.",
+            "task2Prompt": "Discuss both views.",
+            "tasks": [{"id": "task1"}, {"id": "task2"}]
+        },
+        "speaking": {"part1Topics": ["topic"], "cueCard": "cue", "part3Discussion": ["discussion"]}
+    })
 }
 
 fn sample_delivery_config() -> serde_json::Value {
