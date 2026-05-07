@@ -501,7 +501,7 @@ export function StudentListening({
                 <div key={block.id} className={`${answerCompact ? 'space-y-3 mb-3 md:mb-4' : 'space-y-4 md:space-y-6 mb-4 md:mb-6'}`}>
                   <div className={answerCompact ? 'mb-2' : 'mb-3 md:mb-4'}>
                     <h3 className={`font-bold text-gray-900 break-words [overflow-wrap:anywhere] ${answerCompact ? 'mb-1 text-sm md:text-base' : 'mb-1 md:mb-2 text-base md:text-lg'}`}>
-                      Questions {formatQuestionRange(blockStartQ, blockEndQ)}
+                      Questions {formatQuestionRange(numberedBlockStart, numberedBlockEnd)}
                     </h3>
                     {renderBlockInstruction(block.instruction)}
                   </div>
