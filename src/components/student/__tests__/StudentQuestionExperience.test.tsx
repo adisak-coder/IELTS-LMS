@@ -447,7 +447,7 @@ describe('student question experience', () => {
     );
   });
 
-  it('shows diagram-labeling fallback fields with label prompts', () => {
+  it('shows diagram-labeling fallback fields with authored prompt text and fallback labels', () => {
     const block: DiagramLabelingBlock = {
       id: 'diagram-1',
       type: 'DIAGRAM_LABELING',
@@ -474,8 +474,8 @@ describe('student question experience', () => {
     expect(screen.getByRole('textbox', { name: 'Answer for question 13' })).toBeInTheDocument();
     const firstSlot = document.getElementById('question-diagram-1:label-a');
     expect(firstSlot).not.toBeNull();
-    expect(firstSlot?.firstElementChild).toHaveTextContent(/label 1/i);
-    expect(within(firstSlot as HTMLElement).getByText(/label 1/i)).toHaveClass('text-[length:var(--student-meta-font-size)]');
+    expect(firstSlot?.firstElementChild).toHaveTextContent(/engine label/i);
+    expect(within(firstSlot as HTMLElement).getByText(/engine label/i)).toHaveClass('text-[length:var(--student-meta-font-size)]');
 
     const secondSlot = document.getElementById('question-diagram-1:label-b');
     expect(secondSlot).not.toBeNull();

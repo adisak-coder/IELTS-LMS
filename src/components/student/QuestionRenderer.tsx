@@ -574,7 +574,7 @@ export function QuestionRenderer({
                 diagramBlock.labels.length,
                 getSlotId(index, `${diagramBlock.id}:${label.id}`),
               ),
-            `Label ${index + 1}`,
+            label.prompt?.trim() || `Label ${index + 1}`,
             'top',
           )}
         </React.Fragment>
