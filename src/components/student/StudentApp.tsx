@@ -16,7 +16,12 @@ import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
 import { getFullscreenElement, requestStudentFullscreen } from './fullscreen';
-import { getStudentTypographyScale } from './accessibilityScale';
+import {
+  canDecreaseStudentPassageReadability,
+  canIncreaseStudentPassageReadability,
+  getStudentPassageReadabilityLabel,
+  getStudentTypographyScale,
+} from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
 import { useStudentTabletMode } from './tabletMode';
@@ -119,6 +124,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const { actions: attemptActions, state: attemptState } = useStudentAttempt();
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
+  const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
+  const canDecreasePassageReadability = canDecreaseStudentPassageReadability(
+    uiState.accessibilitySettings.passageReadabilityLevel,
+  );
   const studentTypography = getStudentTypographyScale(uiState.accessibilitySettings.fontSize);
   useZoomScrollAnchoring(uiState.accessibilitySettings.zoom * studentTypography.fontScale);
   const [finalSubmitStatus, setFinalSubmitStatus] = useState<'idle' | 'submitting' | 'retrying' | 'failed'>('idle');
@@ -1181,7 +1192,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             onIncreasePassageReadability={uiActions.increasePassageReadability}
             onDecreasePassageReadability={uiActions.decreasePassageReadability}
             onResetPassageReadability={uiActions.resetPassageReadability}
-            passageReadabilityLabel={passageReadabilityLabel}
+            passageReadabilityLabel={getStudentPassageReadabilityLabel(
+              uiState.accessibilitySettings.passageReadabilityLevel,
+            )}
             canIncreasePassageReadability={canIncreasePassageReadability}
             canDecreasePassageReadability={canDecreasePassageReadability}
             registerLiveAnswer={registerLiveObjectiveAnswer}
@@ -1204,7 +1217,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             onIncreasePassageReadability={uiActions.increasePassageReadability}
             onDecreasePassageReadability={uiActions.decreasePassageReadability}
             onResetPassageReadability={uiActions.resetPassageReadability}
-            passageReadabilityLabel={passageReadabilityLabel}
+            passageReadabilityLabel={getStudentPassageReadabilityLabel(
+              uiState.accessibilitySettings.passageReadabilityLevel,
+            )}
             canIncreasePassageReadability={canIncreasePassageReadability}
             canDecreasePassageReadability={canDecreasePassageReadability}
             registerLiveAnswer={registerLiveObjectiveAnswer}

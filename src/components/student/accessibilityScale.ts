@@ -5,6 +5,12 @@ export const STUDENT_PASSAGE_READABILITY_MIN: StudentPassageReadabilityLevel = 0
 export const STUDENT_PASSAGE_READABILITY_MAX: StudentPassageReadabilityLevel = 2;
 export const DEFAULT_STUDENT_PASSAGE_READABILITY_LEVEL: StudentPassageReadabilityLevel = 1;
 
+const STUDENT_PASSAGE_READABILITY_LABELS: Record<StudentPassageReadabilityLevel, string> = {
+  0: 'Compact',
+  1: 'Comfort',
+  2: 'Extra Large',
+};
+
 export interface StudentTypographyScale {
   rootFontSize: string;
   lineHeight: number;
@@ -67,4 +73,22 @@ export function clampStudentPassageReadabilityLevel(value: number): StudentPassa
     return STUDENT_PASSAGE_READABILITY_MAX;
   }
   return Math.round(value) as StudentPassageReadabilityLevel;
+}
+
+export function canIncreaseStudentPassageReadability(
+  level: StudentPassageReadabilityLevel,
+): boolean {
+  return level < STUDENT_PASSAGE_READABILITY_MAX;
+}
+
+export function canDecreaseStudentPassageReadability(
+  level: StudentPassageReadabilityLevel,
+): boolean {
+  return level > STUDENT_PASSAGE_READABILITY_MIN;
+}
+
+export function getStudentPassageReadabilityLabel(
+  level: StudentPassageReadabilityLevel,
+): string {
+  return STUDENT_PASSAGE_READABILITY_LABELS[level] ?? STUDENT_PASSAGE_READABILITY_LABELS[1];
 }
