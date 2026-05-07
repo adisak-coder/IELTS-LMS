@@ -14,6 +14,7 @@ interface UseSplitPaneResizeOptions {
   materialPaneWidthProperty: '--reading-pane-width' | '--listening-pane-width' | '--writing-prompt-pane-width';
   answerPaneWidthProperty?: '--question-pane-width' | '--writing-editor-pane-width';
   defaultLeftWidth?: number;
+  dividerMode?: 'overlay' | 'consumes-space';
 }
 
 function getTouchOrMouseClientX(event: MouseEvent | TouchEvent | ReactMouseEvent | ReactTouchEvent) {
@@ -30,20 +31,23 @@ export function useSplitPaneResize({
   materialPaneWidthProperty,
   answerPaneWidthProperty = '--question-pane-width',
   defaultLeftWidth = DEFAULT_LEFT_WIDTH,
+  dividerMode = 'consumes-space',
 }: UseSplitPaneResizeOptions) {
   const [leftWidth, setLeftWidth] = useState(defaultLeftWidth);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const dividerWidth = isTabletMode ? TABLET_DIVIDER_WIDTH : DESKTOP_DIVIDER_WIDTH;
+  const dividerConsumesSpace = dividerMode === 'consumes-space';
 
   const clampWidth = useCallback(
     (nextWidth: number) => {
       const workspaceWidth = workspaceRef.current?.getBoundingClientRect().width || window.innerWidth;
       const minMaterialWidth = isTabletMode ? TABLET_MIN_MATERIAL_WIDTH : DESKTOP_MIN_MATERIAL_WIDTH;
       const minAnswerWidth = isTabletMode ? TABLET_MIN_ANSWER_WIDTH : DESKTOP_MIN_ANSWER_WIDTH;
+      const dividerGap = dividerConsumesSpace ? dividerWidth : 0;
       const minPercent = isTabletMode ? 0 : 20;
       const maxPercent = isTabletMode ? 100 : 80;
       const minByPixels = (minMaterialWidth / workspaceWidth) * 100;
-      const maxByPixels = 100 - ((minAnswerWidth + dividerWidth) / workspaceWidth) * 100;
+      const maxByPixels = 100 - ((minAnswerWidth + dividerGap) / workspaceWidth) * 100;
       let lowerBound = Math.max(minPercent, minByPixels);
       let upperBound = Math.min(maxPercent, maxByPixels);
 
@@ -58,7 +62,7 @@ export function useSplitPaneResize({
 
       return Math.min(upperBound, Math.max(lowerBound, nextWidth));
     },
-    [defaultLeftWidth, dividerWidth, isTabletMode],
+    [defaultLeftWidth, dividerConsumesSpace, dividerWidth, isTabletMode],
   );
 
   const handleDrag = useCallback(
@@ -99,10 +103,12 @@ export function useSplitPaneResize({
     () =>
       ({
         [materialPaneWidthProperty]: `${leftWidth}%`,
-        [answerPaneWidthProperty]: `calc(${100 - leftWidth}% - var(--split-divider-width))`,
+        [answerPaneWidthProperty]: dividerConsumesSpace
+          ? `calc(${100 - leftWidth}% - var(--split-divider-width))`
+          : `calc(${100 - leftWidth}%)`,
         ['--split-divider-width' as string]: `${dividerWidth}px`,
       }) as CSSProperties,
-    [answerPaneWidthProperty, dividerWidth, leftWidth, materialPaneWidthProperty],
+    [answerPaneWidthProperty, dividerConsumesSpace, dividerWidth, leftWidth, materialPaneWidthProperty],
   );
 
   return {

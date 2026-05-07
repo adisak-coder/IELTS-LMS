@@ -41,25 +41,26 @@ function createExamState(): ExamState {
 }
 
 describe('StudentWriting a11y', () => {
-  it('renders an accessible writing editor', () => {
-    render(
-      <StudentWriting
-        state={createExamState()}
-        writingAnswers={{}}
-        onWritingChange={() => undefined}
-        onSubmit={() => undefined}
-        currentQuestionId={null}
-        onNavigate={() => undefined}
-      />,
-    );
+	  it('renders an accessible writing editor', () => {
+	    render(
+	      <StudentWriting
+	        state={createExamState()}
+	        writingAnswers={{}}
+	        onWritingChange={() => undefined}
+	        onSubmit={() => undefined}
+	        currentQuestionId={null}
+	        onNavigate={() => undefined}
+	      />,
+	    );
 
-    const editor = screen.getByRole('textbox', { name: /writing response/i });
-    expect(editor.tagName).toBe('TEXTAREA');
-    expect(editor.getAttribute('class')).toMatch(/focus-visible/);
-    expect(editor).toHaveClass('h-full');
-    expect(editor).toHaveClass('resize-none');
-    expect(editor).toHaveClass('overflow-y-auto');
-  });
+	    const editor = screen.getByRole('textbox', { name: /writing response/i });
+	    expect(editor.tagName).toBe('DIV');
+	    expect(editor).toHaveAttribute('contenteditable');
+	    expect(editor.getAttribute('class')).toMatch(/focus-visible/);
+	    expect(editor).toHaveClass('flex-1');
+	    expect(editor).toHaveClass('w-full');
+	    expect(editor).toHaveClass('overflow-y-auto');
+	  });
 
   it('resizes writing panes using the workspace bounds', () => {
     render(
@@ -155,56 +156,6 @@ describe('StudentWriting a11y', () => {
     expect(placeholder).toHaveClass('left-10');
     expect(placeholder).toHaveClass('md:left-10');
     expect(placeholder).toHaveClass('lg:left-10');
-  });
-
-  it('shows builder-authored HTML prompts as plain text in the writing exam', () => {
-    const state = createExamState();
-    state.writing.task1Prompt = '<p>Describe the chart <strong>in detail</strong>.</p>';
-
-    const workspace = screen.getByTestId('writing-split-workspace');
-    const resizer = screen.getByTestId('writing-pane-resizer');
-    expect(workspace).toHaveStyle({
-      '--writing-prompt-pane-width': '50%',
-      '--writing-editor-pane-width': 'calc(50% - var(--split-divider-width))',
-      '--split-divider-width': '16px',
-    });
-    expect(resizer.querySelector('.h-10.w-8')).toBeInTheDocument();
-
-    vi.spyOn(workspace, 'getBoundingClientRect').mockReturnValue({
-      bottom: 600,
-      height: 600,
-      left: 100,
-      right: 900,
-      top: 0,
-      width: 800,
-      x: 100,
-      y: 0,
-      toJSON: () => ({}),
-    });
-    fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 600 });
-    fireEvent.mouseMove(document, { clientX: 580 });
-    fireEvent.mouseUp(document);
-
-    expect(workspace).toHaveStyle({
-      '--writing-prompt-pane-width': '60%',
-      '--writing-editor-pane-width': 'calc(40% - var(--split-divider-width))',
-    });
-
-    fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 580 });
-    fireEvent.mouseMove(document, { clientX: 0 });
-    fireEvent.mouseUp(document);
-    expect(workspace).toHaveStyle({
-      '--writing-prompt-pane-width': '6%',
-      '--writing-editor-pane-width': 'calc(94% - var(--split-divider-width))',
-    });
-
-    fireEvent.mouseDown(screen.getByTestId('writing-pane-resizer'), { clientX: 200 });
-    fireEvent.mouseMove(document, { clientX: 1800 });
-    fireEvent.mouseUp(document);
-    expect(workspace).toHaveStyle({
-      '--writing-prompt-pane-width': '92%',
-      '--writing-editor-pane-width': 'calc(8% - var(--split-divider-width))',
-    });
   });
 
   it('matches tablet resizer dimensions used in reading and listening', () => {

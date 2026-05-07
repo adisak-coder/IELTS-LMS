@@ -615,12 +615,25 @@ export function QuestionRenderer({
 
     return (
       <div className="overflow-x-auto rounded-2xl border border-gray-200">
-        <table className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'}`}>
+        <table
+          className={`w-full border-collapse text-[length:var(--student-control-font-size)] ${
+            isCompactPane ? 'min-w-[360px]' : 'min-w-[480px]'
+          }`}
+        >
           <thead className="bg-gray-50">
             <tr>
               {tableBlock.headers.map((header, index) => (
-                <th key={`${header}-${index}`} className="border border-gray-200 px-3 py-2 text-left font-semibold text-gray-900">
-                  <FormattedText as="span" className="text-gray-900" text={header} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
+                <th
+                  key={`${header}-${index}`}
+                  className="border border-gray-200 px-3 py-2 text-left font-semibold text-gray-900"
+                >
+                  <FormattedText
+                    as="span"
+                    className="text-gray-900"
+                    text={header}
+                    highlightEnabled={highlightEnabled}
+                    highlightColor={highlightColor}
+                  />
                 </th>
               ))}
             </tr>
@@ -633,8 +646,17 @@ export function QuestionRenderer({
 
                   if (!slot) {
                     return (
-                      <td key={`cell-${rowIndex}-${cellIndex}`} className="border border-gray-200 px-3 py-2 text-gray-800">
-                        <FormattedText as="span" className="text-gray-800" text={cellValue} highlightEnabled={highlightEnabled} highlightColor={highlightColor} />
+                      <td
+                        key={`cell-${rowIndex}-${cellIndex}`}
+                        className="border border-gray-200 px-3 py-2 text-gray-800"
+                      >
+                        <FormattedText
+                          as="span"
+                          className="text-gray-800"
+                          text={cellValue}
+                          highlightEnabled={highlightEnabled}
+                          highlightColor={highlightColor}
+                        />
                       </td>
                     );
                   }
@@ -643,24 +665,30 @@ export function QuestionRenderer({
                     <td
                       key={slot.cell.id}
                       id={`question-${slot.slotId}`}
-                      className={`border border-gray-200 px-3 py-2 align-top ${getSlotClassName(slot.slotId)}`}
+                      className={`border border-gray-200 px-3 py-2 align-top ${
+                        currentQuestionId === slot.slotId ? 'ring-2 ring-blue-500 ring-inset' : ''
+                      } ${flags[slot.slotId] ? 'bg-amber-50' : ''}`}
                     >
-                      <div className="mb-2 text-[length:var(--student-chip-font-size)] font-bold text-blue-700">
-                        {number + slot.index}
+                      <div className="flex items-start gap-3">
+                        <span className="mt-2 min-w-[1.75rem] font-bold text-blue-700">{number + slot.index}.</span>
+                        <div className="min-w-0 flex-1">
+                          <ProtectedInput
+                            type="text"
+                            name={slot.slotId}
+                            value={stringArrayAnswer[slot.index] ?? ''}
+                            onChange={(event) =>
+                              updateIndexedAnswer(slot.index, event.target.value, tableBlock.cells.length)
+                            }
+                            className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                            placeholder="Enter answer..."
+                            security={security}
+                            sessionId={sessionId}
+                            studentId={studentId}
+                            aria-label={`Answer for question ${number + slot.index}`}
+                          />
+                        </div>
+                        <div className="mt-1">{renderFlagButton(slot.slotId)}</div>
                       </div>
-                      <ProtectedInput
-                        type="text"
-                        name={slot.slotId}
-                        value={stringArrayAnswer[slot.index] ?? ''}
-                        onChange={(event) => updateIndexedAnswer(slot.index, event.target.value, tableBlock.cells.length)}
-                        className="w-full rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                        placeholder="Enter answer..."
-                        security={security}
-                        sessionId={sessionId}
-                        studentId={studentId}
-                        aria-label={`Answer for question ${number + slot.index}`}
-                      />
-                      <div className="mt-2 flex justify-end">{renderFlagButton(slot.slotId)}</div>
                     </td>
                   );
                 })}

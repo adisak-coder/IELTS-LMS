@@ -559,8 +559,9 @@ impl DeliveryService {
             return Ok(response);
         }
 
+        let mut applied_mutation_count: usize = 0;
         for mutation in &new_mutations {
-            apply_mutation(
+            let applied = apply_mutation(
                 mutation,
                 &answer_schema,
                 &writing_task_ids,
@@ -575,6 +576,9 @@ impl DeliveryService {
                 &mut current_question_id,
                 &mut recovery,
             )?;
+            if applied {
+                applied_mutation_count = applied_mutation_count.saturating_add(1);
+            }
         }
 
         let server_accepted_through_seq =
@@ -678,7 +682,7 @@ impl DeliveryService {
         .bind(&attempt.id)
         .bind(json!({
             "requestedCount": req.mutations.len(),
-            "appliedCount": new_mutations.len(),
+            "appliedCount": applied_mutation_count,
             "seqFrom": seq_from,
             "seqTo": seq_to,
             "types": mutation_types,
@@ -692,7 +696,7 @@ impl DeliveryService {
 
         let response = StudentMutationBatchResponse {
             attempt: Some(attempt.clone()),
-            applied_mutation_count: new_mutations.len(),
+            applied_mutation_count,
             server_accepted_through_seq,
             revision: attempt.revision,
             refreshed_attempt_credential: None,
@@ -2368,12 +2372,21 @@ fn apply_mutation(
     _current_module: &mut String,
     current_question_id: &mut Option<String>,
     recovery: &mut Value,
-) -> Result<(), DeliveryError> {
+) -> Result<bool, DeliveryError> {
     match mutation.mutation_type.as_str() {
         "answer" => {
             let question_id = required_string(&mutation.payload, "questionId")?;
             // Always accept/persist objective mutations; do not block on server lifecycle/section.
             let _ = objective_mutation_gate;
+            if !answer_schema.constraints.contains_key(&question_id) {
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = "answer",
+                    question_id = %question_id,
+                    "mutation references unknown questionId; accepting but ignoring apply"
+                );
+                return Ok(false);
+            }
             enforce_section_membership(active_section_key, &question_id, answer_schema)?;
             let value = mutation
                 .payload
@@ -2389,15 +2402,20 @@ fn apply_mutation(
             let next_answers = ensure_object(std::mem::take(answers));
             *current_question_id = Some(question_id.clone());
             *answers = Value::Object(set_value(next_answers, question_id, value));
+            Ok(true)
         }
         "writing_answer" => {
             let task_id = required_string(&mutation.payload, "taskId")?;
             // Always accept/persist writing mutations; do not block on server lifecycle/section.
             let _ = (objective_mutation_gate, active_section_key);
             if !writing_task_ids.contains(&task_id) {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `taskId`.".to_owned(),
-                ));
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = "writing_answer",
+                    task_id = %task_id,
+                    "mutation references unknown taskId; accepting but ignoring apply"
+                );
+                return Ok(false);
             }
             let value = mutation
                 .payload
@@ -2414,15 +2432,20 @@ fn apply_mutation(
             let next_writing_answers = ensure_object(std::mem::take(writing_answers));
             *current_question_id = Some(task_id.clone());
             *writing_answers = Value::Object(set_value(next_writing_answers, task_id, value));
+            Ok(true)
         }
         "flag" => {
             let question_id = required_string(&mutation.payload, "questionId")?;
             // Always accept/persist flag mutations; do not block on server lifecycle/section.
             let _ = objective_mutation_gate;
             if !answer_schema.sections.contains_key(&question_id) {
-                return Err(DeliveryError::Validation(
-                    "Mutation references an unknown `questionId`.".to_owned(),
-                ));
+                tracing::warn!(
+                    mutation_id = %mutation.id,
+                    mutation_type = "flag",
+                    question_id = %question_id,
+                    "mutation references unknown questionId; accepting but ignoring apply"
+                );
+                return Ok(false);
             }
             enforce_section_membership(active_section_key, &question_id, answer_schema)?;
             let value = mutation
@@ -2437,6 +2460,7 @@ fn apply_mutation(
             })?;
             let next_flags = ensure_object(std::mem::take(flags));
             *flags = Value::Object(set_value(next_flags, question_id, Value::Bool(flag_value)));
+            Ok(true)
         }
         "position" => {
             // Client position is telemetry only. Never treat it as authoritative state.
@@ -2477,9 +2501,13 @@ fn apply_mutation(
                 let known_objective = answer_schema.sections.contains_key(value);
                 let known_writing = writing_task_ids.contains(value);
                 if !(known_objective || known_writing) {
-                    return Err(DeliveryError::Validation(
-                        "Position mutation references an unknown `currentQuestionId`.".to_owned(),
-                    ));
+                    tracing::warn!(
+                        mutation_id = %mutation.id,
+                        mutation_type = "position",
+                        current_question_id = value,
+                        "position references unknown currentQuestionId; accepting but ignoring apply"
+                    );
+                    return Ok(false);
                 }
             }
             *recovery = merge_recovery(
@@ -2493,6 +2521,7 @@ fn apply_mutation(
                     }
                 }),
             );
+            Ok(true)
         }
         "violation" => {
             // Payloads vary; apply only when the client includes an authoritative snapshot.
@@ -2511,6 +2540,7 @@ fn apply_mutation(
                     "violation mutation missing `violations` snapshot; skipping apply"
                 );
             }
+            Ok(true)
         }
         other => {
             tracing::warn!(
@@ -2518,10 +2548,9 @@ fn apply_mutation(
                 mutation_type = other,
                 "unrecognized mutation type; stored but not applied"
             );
+            Ok(false)
         }
     }
-
-    Ok(())
 }
 
 fn merge_recovery(existing: Value, patch: Value) -> Value {
@@ -2743,7 +2772,7 @@ mod tests {
         let mut current_question_id = None;
         let mut recovery = json!({});
 
-        apply_mutation(
+        assert!(apply_mutation(
             &MutationEnvelope {
                 id: "m1".to_owned(),
                 seq: 1,
@@ -2765,13 +2794,13 @@ mod tests {
             &mut current_question_id,
             &mut recovery,
         )
-        .expect("apply answer");
+        .expect("apply answer"));
 
         assert_eq!(answers["q1"], "A");
         assert_eq!(writing_answers, json!({}));
         assert_eq!(current_question_id.as_deref(), Some("q1"));
 
-        apply_mutation(
+        assert!(apply_mutation(
             &MutationEnvelope {
                 id: "m2".to_owned(),
                 seq: 2,
@@ -2793,13 +2822,13 @@ mod tests {
             &mut current_question_id,
             &mut recovery,
         )
-        .expect("apply writing answer");
+        .expect("apply writing answer"));
 
         assert_eq!(answers["q1"], "A");
         assert_eq!(writing_answers["task-1"], "Draft 1");
         assert_eq!(current_question_id.as_deref(), Some("task-1"));
 
-        apply_mutation(
+        assert!(apply_mutation(
             &MutationEnvelope {
                 id: "m3".to_owned(),
                 seq: 3,
@@ -2821,7 +2850,7 @@ mod tests {
             &mut current_question_id,
             &mut recovery,
         )
-        .expect("apply flag");
+        .expect("apply flag"));
 
         assert_eq!(flags["q1"], true);
         assert_eq!(current_question_id.as_deref(), Some("task-1"));
@@ -2861,7 +2890,7 @@ mod tests {
         let mut current_question_id = None;
         let mut recovery = json!({});
 
-        apply_mutation(
+        assert!(apply_mutation(
             &MutationEnvelope {
                 id: "m-pos".to_owned(),
                 seq: 1,
@@ -2883,7 +2912,7 @@ mod tests {
             &mut current_question_id,
             &mut recovery,
         )
-        .expect("apply position");
+        .expect("apply position"));
 
         assert_eq!(phase, "pre-check");
         assert_eq!(current_module, "listening");
@@ -2891,6 +2920,129 @@ mod tests {
         assert_eq!(recovery["clientPosition"]["phase"], "exam");
         assert_eq!(recovery["clientPosition"]["currentModule"], "reading");
         assert_eq!(recovery["clientPosition"]["currentQuestionId"], "q1");
+    }
+
+    #[test]
+    fn apply_mutation_ignores_unknown_question_and_task_ids() {
+        let answer_schema = AnswerSchema {
+            constraints: HashMap::from_iter([("q1".to_owned(), AnswerConstraint::Text)]),
+            sections: HashMap::from_iter([("q1".to_owned(), "reading".to_owned())]),
+        };
+        let writing_task_ids: HashSet<String> = HashSet::new();
+
+        let mut answers = json!({"q1": "A"});
+        let mut writing_answers = json!({});
+        let mut flags = json!({"q1": true});
+        let mut violations_snapshot = json!([]);
+        let mut phase = "exam".to_owned();
+        let mut current_module = "reading".to_owned();
+        let mut current_question_id = Some("q1".to_owned());
+        let mut recovery = json!({});
+
+        let applied = apply_mutation(
+            &MutationEnvelope {
+                id: "m-unknown-answer".to_owned(),
+                seq: 1,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 0).unwrap(),
+                mutation_type: "answer".to_owned(),
+                base_revision: None,
+                payload: json!({"questionId": "q2", "value": "B"}),
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("reading"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("unknown answer accepted");
+        assert!(!applied);
+        assert_eq!(answers, json!({"q1": "A"}));
+        assert_eq!(current_question_id.as_deref(), Some("q1"));
+
+        let applied = apply_mutation(
+            &MutationEnvelope {
+                id: "m-unknown-flag".to_owned(),
+                seq: 2,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 1).unwrap(),
+                mutation_type: "flag".to_owned(),
+                base_revision: None,
+                payload: json!({"questionId": "q2", "value": false}),
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("reading"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("unknown flag accepted");
+        assert!(!applied);
+        assert_eq!(flags, json!({"q1": true}));
+
+        let applied = apply_mutation(
+            &MutationEnvelope {
+                id: "m-unknown-writing".to_owned(),
+                seq: 3,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 2).unwrap(),
+                mutation_type: "writing_answer".to_owned(),
+                base_revision: None,
+                payload: json!({"taskId": "task-unknown", "value": "Draft"}),
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            Some("writing"),
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("unknown writing accepted");
+        assert!(!applied);
+        assert_eq!(writing_answers, json!({}));
+
+        let applied = apply_mutation(
+            &MutationEnvelope {
+                id: "m-unknown-position".to_owned(),
+                seq: 4,
+                timestamp: Utc.with_ymd_and_hms(2026, 1, 10, 9, 0, 3).unwrap(),
+                mutation_type: "position".to_owned(),
+                base_revision: None,
+                payload: json!({"phase":"exam","currentModule":"reading","currentQuestionId":"q2"}),
+            },
+            &answer_schema,
+            &writing_task_ids,
+            ObjectiveMutationGate::allow(),
+            None,
+            &mut answers,
+            &mut writing_answers,
+            &mut flags,
+            &mut violations_snapshot,
+            &mut phase,
+            &mut current_module,
+            &mut current_question_id,
+            &mut recovery,
+        )
+        .expect("unknown position accepted");
+        assert!(!applied);
+        assert_eq!(recovery, json!({}));
     }
 
     #[test]
@@ -2915,7 +3067,7 @@ mod tests {
         let mut current_question_id = Some("sentence-1:blank-1".to_owned());
         let mut recovery = json!({});
 
-        apply_mutation(
+        assert!(apply_mutation(
             &MutationEnvelope {
                 id: "m-pos-slot".to_owned(),
                 seq: 1,
@@ -2941,9 +3093,9 @@ mod tests {
             &mut current_question_id,
             &mut recovery,
         )
-        .expect("slot position should be accepted");
+        .expect("slot position should be accepted"));
 
-        apply_mutation(
+        assert!(apply_mutation(
             &MutationEnvelope {
                 id: "m-flag-slot".to_owned(),
                 seq: 2,
@@ -2968,7 +3120,7 @@ mod tests {
             &mut current_question_id,
             &mut recovery,
         )
-        .expect("slot flag should be accepted");
+        .expect("slot flag should be accepted"));
 
         assert_eq!(
             recovery["clientPosition"]["currentQuestionId"],

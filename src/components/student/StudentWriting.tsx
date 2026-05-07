@@ -9,6 +9,7 @@ import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { WritingChartPreview } from '../writing/WritingChartPreview';
 import { useSplitPaneResize } from './useSplitPaneResize';
+import { MIN_HEIGHTS } from '../../constants/uiConstants';
 
 interface StudentWritingProps {
   state: ExamState;
@@ -71,12 +72,13 @@ export function StudentWriting({
     dividerMode: isTabletMode ? 'overlay' : 'consumes-space',
   });
 
-  const currentTask = writingConfig.tasks.find(t => t.id === activeTaskId) || writingConfig.tasks[0];
-  const currentText = writingAnswers[activeTaskId] || '';
+	  const currentTask = writingConfig.tasks.find(t => t.id === activeTaskId) || writingConfig.tasks[0];
+	  const currentText = writingAnswers[activeTaskId] || '';
+	  const showEditorPlaceholder = !isEditorFocused && currentText.trim().length === 0;
 
-  const commitDraftText = useCallback(
-    (taskId: string, rawText: string, options?: { flushDurability?: boolean }) => {
-      const previous = lastCommittedDraftByTaskRef.current[taskId] ?? '';
+	  const commitDraftText = useCallback(
+	    (taskId: string, rawText: string, options?: { flushDurability?: boolean }) => {
+	      const previous = lastCommittedDraftByTaskRef.current[taskId] ?? '';
       if (rawText !== previous) {
         onWritingChange(taskId, rawText);
         lastCommittedDraftByTaskRef.current[taskId] = rawText;
@@ -488,10 +490,10 @@ export function StudentWriting({
                     Write your answer here…
                   </div>
               )}
-	              <div
-	                ref={editorRef}
-	                contentEditable
-	                onInput={handleEditorInput}
+		              <div
+		                ref={editorRef}
+		                contentEditable
+		                onInput={handleEditorInput}
                   suppressContentEditableWarning
                   role="textbox"
                   aria-multiline="true"
@@ -516,10 +518,14 @@ export function StudentWriting({
                   onCut={blockWritingEditorInteraction}
                   onDrop={blockWritingEditorInteraction}
                   onContextMenu={blockWritingEditorInteraction}
-	                className="flex-1 w-full p-4 md:p-6 lg:p-8 text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2"
-                  data-student-zoom-scroll
-	                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
-	                spellCheck={!security.preventAutocorrect}
+		                className={`flex-1 w-full text-base md:text-lg leading-relaxed text-gray-800 font-serif overflow-y-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+		                  isTabletMode
+		                    ? 'pt-4 pr-4 pb-4 pl-10 md:pt-6 md:pr-6 md:pb-6 md:pl-10 lg:pt-8 lg:pr-8 lg:pb-8 lg:pl-10'
+		                    : 'p-4 md:p-6 lg:p-8'
+		                }`}
+		                  data-student-zoom-scroll
+		                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
+		                spellCheck={!security.preventAutocorrect}
 	                autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
 	                autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
 	              />
