@@ -332,17 +332,27 @@ async function defaultWaitForExamLive(page: Page, ctx: ScenarioContext): Promise
       return;
     }
 
-    const runtime = await page.evaluate(async ({ origin, scheduleId }) => {
+    const live = await page.evaluate(async ({ origin, scheduleId }) => {
       try {
-        const res = await fetch(`${origin}/api/v1/schedules/${scheduleId}/runtime`, { credentials: 'include' });
-        if (!res.ok) return null;
-        return await res.json();
+        const res = await fetch(`${origin}/api/v1/student/sessions/${scheduleId}/live`, {
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          return { ok: false, status: res.status };
+        }
+        return { ok: true, payload: await res.json() };
       } catch {
         return null;
       }
     }, { origin: ctx.origin, scheduleId: ctx.scheduleId }).catch(() => null);
 
-    const status = runtime && typeof runtime === 'object' ? (runtime as { status?: string }).status : null;
+    const livePayload = live && typeof live === 'object'
+      ? (live as { payload?: { data?: { runtime?: { status?: string } } | { status?: string } } }).payload
+      : null;
+    const runtime = livePayload && typeof livePayload === 'object' && 'data' in livePayload
+      ? (livePayload as { data?: { runtime?: { status?: string } } }).data?.runtime
+      : (livePayload as { runtime?: { status?: string } } | null)?.runtime;
+    const status = runtime && typeof runtime === 'object' ? runtime.status ?? null : null;
     if (status === 'live') {
       return;
     }
