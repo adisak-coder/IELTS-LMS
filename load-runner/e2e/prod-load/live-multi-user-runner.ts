@@ -503,6 +503,32 @@ function eventBase(userId: string, status: string, phase: Phase, error?: string)
   return { userId, status, phase, lastSeenAt: new Date().toISOString(), ...(error ? { error } : {}) };
 }
 
+function formatWritingProof(
+  comparisons: Array<{ taskId: string; expected: string | null; actual: string; match: boolean }>,
+): string {
+  if (comparisons.length === 0) return 'No writing task rows returned from grading API.';
+  return comparisons
+    .map((item) => {
+      const flag = item.match ? 'OK' : 'DIFF';
+      const expected = item.expected ?? '<missing in runner capture>';
+      return `[${flag}] ${item.taskId}\nexpected: ${expected}\nactual:   ${item.actual}`;
+    })
+    .join('\n\n');
+}
+
+function formatBotAnswersProof(expected: { answers: Record<string, unknown>; writingAnswers: Record<string, string> }): string {
+  const answerRows = Object.entries(expected.answers)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, value]) => `Q ${id}: ${typeof value === 'string' ? value : JSON.stringify(value)}`);
+  const writingRows = Object.entries(expected.writingAnswers)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([id, value]) => `W ${id}: ${value}`);
+
+  const objectiveBlock = answerRows.length > 0 ? answerRows.join('\n') : '<no objective answers captured>';
+  const writingBlock = writingRows.length > 0 ? writingRows.join('\n') : '<no writing answers captured>';
+  return `Objective Answers:\n${objectiveBlock}\n\nWriting Answers:\n${writingBlock}`;
+}
+
 function createMirroredBroadcaster(base: { broadcast: (event: DashboardEvent) => void }): {
   broadcast: (event: DashboardEvent) => void;
 } {
@@ -711,6 +737,11 @@ async function run(): Promise<void> {
 
       await defaultScenario.execute(page, user, ctx);
       await defaultScenario.finalize(page, user, ctx);
+      const botAnswersProof = formatBotAnswersProof(answerCapture.expected);
+      dashboard.broadcast({
+        ...eventBase(user.userId, 'answers_captured', phase),
+        comparison: { botAnswersProof },
+      });
 
       if (gradingVerifier && answerCapture) {
         let submissionId = answerCapture.getSubmissionId();
@@ -739,6 +770,26 @@ async function run(): Promise<void> {
           throw new Error('GRADING_VERIFY_NO_SUBMISSION_ID: unable to resolve UUID grading submission for student.');
         }
         const verifyResult = await gradingVerifier.verifySubmission(submissionId, answerCapture.expected);
+        const writingProof = formatWritingProof(verifyResult.writingComparisons);
+        const sameCount = verifyResult.writingComparisons.filter((item) => item.match).length;
+        const diffCount = verifyResult.writingComparisons.length - sameCount;
+        dashboard.broadcast({
+          ...eventBase(user.userId, verifyResult.ok ? 'grading_verified' : 'grading_mismatch', phase),
+          comparison: { submissionId, writingProof, botAnswersProof, sameCount, diffCount },
+          metrics: { writingComparedTasks: verifyResult.writingComparisons.length, mismatches: verifyResult.mismatches.length },
+        });
+        appendLog(
+          JSON.stringify({
+            ts: new Date().toISOString(),
+            userId: user.userId,
+            scheduleId: ctx.scheduleId,
+            event: 'GRADING_VERIFY_COMPARE',
+            submissionId,
+            writingComparedTasks: verifyResult.writingComparisons.length,
+            mismatches: verifyResult.mismatches.length,
+            writingComparisons: verifyResult.writingComparisons,
+          }),
+        );
         if (!verifyResult.ok) {
           const preview = verifyResult.mismatches
             .slice(0, 5)
