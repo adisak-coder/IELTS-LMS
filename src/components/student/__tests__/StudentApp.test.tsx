@@ -413,17 +413,86 @@ describe('StudentApp runtime-backed mode', () => {
     }
   });
 
+  it('keeps viewport height locked for iPad Chrome even when tablet heuristic is false', async () => {
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    const originalMatchMedia = window.matchMedia;
+    const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(window.navigator, 'maxTouchPoints');
+    const originalUserAgent = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent');
+    const visualViewport = installVisualViewportMock(900);
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1600 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    window.matchMedia = vi.fn(createMatchMediaMock(false)) as unknown as typeof window.matchMedia;
+    Object.defineProperty(window.navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/120.0.0.0 Safari/604.1',
+    });
+
+    try {
+      render(
+        <StudentAppWrapper
+          state={readingState}
+          onExit={() => {}}
+          scheduleId="sched-1"
+          attemptSnapshot={createReadingAttemptSnapshot()}
+          runtimeSnapshot={createReadingRuntimeSnapshot()}
+        />,
+      );
+
+      const root = document.documentElement;
+      await waitFor(() => {
+        expect(root.style.getPropertyValue('--student-viewport-height')).toBe('900px');
+      });
+
+      const input = await screen.findByRole('textbox', { name: /answer for question 1/i });
+      fireEvent.focus(input);
+
+      act(() => {
+        visualViewport.setHeight(600);
+        visualViewport.dispatchResize();
+      });
+
+      expect(root.style.getPropertyValue('--student-viewport-height')).toBe('900px');
+    } finally {
+      visualViewport.restore();
+      window.matchMedia = originalMatchMedia;
+      if (originalInnerWidth) {
+        Object.defineProperty(window, 'innerWidth', originalInnerWidth);
+      }
+      if (originalInnerHeight) {
+        Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+      }
+      if (originalMaxTouchPoints) {
+        Object.defineProperty(window.navigator, 'maxTouchPoints', originalMaxTouchPoints);
+      } else {
+        Reflect.deleteProperty(window.navigator, 'maxTouchPoints');
+      }
+      if (originalUserAgent) {
+        Object.defineProperty(window.navigator, 'userAgent', originalUserAgent);
+      }
+    }
+  });
+
   it('still updates viewport height during editable focus outside tablet mode', async () => {
     const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
     const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
     const originalMatchMedia = window.matchMedia;
     const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(window.navigator, 'maxTouchPoints');
+    const originalUserAgent = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent');
     const visualViewport = installVisualViewportMock(900);
 
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1366 });
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
     window.matchMedia = vi.fn(createMatchMediaMock(false)) as unknown as typeof window.matchMedia;
     Object.defineProperty(window.navigator, 'maxTouchPoints', { configurable: true, value: 0 });
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      value:
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    });
 
     try {
       render(
@@ -463,6 +532,9 @@ describe('StudentApp runtime-backed mode', () => {
         Object.defineProperty(window.navigator, 'maxTouchPoints', originalMaxTouchPoints);
       } else {
         Reflect.deleteProperty(window.navigator, 'maxTouchPoints');
+      }
+      if (originalUserAgent) {
+        Object.defineProperty(window.navigator, 'userAgent', originalUserAgent);
       }
     }
   });

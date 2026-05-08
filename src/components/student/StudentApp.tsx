@@ -15,7 +15,7 @@ import { StudentSpeaking } from './StudentSpeaking';
 import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
-import { getFullscreenElement, requestStudentFullscreen } from './fullscreen';
+import { getFullscreenElement, isAppleMobileDevice, requestStudentFullscreen } from './fullscreen';
 import {
   canDecreaseStudentPassageReadability,
   canIncreaseStudentPassageReadability,
@@ -124,6 +124,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const { actions: attemptActions, state: attemptState } = useStudentAttempt();
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
+  const shouldLockViewportForKeyboard = tabletMode || isAppleMobileDevice();
   const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
     uiState.accessibilitySettings.passageReadabilityLevel,
   );
@@ -269,9 +270,9 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     }
 
     if (viewportLockForExamSessionRef.current === null) {
-      viewportLockForExamSessionRef.current = tabletMode;
+      viewportLockForExamSessionRef.current = shouldLockViewportForKeyboard;
     }
-  }, [effectivePhase, tabletMode]);
+  }, [effectivePhase, shouldLockViewportForKeyboard]);
 
   const flushAndSubmitCurrentModuleWithRetry = useMemo(() => {
     return async (fingerprint: string) => {
