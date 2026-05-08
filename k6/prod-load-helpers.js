@@ -2,6 +2,8 @@ import http from 'k6/http';
 import { randomBytes } from 'k6/crypto';
 import { sleep } from 'k6';
 
+const EXPECT_2XX_OR_409 = http.expectedStatuses({ min: 200, max: 299 }, 409);
+
 export function readJson(path) {
   try {
     return JSON.parse(open(path));
@@ -146,6 +148,58 @@ export function pickFirstWritingTaskId(snapshot) {
     for (const k of Object.keys(value)) stack.push(value[k]);
   }
   return '';
+}
+
+export function collectObjectiveQuestionIds(snapshot) {
+  const seen = new Set();
+  const ordered = [];
+  const stack = [snapshot];
+  while (stack.length) {
+    const value = stack.pop();
+    if (!value || typeof value !== 'object') continue;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i += 1) stack.push(value[i]);
+      continue;
+    }
+    if (Array.isArray(value.questions)) {
+      for (let i = 0; i < value.questions.length; i += 1) {
+        const q = value.questions[i];
+        const id = q && typeof q === 'object' ? q.id : '';
+        if (typeof id === 'string' && id.trim() && !seen.has(id)) {
+          seen.add(id);
+          ordered.push(id);
+        }
+      }
+    }
+    for (const k of Object.keys(value)) stack.push(value[k]);
+  }
+  return ordered;
+}
+
+export function collectWritingTaskIds(snapshot) {
+  const seen = new Set();
+  const ordered = [];
+  const stack = [snapshot];
+  while (stack.length) {
+    const value = stack.pop();
+    if (!value || typeof value !== 'object') continue;
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i += 1) stack.push(value[i]);
+      continue;
+    }
+    if (Array.isArray(value.tasks)) {
+      for (let i = 0; i < value.tasks.length; i += 1) {
+        const task = value.tasks[i];
+        const id = task && typeof task === 'object' ? task.id : '';
+        if (typeof id === 'string' && id.trim() && !seen.has(id)) {
+          seen.add(id);
+          ordered.push(id);
+        }
+      }
+    }
+    for (const k of Object.keys(value)) stack.push(value[k]);
+  }
+  return ordered;
 }
 
 export function selectStaffCandidates(creds, preferEditor = true) {
@@ -398,14 +452,185 @@ export function sendHeartbeat(baseUrl, scheduleId, jar, attemptId, attemptToken,
   );
 }
 
+const attemptRevisionCache = new Map();
+
+function coerceRevision(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0;
+}
+
+function toOperationCommand(mutation, baseRevision) {
+  if (!mutation || typeof mutation !== 'object') return null;
+
+  if (
+    typeof mutation.mutationId === 'string' &&
+    mutation.mutationId.length > 0 &&
+    typeof mutation.type === 'string' &&
+    typeof mutation.baseRevision === 'number'
+  ) {
+    return mutation;
+  }
+
+  const mutationId = typeof mutation.id === 'string' && mutation.id.length > 0 ? mutation.id : uuidV4();
+  const payload = mutation.payload && typeof mutation.payload === 'object' ? mutation.payload : {};
+  const mutationType = typeof mutation.mutationType === 'string' ? mutation.mutationType : '';
+
+  if (mutationType === 'answer') {
+    const questionId = typeof payload.questionId === 'string' ? payload.questionId : '';
+    if (!questionId) return null;
+    const slotIndex = Number(payload.slotIndex);
+    const hasSlot = Number.isFinite(slotIndex) && slotIndex >= 0 && Math.trunc(slotIndex) === slotIndex;
+    const value = payload.value;
+
+    if (hasSlot) {
+      if (Array.isArray(value)) {
+        if (slotIndex >= value.length) return null;
+        const slotValue = value[slotIndex];
+        if (typeof slotValue === 'string' && slotValue.trim().length > 0) {
+          return { mutationId, baseRevision, type: 'SetSlot', questionId, slotIndex, value: slotValue };
+        }
+        if (slotValue === null || (typeof slotValue === 'string' && slotValue.trim().length === 0)) {
+          return { mutationId, baseRevision, type: 'ClearSlot', questionId, slotIndex };
+        }
+        return null;
+      }
+
+      if (typeof value === 'string') {
+        if (value.trim().length > 0) {
+          return { mutationId, baseRevision, type: 'SetSlot', questionId, slotIndex, value };
+        }
+        return { mutationId, baseRevision, type: 'ClearSlot', questionId, slotIndex };
+      }
+
+      if (value === null) return { mutationId, baseRevision, type: 'ClearSlot', questionId, slotIndex };
+      return null;
+    }
+
+    if (Array.isArray(value)) {
+      const values = value.filter((entry) => typeof entry === 'string' && entry.trim().length > 0);
+      if (values.length === 0) return { mutationId, baseRevision, type: 'ClearChoice', questionId };
+      return { mutationId, baseRevision, type: 'SetChoice', questionId, value: values };
+    }
+
+    if (typeof value === 'string') {
+      if (value.trim().length === 0) return { mutationId, baseRevision, type: 'ClearChoice', questionId };
+      return { mutationId, baseRevision, type: 'SetChoice', questionId, value: [value] };
+    }
+
+    if (value === null || value === undefined) return { mutationId, baseRevision, type: 'ClearChoice', questionId };
+    return null;
+  }
+
+  if (mutationType === 'writing_answer') {
+    const taskId = typeof payload.taskId === 'string' ? payload.taskId : '';
+    if (!taskId) return null;
+    const value = payload.value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return { mutationId, baseRevision, type: 'SetEssayText', taskId, value };
+    }
+    return { mutationId, baseRevision, type: 'ClearEssayText', taskId };
+  }
+
+  if (mutationType === 'flag') {
+    const questionId = typeof payload.questionId === 'string' ? payload.questionId : '';
+    if (!questionId || typeof payload.value !== 'boolean') return null;
+    return { mutationId, baseRevision, type: 'SetChoice', questionId, value: payload.value };
+  }
+
+  return null;
+}
+
 export function sendMutationBatch(baseUrl, scheduleId, jar, attemptId, attemptToken, clientSessionId, mutations, tags) {
+  let baseRevision = attemptRevisionCache.has(attemptId) ? attemptRevisionCache.get(attemptId) : null;
+  if (baseRevision === null || baseRevision === undefined) {
+    const sessionResp = getStudentSession(baseUrl, scheduleId, jar, '', { name: 'student_session_for_revision' });
+    if (sessionResp.status === 200) {
+      try {
+        const json = sessionResp.json();
+        const attempt = ((json || {}).data || {}).attempt || {};
+        baseRevision = coerceRevision(attempt.revision);
+      } catch (_) {
+        baseRevision = 0;
+      }
+    } else {
+      baseRevision = 0;
+    }
+    attemptRevisionCache.set(attemptId, baseRevision);
+  }
+
+  const operationMutations = [];
+  let nextBaseRevision = coerceRevision(baseRevision);
+  for (const mutation of mutations || []) {
+    const command = toOperationCommand(mutation, nextBaseRevision);
+    if (!command) continue;
+    operationMutations.push(command);
+    const cmdBase = coerceRevision(command.baseRevision);
+    nextBaseRevision = Math.max(nextBaseRevision, cmdBase + 1);
+  }
+
+  if (operationMutations.length === 0) {
+    return {
+      status: 200,
+      timings: { duration: 0 },
+      body: '{"data":{"serverAcceptedThroughSeq":0}}',
+      json: () => ({ data: { serverAcceptedThroughSeq: 0 } }),
+    };
+  }
+
+  const doPost = (commands) =>
+    http.post(
+      `${baseUrl}/api/v1/student/sessions/${scheduleId}/mutations:batch`,
+      JSON.stringify({
+        attemptId,
+        mutations: commands,
+      }),
+      {
+        jar,
+        headers: jsonHeaders({
+          authorization: `Bearer ${attemptToken}`,
+          'Idempotency-Key': uuidV4(),
+        }),
+        responseCallback: EXPECT_2XX_OR_409,
+        tags,
+      },
+    );
+
+  const resp = doPost(operationMutations);
+
+  if (resp.status === 200) {
+    try {
+      const json = resp.json();
+      const data = (json || {}).data || {};
+      const revision = data.revision !== undefined ? data.revision : ((data.attempt || {}).revision);
+      attemptRevisionCache.set(attemptId, coerceRevision(revision));
+    } catch (_) {}
+  }
+
+  return resp;
+}
+
+export function submitAttempt(baseUrl, scheduleId, jar, attemptId, attemptToken, tags) {
+  const sessionResp = getStudentSession(baseUrl, scheduleId, jar, '', { name: 'student_session_for_submit' });
+  let lastSeenRevision = 0;
+  let serverAcceptedThroughSeq = 0;
+  if (sessionResp.status === 200) {
+    try {
+      const json = sessionResp.json();
+      const attempt = ((json || {}).data || {}).attempt || {};
+      lastSeenRevision = coerceRevision(attempt.revision);
+      serverAcceptedThroughSeq = coerceRevision((((attempt || {}).recovery || {}).serverAcceptedThroughSeq));
+    } catch (_) {}
+  }
+
+  const submissionId = `k6-submit-${attemptId}-${uuidV4()}`;
   return http.post(
-    `${baseUrl}/api/v1/student/sessions/${scheduleId}/mutations:batch`,
+    `${baseUrl}/api/v1/student/sessions/${scheduleId}/submit`,
     JSON.stringify({
       attemptId,
-      studentKey: '',
-      clientSessionId,
-      mutations,
+      lastSeenRevision,
+      submissionId,
+      clientFinalSeq: serverAcceptedThroughSeq,
+      serverAcceptedThroughSeq,
     }),
     {
       jar,
@@ -413,21 +638,7 @@ export function sendMutationBatch(baseUrl, scheduleId, jar, attemptId, attemptTo
         authorization: `Bearer ${attemptToken}`,
         'Idempotency-Key': uuidV4(),
       }),
-      tags,
-    },
-  );
-}
-
-export function submitAttempt(baseUrl, scheduleId, jar, attemptId, attemptToken, tags) {
-  return http.post(
-    `${baseUrl}/api/v1/student/sessions/${scheduleId}/submit`,
-    JSON.stringify({ attemptId, studentKey: '' }),
-    {
-      jar,
-      headers: jsonHeaders({
-        authorization: `Bearer ${attemptToken}`,
-        'Idempotency-Key': uuidV4(),
-      }),
+      responseCallback: EXPECT_2XX_OR_409,
       tags,
     },
   );

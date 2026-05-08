@@ -58,6 +58,15 @@ Set `K6_CONFIRM_PROD=true` before running any scenario. The scripts refuse to ru
 - `K6_STUDENT_OFFSET` slices into the student list for smaller shards
 - `K6_RUN_ID` labels the run in logs and request reasons
 - `K6_DEBUG=true` enables extra logging
+- `K6_REALISTIC_MODE=true` sends incremental typing-style answer mutations before submit
+- `K6_REALISTIC_TYPE_STEPS` controls typing chunks per answer/writing field (default `8`)
+- `K6_REALISTIC_STEP_PAUSE_MS` pause between typing chunks (default `400`)
+- strict answer integrity verification is now enabled by default in `prod-submit-storm-200.js`:
+  - verifies all objective answer keys and all writing task keys
+  - canonicalized comparison (`\\r\\n`/`\\r` -> `\\n`, trim outer whitespace, preserve internal spacing)
+  - objective answers are sent as array-style `SetChoice` payloads by default
+- `K6_MAX_TARGET_KEYS_PER_USER` guards pathological snapshots (default `400`)
+- `K6_DIFF_DEBUG_RAW=true` includes raw expected/actual values in mismatch artifacts (default is hashed output only)
 
 ## Typical runs
 
@@ -85,6 +94,18 @@ Submit storm:
 K6_CONFIRM_PROD=true \
 K6_STUDENTS=200 \
 K6_CHECKED_IN_THRESHOLD=200 \
+k6 run k6/prod-submit-storm-200.js
+```
+
+Submit storm with realistic typing cadence:
+
+```bash
+K6_CONFIRM_PROD=true \
+K6_STUDENTS=200 \
+K6_CHECKED_IN_THRESHOLD=200 \
+K6_REALISTIC_MODE=true \
+K6_REALISTIC_TYPE_STEPS=10 \
+K6_REALISTIC_STEP_PAUSE_MS=300 \
 k6 run k6/prod-submit-storm-200.js
 ```
 
