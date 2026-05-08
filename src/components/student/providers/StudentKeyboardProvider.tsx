@@ -359,6 +359,18 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
         return;
       }
 
+      const target = event.target;
+      const targetElement = target instanceof HTMLElement ? target : null;
+      const highlightModeEnabled = uiState.accessibilitySettings.highlightMode;
+      const isReadingModule = runtimeState.currentModule === 'reading';
+      const withinHighlightableContainer = Boolean(
+        targetElement?.closest('[data-student-highlightable="true"]'),
+      );
+
+      if (highlightModeEnabled && isReadingModule && withinHighlightableContainer) {
+        return;
+      }
+
       handleRestrictedInteraction(
         event,
         'CONTEXT_MENU_BLOCKED',

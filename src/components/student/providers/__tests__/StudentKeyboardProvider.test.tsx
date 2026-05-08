@@ -237,6 +237,47 @@ describe('StudentKeyboardProvider', () => {
     expect(harness.runtime.state.violations.at(-1)?.type).toBe('CONTEXT_MENU_BLOCKED');
   });
 
+  it('allows context menu inside highlightable reading text when highlight mode is active', () => {
+    const harness = renderHarness();
+
+    act(() => {
+      harness.runtime.actions.setCurrentModule('reading');
+      harness.ui.actions.toggleHighlightMode();
+    });
+
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      harness.highlightTarget.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.runtime.state.violations).toHaveLength(0);
+  });
+
+  it('still blocks context menu inside highlightable text when highlight mode is off', () => {
+    const harness = renderHarness();
+
+    act(() => {
+      harness.runtime.actions.setCurrentModule('reading');
+    });
+
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      harness.highlightTarget.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(harness.runtime.state.violations.at(-1)?.type).toBe('CONTEXT_MENU_BLOCKED');
+  });
+
   it('blocks drag and drop interactions during exam phase', () => {
     const harness = renderHarness();
     const event = new Event('dragstart', {
