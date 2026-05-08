@@ -1161,7 +1161,12 @@ function toOperationCommand(
       };
     }
 
-    if (rawValue === null || rawValue === undefined) {
+    // Treat malformed/missing values as no-ops to avoid accidental server-side clears.
+    if (rawValue === undefined) {
+      return null;
+    }
+
+    if (rawValue === null) {
       return {
         mutationId: mutation.id,
         baseRevision,
@@ -1177,6 +1182,9 @@ function toOperationCommand(
     const taskId = mutation.payload.taskId;
     const value = mutation.payload.value;
     if (typeof taskId !== 'string' || !taskId.trim()) {
+      return null;
+    }
+    if (typeof value !== 'string') {
       return null;
     }
     if (typeof value === 'string' && value.trim()) {
@@ -2149,7 +2157,7 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
       }
 
       const shouldAttemptPrune =
-        statusCode === 409 && (reason === 'SECTION_MISMATCH' || reason === 'OBJECTIVE_LOCKED');
+        statusCode === 409 && reason === 'SECTION_MISMATCH';
       if (!shouldAttemptPrune) {
         throw first.error;
       }

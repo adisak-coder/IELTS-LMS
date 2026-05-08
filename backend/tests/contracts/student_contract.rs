@@ -203,6 +203,104 @@ async fn precheck_persists_integrity_on_the_attempt() {
 }
 
 #[tokio::test]
+async fn precheck_replays_same_idempotency_key_and_rejects_hash_mismatch() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let request = StudentPrecheckRequest {
+        student_key: student_key.clone(),
+        candidate_id: "alice".to_owned(),
+        candidate_name: "Alice Roe".to_owned(),
+        candidate_email: "alice@example.com".to_owned(),
+        email: Some("alice@example.com".to_owned()),
+        wcode: Some("W123456".to_owned()),
+        client_session_id: Uuid::new_v4().to_string(),
+        pre_check: json!({
+            "completedAt": "2026-01-10T08:50:00Z",
+            "browserFamily": "chrome",
+            "checks": [{"id": "browser", "status": "pass"}]
+        }),
+        device_fingerprint_hash: Some("fp-alice".to_owned()),
+    };
+
+    let first = app
+        .clone()
+        .oneshot(
+            auth.with_csrf(Request::builder())
+                .method("POST")
+                .uri(format!("/api/v1/student/sessions/{}/precheck", schedule_id))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "precheck-replay-1")
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let first_json = json_body(first).await;
+
+    let replay = app
+        .clone()
+        .oneshot(
+            auth.with_csrf(Request::builder())
+                .method("POST")
+                .uri(format!("/api/v1/student/sessions/{}/precheck", schedule_id))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "precheck-replay-1")
+                .body(Body::from(serde_json::to_vec(&request).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_json = json_body(replay).await;
+    assert_eq!(replay_json["data"], first_json["data"]);
+
+    let attempt_id = first_json["data"]["id"].as_str().unwrap().to_owned();
+    let precheck_audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM session_audit_logs WHERE schedule_id = ? AND target_student_id = ? AND action_type = 'STUDENT_PRECHECK'",
+    )
+    .bind(schedule_id.to_string())
+    .bind(&attempt_id)
+    .fetch_one(database.pool())
+    .await
+    .unwrap();
+    assert_eq!(precheck_audit_count, 1);
+
+    let conflict_payload = StudentPrecheckRequest {
+        pre_check: json!({
+            "completedAt": "2026-01-10T08:51:00Z",
+            "browserFamily": "firefox",
+            "checks": [{"id": "browser", "status": "pass"}]
+        }),
+        ..request
+    };
+    let conflict = app
+        .oneshot(
+            auth.with_csrf(Request::builder())
+                .method("POST")
+                .uri(format!("/api/v1/student/sessions/{}/precheck", schedule_id))
+                .header("content-type", "application/json")
+                .header("idempotency-key", "precheck-replay-1")
+                .body(Body::from(serde_json::to_vec(&conflict_payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    let conflict_json = json_body(conflict).await;
+    assert_eq!(conflict_json["error"]["code"], "CONFLICT");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn bootstrap_creates_or_hydrates_the_attempt_context() {
     let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;

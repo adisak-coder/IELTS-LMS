@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, renderHook } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
 import type { ExamConfig, ExamState } from '../../../../types';
@@ -233,6 +233,25 @@ function renderRuntime(options?: {
   return renderHook(() => useStudentRuntime(), { wrapper });
 }
 
+function buildCompletedPreCheckAttempt(): StudentAttempt {
+  return {
+    ...baseAttempt,
+    phase: 'pre-check',
+    integrity: {
+      ...baseAttempt.integrity,
+      preCheck: {
+        completedAt: '2026-01-01T00:01:00.000Z',
+        browserFamily: 'chrome',
+        browserVersion: 124,
+        screenDetailsSupported: true,
+        heartbeatReady: true,
+        acknowledgedSafariLimitation: false,
+        checks: [],
+      },
+    },
+  };
+}
+
 describe('StudentRuntimeProvider', () => {
   it('hydrates position and violations from attempt snapshot', () => {
     const hydratedAttempt: StudentAttempt = {
@@ -325,5 +344,90 @@ describe('StudentRuntimeProvider', () => {
     });
 
     expect(result.current.state.currentModule).toBe('reading');
+  });
+
+  it('does not regress back to pre-check after continue when stale runtime-backed snapshots arrive', () => {
+    const runtimeNotStarted: ExamSessionRuntime = {
+      ...createRuntimeSnapshot('listening'),
+      status: 'not_started',
+      currentSectionKey: null,
+      activeSectionKey: null,
+      currentSectionRemainingSeconds: 0,
+      waitingForNextSection: false,
+      sections: [],
+    };
+
+    function Harness() {
+      const runtime = useStudentRuntime();
+      return (
+        <>
+          <span data-testid="phase">{runtime.state.phase}</span>
+          <button
+            type="button"
+            onClick={() => {
+              runtime.actions.setPhase('exam');
+            }}
+          >
+            Continue
+          </button>
+        </>
+      );
+    }
+
+    const initialAttempt = buildCompletedPreCheckAttempt();
+    const { rerender } = render(
+      <StudentRuntimeProvider
+        state={mockExamState}
+        onExit={vi.fn()}
+        attemptSnapshot={initialAttempt}
+        runtimeBacked
+        runtimeSnapshot={runtimeNotStarted}
+      >
+        <Harness />
+      </StudentRuntimeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByTestId('phase')).toHaveTextContent('exam');
+
+    const staleRefreshAttempt: StudentAttempt = {
+      ...initialAttempt,
+      updatedAt: '2026-01-01T00:01:02.000Z',
+    };
+
+    rerender(
+      <StudentRuntimeProvider
+        state={mockExamState}
+        onExit={vi.fn()}
+        attemptSnapshot={staleRefreshAttempt}
+        runtimeBacked
+        runtimeSnapshot={runtimeNotStarted}
+      >
+        <Harness />
+      </StudentRuntimeProvider>,
+    );
+
+    expect(screen.getByTestId('phase')).toHaveTextContent('exam');
+  });
+
+  it('boots runtime-backed delivery in exam phase once pre-check is completed', () => {
+    const runtimeNotStarted: ExamSessionRuntime = {
+      ...createRuntimeSnapshot('listening'),
+      status: 'not_started',
+      currentSectionKey: null,
+      activeSectionKey: null,
+      currentSectionRemainingSeconds: 0,
+      waitingForNextSection: false,
+      sections: [],
+    };
+
+    const initialAttempt = buildCompletedPreCheckAttempt();
+    const { result } = renderRuntime({
+      attemptSnapshot: initialAttempt,
+      runtimeBacked: true,
+      runtimeSnapshot: runtimeNotStarted,
+    });
+
+    expect(result.current.state.phase).toBe('exam');
   });
 });

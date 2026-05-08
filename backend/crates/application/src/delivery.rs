@@ -13,7 +13,7 @@ use ielts_backend_infrastructure::{
     actor_context::{ActorContext, ActorRole},
     auth::sha256_hex,
     config::AppConfig,
-    idempotency::{IdempotencyRecord, IdempotencyRepository},
+    idempotency::{IdempotencyLookupStatus, IdempotencyRecord, IdempotencyRepository},
     live_mode::LiveModeService,
 };
 use serde::{de::DeserializeOwned, Serialize};
@@ -269,7 +269,24 @@ impl DeliveryService {
         &self,
         schedule_id: Uuid,
         req: StudentPrecheckRequest,
+        idempotency_key: Option<String>,
     ) -> Result<StudentAttempt, DeliveryError> {
+        let repository = self.idempotency_repository();
+        let route_key = precheck_route_key(schedule_id);
+        let request_hash = self.idempotency_request_hash(&req, idempotency_key.as_ref())?;
+        if let Some(response) = self
+            .lookup_idempotent_response(
+                &repository,
+                &req.student_key,
+                &route_key,
+                idempotency_key.as_deref(),
+                request_hash.as_deref(),
+            )
+            .await?
+        {
+            return Ok(response);
+        }
+
         let has_device_fingerprint = req.device_fingerprint_hash.is_some();
         let schedule = self.load_schedule(schedule_id).await?;
         let version = self
@@ -358,6 +375,35 @@ impl DeliveryService {
         }))
         .execute(&self.pool)
         .await?;
+
+        if let Some(idempotency_key) = idempotency_key.as_deref() {
+            let response_body = serde_json::to_value(&updated).map_err(|err| {
+                DeliveryError::Internal(format!(
+                    "Failed to serialize idempotent precheck response: {err}"
+                ))
+            })?;
+            let request_hash = request_hash
+                .as_deref()
+                .expect("request hash present when idempotency key exists");
+            let (status, record) = repository
+                .store_or_replay(
+                    &req.student_key,
+                    &route_key,
+                    idempotency_key,
+                    request_hash,
+                    200,
+                    response_body,
+                )
+                .await?;
+            if status == IdempotencyLookupStatus::Conflict {
+                return Err(DeliveryError::conflict(
+                    "Idempotency-Key does not match the original request.".to_owned(),
+                ));
+            }
+            if status == IdempotencyLookupStatus::Replay {
+                return deserialize_idempotent_response(&record);
+            }
+        }
 
         Ok(updated)
     }
@@ -1778,6 +1824,10 @@ fn derive_student_key(schedule_id: Uuid, candidate_id: &str) -> String {
 
 fn mutation_batch_route_key(schedule_id: Uuid) -> String {
     format!("POST:/api/v1/student/sessions/{schedule_id}/mutations:batch")
+}
+
+fn precheck_route_key(schedule_id: Uuid) -> String {
+    format!("POST:/api/v1/student/sessions/{schedule_id}/precheck")
 }
 
 fn submit_route_key(schedule_id: Uuid) -> String {

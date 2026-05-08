@@ -296,6 +296,61 @@ describe('studentAttemptRepository', () => {
     expect(cachedAttempts[0]?.recovery.serverAcceptedThroughSeq).toBe(1);
   });
 
+  it('skips malformed answer mutations with undefined values instead of clearing server answers', async () => {
+    const attempt = makeAttempt({
+      answers: { q1: 'SERVER' },
+      recovery: { ...makeAttempt().recovery, clientSessionId: 'client-session-2' },
+      integrity: { ...makeAttempt().integrity, clientSessionId: 'client-session-2' },
+    });
+    await studentAttemptRepository.saveAttempt(attempt);
+    storeAttemptCredential(attempt);
+
+    await studentAttemptRepository.savePendingMutations(attempt.id, [
+      {
+        id: 'mutation-malformed',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: '2026-01-10T09:00:01.000Z',
+        type: 'answer',
+        payload: { questionId: 'q1', value: undefined } as unknown as StudentAttemptMutation['payload'],
+      } as unknown as StudentAttemptMutation,
+      {
+        id: 'mutation-valid',
+        attemptId: attempt.id,
+        scheduleId: attempt.scheduleId,
+        timestamp: '2026-01-10T09:00:02.000Z',
+        type: 'answer',
+        payload: { questionId: 'q2', value: 'A' },
+      },
+    ]);
+
+    const post = vi.mocked(backendPost);
+    post.mockResolvedValueOnce({
+      appliedMutationCount: 1,
+      serverAcceptedThroughSeq: 1,
+      revision: 1,
+    });
+
+    await studentAttemptRepository.saveAttempt(attempt);
+
+    expect(post).toHaveBeenCalledWith(
+      '/v1/student/sessions/schedule-1/mutations:batch',
+      expect.objectContaining({
+        attemptId: attempt.id,
+        mutations: [
+          expect.objectContaining({
+            mutationId: 'mutation-valid',
+            baseRevision: 0,
+            type: 'SetScalar',
+            questionId: 'q2',
+            value: 'A',
+          }),
+        ],
+      }),
+      expect.any(Object),
+    );
+  });
+
   it('preserves cached local answers when local accepted sequence is newer than incoming', async () => {
     const localAttempt = makeAttempt({
       answers: { q1: 'LOCAL' },

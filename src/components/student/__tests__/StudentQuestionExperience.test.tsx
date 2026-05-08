@@ -257,6 +257,68 @@ describe('student question experience', () => {
     );
   });
 
+  it('renders multiple placeholders in a single table cell as separate answer slots', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-multi-slot',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Item', 'Details'],
+      rows: [['Special dietary requirements:', 'no _______ (red), _______ (green)']],
+      cells: [
+        { id: 'cell-a', row: 0, col: 1, placeholderIndex: 0, correctAnswer: 'nuts' },
+        { id: 'cell-b', row: 0, col: 1, placeholderIndex: 1, correctAnswer: 'fish' },
+      ],
+      answerRule: 'ONE_WORD',
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={5}
+        answer={['NUTS', 'FISH']}
+        onChange={() => {}}
+        slotIds={['table-multi-slot:cell-a', 'table-multi-slot:cell-b']}
+      />,
+    );
+
+    expect(screen.getByRole('textbox', { name: 'Answer for question 5' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 6' })).toBeInTheDocument();
+    expect((screen.getByRole('textbox', { name: 'Answer for question 5' }) as HTMLInputElement).value).toBe('NUTS');
+    expect((screen.getByRole('textbox', { name: 'Answer for question 6' }) as HTMLInputElement).value).toBe('FISH');
+  });
+
+  it('renders multiple placeholders even when table cell placeholderIndex metadata is missing', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-multi-slot-legacy',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Item', 'Details'],
+      rows: [['Special dietary requirements:', 'no _______ (red), _______ (green)']],
+      cells: [
+        { id: 'cell-a', row: 0, col: 1, correctAnswer: 'nuts' },
+        { id: 'cell-b', row: 0, col: 1, correctAnswer: 'fish' },
+      ],
+      answerRule: 'ONE_WORD',
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={5}
+        answer={['NUTS', 'FISH']}
+        onChange={() => {}}
+        slotIds={['table-multi-slot-legacy:cell-a', 'table-multi-slot-legacy:cell-b']}
+      />,
+    );
+
+    expect(screen.getByRole('textbox', { name: 'Answer for question 5' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 6' })).toBeInTheDocument();
+    expect((screen.getByRole('textbox', { name: 'Answer for question 5' }) as HTMLInputElement).value).toBe('NUTS');
+    expect((screen.getByRole('textbox', { name: 'Answer for question 6' }) as HTMLInputElement).value).toBe('FISH');
+  });
+
   it('keeps non-slot table cells rendered as plain text', () => {
     const block: TableCompletionBlock = {
       id: 'table-nonslot',

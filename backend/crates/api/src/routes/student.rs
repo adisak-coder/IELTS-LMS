@@ -409,6 +409,7 @@ pub async fn save_precheck(
     State(state): State<AppState>,
     Extension(request_id): Extension<RequestId>,
     principal: AuthenticatedUser,
+    headers: HeaderMap,
     _csrf: VerifiedCsrf,
     Path(schedule_id): Path<Uuid>,
     Json(req): Json<StudentPrecheckRequest>,
@@ -449,6 +450,7 @@ pub async fn save_precheck(
                 pre_check: req.pre_check,
                 device_fingerprint_hash: req.device_fingerprint_hash,
             },
+            extract_idempotency_key(&headers)?,
         )
         .await?;
     state

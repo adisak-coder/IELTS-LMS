@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 import { parseExamRegisterUrl } from './exam-url';
 import { loadUsersFromFile, type VirtualUser } from './user-source';
 import { startLiveDashboardServer, type DashboardEvent } from './live-dashboard-server';
@@ -375,6 +375,59 @@ async function defaultWaitForExamLive(page: Page, ctx: ScenarioContext): Promise
 async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: ScenarioContext): Promise<void> {
   const started = Date.now();
   let writes = 0;
+  const lockedQuestionKeys = new Set<string>();
+
+  const questionKeyFor = async (input: Locator, fallbackPrefix: string, index: number): Promise<string> => {
+    const aria = (await input.getAttribute('aria-label').catch(() => null)) ?? '';
+    const id = (await input.getAttribute('id').catch(() => null)) ?? '';
+    const name = (await input.getAttribute('name').catch(() => null)) ?? '';
+    const dataQuestionId = (await input.getAttribute('data-question-id').catch(() => null)) ?? '';
+    const key = [dataQuestionId.trim(), id.trim(), name.trim(), aria.trim()].find((v) => v.length > 0);
+    return key ? `${fallbackPrefix}:${key}` : `${fallbackPrefix}:idx-${index}`;
+  };
+
+  const fillVisibleObjectiveInputs = async (): Promise<void> => {
+    const textInputs = page.locator(
+      [
+        'input[aria-label*="Answer for question" i]',
+        'textarea[aria-label*="Answer for question" i]',
+      ].join(', '),
+    );
+    const textCount = await textInputs.count().catch(() => 0);
+    for (let i = 0; i < textCount; i += 1) {
+      const input = textInputs.nth(i);
+      if (!(await input.isVisible().catch(() => false))) continue;
+      const key = await questionKeyFor(input, 'objective', i);
+      if (lockedQuestionKeys.has(key)) continue;
+      const currentValue = await input.inputValue().catch(() => '');
+      if (currentValue.trim().length > 0) {
+        lockedQuestionKeys.add(key);
+        continue;
+      }
+      await input.fill(`ans-${user.userId}-${writes}`).catch(() => {});
+      lockedQuestionKeys.add(key);
+      writes += 1;
+    }
+  };
+
+  const clickChoiceBestEffort = async (): Promise<void> => {
+    const choices = page.locator('input[type="radio"], input[type="checkbox"]');
+    const choiceCount = await choices.count().catch(() => 0);
+    for (let i = 0; i < choiceCount; i += 1) {
+      const choice = choices.nth(i);
+      if (!(await choice.isVisible().catch(() => false))) continue;
+      const key = await questionKeyFor(choice, 'choice', i);
+      if (lockedQuestionKeys.has(key)) continue;
+      const checked = await choice.isChecked().catch(() => false);
+      if (checked) {
+        lockedQuestionKeys.add(key);
+        continue;
+      }
+      await choice.check().catch(() => {});
+      lockedQuestionKeys.add(key);
+    }
+  };
+
   while (Date.now() - started < ctx.config.examTimeoutMs) {
     const completeHeading = page.getByRole('heading', { name: /Examination Complete!/i });
     if (await completeHeading.isVisible().catch(() => false)) {
@@ -392,14 +445,7 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
       continue;
     }
 
-    const textInputs = page.locator('input[aria-label*="Answer for question" i], textarea[aria-label*="Answer for question" i]');
-    const textCount = await textInputs.count().catch(() => 0);
-    for (let i = 0; i < textCount; i += 1) {
-      const input = textInputs.nth(i);
-      if (!(await input.isVisible().catch(() => false))) continue;
-      await input.fill(`ans-${user.userId}-${writes}`).catch(() => {});
-      writes += 1;
-    }
+    await fillVisibleObjectiveInputs();
 
     const writeIntoEditor = async (value: string): Promise<boolean> => {
       const writingInput = page
@@ -427,7 +473,21 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
           }
         }, value)
         .catch(() => {});
+      // Ensure blur-driven draft commit handlers run.
+      await page.keyboard.press('Tab').catch(() => {});
+      await page.waitForTimeout(100).catch(() => {});
       return true;
+    };
+
+    const waitUntilTaskButtonActive = async (taskButton: Locator): Promise<boolean> => {
+      for (let attempt = 0; attempt < 15; attempt += 1) {
+        const active = await taskButton
+          .evaluate((node) => node.className.includes('bg-blue-600') || node.className.includes('text-white'))
+          .catch(() => false);
+        if (active) return true;
+        await page.waitForTimeout(50).catch(() => {});
+      }
+      return false;
     };
 
     const writingTaskButtons = page.getByRole('button', { name: /^Task\s*\d+$/i });
@@ -437,19 +497,43 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
         const taskButton = writingTaskButtons.nth(i);
         if (!(await taskButton.isVisible().catch(() => false))) continue;
         await taskButton.click({ timeout: 3000 }).catch(() => {});
-        await page.waitForTimeout(120);
+        await waitUntilTaskButtonActive(taskButton);
+        await page.waitForTimeout(150).catch(() => {});
         const writingValue = `writing-${user.userId}-task${i + 1}-${writes}`;
         const wrote = await writeIntoEditor(writingValue);
         if (wrote) {
           writes += 1;
         }
       }
+      // Re-check each writing task to reduce unsaved/overwritten task races under load.
+      for (let i = 0; i < writingTaskCount; i += 1) {
+        const taskButton = writingTaskButtons.nth(i);
+        if (!(await taskButton.isVisible().catch(() => false))) continue;
+        await taskButton.click({ timeout: 3000 }).catch(() => {});
+        await waitUntilTaskButtonActive(taskButton);
+        await page.waitForTimeout(120).catch(() => {});
+        const writingInput = page
+          .locator('textarea[aria-label="Writing response"], textarea[aria-label*="writing response" i], [contenteditable="true"]')
+          .first();
+        if (!(await writingInput.isVisible().catch(() => false))) continue;
+        const current = await writingInput.inputValue().catch(() => '');
+        if (current.trim().length === 0) {
+          const recoveryValue = `writing-${user.userId}-task${i + 1}-recover-${writes}`;
+          const recovered = await writeIntoEditor(recoveryValue);
+          if (recovered) writes += 1;
+        }
+      }
+      // Final focus-out to trigger any blur-based commit hooks after last task edit.
+      await page.keyboard.press('Tab').catch(() => {});
+      await page.waitForTimeout(300).catch(() => {});
     } else {
       const writingValue = `writing-${user.userId}-${writes}`;
       const wrote = await writeIntoEditor(writingValue);
       if (wrote) {
         writes += 1;
       }
+      await page.keyboard.press('Tab').catch(() => {});
+      await page.waitForTimeout(300).catch(() => {});
     }
 
     const finishButton = page.getByRole('button', { name: 'Finish' }).first();
@@ -488,9 +572,31 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
       continue;
     }
 
-    const choice = page.locator('input[type="radio"], input[type="checkbox"]').first();
-    if (await choice.isVisible().catch(() => false)) {
-      await choice.check().catch(() => {});
+    await clickChoiceBestEffort();
+
+    // Best-effort traversal: sweep section question navigator and part jumps.
+    const navigatorButtons = page.locator('[aria-label="Question navigation and progress"] button[aria-label]');
+    const navCount = Math.min(await navigatorButtons.count().catch(() => 0), 120);
+    for (let i = 0; i < navCount; i += 1) {
+      const button = navigatorButtons.nth(i);
+      if (!(await button.isVisible().catch(() => false))) continue;
+      const label = (await button.getAttribute('aria-label').catch(() => '')) ?? '';
+      if (!/^\d+(\.\d+)?$/.test(label.trim())) continue;
+      await button.click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(60).catch(() => {});
+      await fillVisibleObjectiveInputs();
+      await clickChoiceBestEffort();
+    }
+
+    const partJumpButtons = page.getByRole('button', { name: /Jump to Part \d+/i });
+    const partCount = Math.min(await partJumpButtons.count().catch(() => 0), 12);
+    for (let i = 0; i < partCount; i += 1) {
+      const partButton = partJumpButtons.nth(i);
+      if (!(await partButton.isVisible().catch(() => false))) continue;
+      await partButton.click({ timeout: 2000 }).catch(() => {});
+      await page.waitForTimeout(80).catch(() => {});
+      await fillVisibleObjectiveInputs();
+      await clickChoiceBestEffort();
     }
 
     const nextButton = page.getByRole('button', { name: /next|continue|save and next/i }).first();
@@ -540,6 +646,22 @@ function formatBotAnswersProof(expected: { answers: Record<string, unknown>; wri
   const objectiveBlock = answerRows.length > 0 ? answerRows.join('\n') : '<no objective answers captured>';
   const writingBlock = writingRows.length > 0 ? writingRows.join('\n') : '<no writing answers captured>';
   return `Objective Answers:\n${objectiveBlock}\n\nWriting Answers:\n${writingBlock}`;
+}
+
+function formatRawLatestJson(input: {
+  objectiveAnswers: Record<string, unknown>;
+  capturedWritingAnswers: Record<string, string>;
+  gradingWritingAnswers?: Record<string, string>;
+}): string {
+  return JSON.stringify(
+    {
+      objectiveAnswers: input.objectiveAnswers,
+      capturedWritingAnswers: input.capturedWritingAnswers,
+      gradingWritingAnswers: input.gradingWritingAnswers ?? {},
+    },
+    null,
+    2,
+  );
 }
 
 function createMirroredBroadcaster(base: { broadcast: (event: DashboardEvent) => void }): {
@@ -750,10 +872,27 @@ async function run(): Promise<void> {
 
       await defaultScenario.execute(page, user, ctx);
       await defaultScenario.finalize(page, user, ctx);
+      if (answerCapture) {
+        const debugLine = JSON.stringify({
+          ts: new Date().toISOString(),
+          userId: user.userId,
+          scheduleId: ctx.scheduleId,
+          event: '[DEBUG-WRITE] summary',
+          capturedWritingTaskIds: Object.keys(answerCapture.expected.writingAnswers),
+        });
+        appendLog(debugLine);
+        console.log(debugLine);
+      }
       const botAnswersProof = formatBotAnswersProof(answerCapture.expected);
       dashboard.broadcast({
         ...eventBase(user.userId, 'answers_captured', phase),
-        comparison: { botAnswersProof },
+        comparison: {
+          botAnswersProof,
+          rawLatestJson: formatRawLatestJson({
+            objectiveAnswers: answerCapture.expected.answers,
+            capturedWritingAnswers: answerCapture.expected.writingAnswers,
+          }),
+        },
       });
 
       if (gradingVerifier && answerCapture) {
@@ -786,9 +925,23 @@ async function run(): Promise<void> {
         const writingProof = formatWritingProof(verifyResult.writingComparisons);
         const sameCount = verifyResult.writingComparisons.filter((item) => item.match).length;
         const diffCount = verifyResult.writingComparisons.length - sameCount;
+        const gradingWritingAnswers = Object.fromEntries(
+          verifyResult.writingTasksRaw.map((item) => [item.taskId, item.studentText]),
+        );
         dashboard.broadcast({
           ...eventBase(user.userId, verifyResult.ok ? 'grading_verified' : 'grading_mismatch', phase),
-          comparison: { submissionId, writingProof, botAnswersProof, sameCount, diffCount },
+          comparison: {
+            submissionId,
+            writingProof,
+            botAnswersProof,
+            rawLatestJson: formatRawLatestJson({
+              objectiveAnswers: answerCapture.expected.answers,
+              capturedWritingAnswers: answerCapture.expected.writingAnswers,
+              gradingWritingAnswers,
+            }),
+            sameCount,
+            diffCount,
+          },
           metrics: { writingComparedTasks: verifyResult.writingComparisons.length, mismatches: verifyResult.mismatches.length },
         });
         appendLog(
@@ -853,6 +1006,17 @@ async function run(): Promise<void> {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setPhase('failed', 'failed', message);
+      if (answerCapture) {
+        const debugLine = JSON.stringify({
+          ts: new Date().toISOString(),
+          userId: user.userId,
+          scheduleId: ctx.scheduleId,
+          event: '[DEBUG-WRITE] failure',
+          capturedWritingTaskIds: Object.keys(answerCapture.expected.writingAnswers),
+        });
+        appendLog(debugLine);
+        console.log(debugLine);
+      }
       results.push({
         userId: user.userId,
         phase: 'failed',

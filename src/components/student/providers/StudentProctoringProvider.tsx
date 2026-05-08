@@ -441,7 +441,8 @@ export function ProctoringProvider({
     let lastViewportResizeAt = 0;
 
     const closeSignalWindowMs = 1_000;
-    const closeSignalDelayMs = 50;
+    const closeSignalDelayMs = 200;
+    const visibilityCloseCorrelationDelayMs = 500;
     const tabSwitchDedupeWindowMs = 300;
     const secondaryScreenCheckIntervalMs = 3_000;
     const fullscreenExitDeferCheckDelayMs = 400;
@@ -506,11 +507,14 @@ export function ProctoringProvider({
         return;
       }
       window.setTimeout(() => {
+        if (!document.hidden) {
+          return;
+        }
         if (Date.now() - closeSignalAt < closeSignalWindowMs) {
           return;
         }
         handleTabSwitch('visibilitychange');
-      }, closeSignalDelayMs);
+      }, visibilityCloseCorrelationDelayMs);
     };
 
     const handlePageHide = () => {
@@ -570,6 +574,11 @@ export function ProctoringProvider({
 
     const handleBlur = () => {
       window.setTimeout(() => {
+        // Ignore blur-only transitions (browser popups/dialogs) unless the tab actually became hidden.
+        if (!document.hidden) {
+          return;
+        }
+
         if (Date.now() - closeSignalAt < closeSignalWindowMs || shouldIgnoreTextEntryBlur()) {
           return;
         }

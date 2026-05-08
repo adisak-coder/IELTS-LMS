@@ -569,7 +569,7 @@ describe('StudentProctoringProvider', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(600);
     });
 
     expect(
@@ -577,23 +577,44 @@ describe('StudentProctoringProvider', () => {
     ).toBe(true);
   });
 
-  it('logs a tab-switch warning on window blur', async () => {
+  it('logs a tab-switch warning on window blur when the tab is hidden', async () => {
     const harness = renderHarness({
       ...mockConfig,
       security: { ...mockConfig.security, tabSwitchRule: 'warn' },
     });
 
     act(() => {
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
       window.dispatchEvent(new Event('blur'));
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(600);
     });
 
     expect(
       harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TAB_SWITCH'),
     ).toBe(true);
+  });
+
+  it('does not log a tab-switch warning on blur-only browser popup focus loss', async () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: { ...mockConfig.security, tabSwitchRule: 'warn' },
+    });
+
+    act(() => {
+      Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+      window.dispatchEvent(new Event('blur'));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    expect(
+      harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TAB_SWITCH'),
+    ).toBe(false);
   });
 
   it('does not log an iPad tab-switch warning when the writing editor causes window blur while typing', async () => {
@@ -641,11 +662,12 @@ describe('StudentProctoringProvider', () => {
     expect(harness.result.current.runtime.state.phase).toBe('pre-check');
 
     act(() => {
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
       window.dispatchEvent(new Event('blur'));
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(600);
     });
 
     expect(
@@ -665,7 +687,7 @@ describe('StudentProctoringProvider', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(600);
     });
 
     expect(
@@ -685,7 +707,7 @@ describe('StudentProctoringProvider', () => {
     });
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(100);
+      await vi.advanceTimersByTimeAsync(600);
     });
 
     expect(harness.result.current.runtime.state.phase).toBe('post-exam');
@@ -708,6 +730,48 @@ describe('StudentProctoringProvider', () => {
     });
 
     expect(harness.result.current.runtime.state.phase).toBe('exam');
+    expect(
+      harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TAB_SWITCH'),
+    ).toBe(false);
+  });
+
+  it('does not log a tab-switch warning when refresh emits visibilitychange before beforeunload', async () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: { ...mockConfig.security, tabSwitchRule: 'warn' },
+    });
+
+    act(() => {
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+      window.dispatchEvent(new Event('beforeunload'));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    expect(
+      harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TAB_SWITCH'),
+    ).toBe(false);
+  });
+
+  it('does not log a tab-switch warning when refresh emits blur before beforeunload', async () => {
+    const harness = renderHarness({
+      ...mockConfig,
+      security: { ...mockConfig.security, tabSwitchRule: 'warn' },
+    });
+
+    act(() => {
+      Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+      window.dispatchEvent(new Event('blur'));
+      window.dispatchEvent(new Event('beforeunload'));
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+
     expect(
       harness.result.current.runtime.state.violations.some((violation) => violation.type === 'TAB_SWITCH'),
     ).toBe(false);

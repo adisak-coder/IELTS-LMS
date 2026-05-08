@@ -1288,7 +1288,7 @@ describe('studentAttemptRepository backend mode', () => {
     expect(pendingAfterFailure).toHaveLength(0);
   });
 
-  it('reconciles dropped answer, writing answer, and flag values to server truth', async () => {
+  it('preserves pending mutations and local values when backend returns OBJECTIVE_LOCKED', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
 
     const fetchMock = vi
@@ -1382,20 +1382,28 @@ describe('studentAttemptRepository backend mode', () => {
       },
     ]);
 
-    await expect(studentAttemptRepository.saveAttempt(attempt)).resolves.toBeUndefined();
+    await expect(studentAttemptRepository.saveAttempt(attempt)).rejects.toThrow();
 
     const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
     const cached = cachedAttempts.find((candidate) => candidate.id === attempt.id) ?? null;
-    expect(cached?.answers.qOld).toBeNull();
-    expect(cached?.writingAnswers.taskOld).toBe('');
-    expect(cached?.flags.qFlagOld).toBe(false);
+    expect(cached?.answers.qOld).toBe('LOCAL');
+    expect(cached?.writingAnswers.taskOld).toBe('LOCAL_DRAFT');
+    expect(cached?.flags.qFlagOld).toBe(true);
     expect(cached?.answers.q1).toBe('A');
-    expect(cached?.recovery.lastDroppedMutations?.reason).toBe('OBJECTIVE_LOCKED');
+    expect(cached?.recovery.lastDroppedMutations).toBeNull();
 
-    const secondBody = JSON.parse(String(fetchMock.mock.calls[4]?.[1]?.body));
-    expect(secondBody.mutations.map((mutation: { mutationId: string }) => mutation.mutationId)).toEqual([
+    const pending = await studentAttemptRepository.getPendingMutations(attempt.id);
+    expect(pending.map((mutation) => mutation.id)).toEqual([
+      'mutation-stale-answer',
+      'mutation-stale-writing',
+      'mutation-stale-flag',
       'mutation-live',
     ]);
+
+    const mutationBatchCalls = fetchMock.mock.calls.filter(
+      ([url]) => String(url) === '/api/v1/student/sessions/sched-1/mutations:batch',
+    );
+    expect(mutationBatchCalls).toHaveLength(1);
   });
 
   it('marks the local attempt unsynced and preserves pending mutations on ACTIVE_SESSION_SUPERSEDED', async () => {

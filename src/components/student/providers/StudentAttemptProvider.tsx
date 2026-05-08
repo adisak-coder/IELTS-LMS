@@ -1093,6 +1093,11 @@ export function StudentAttemptProvider({
     }
 
     const resolvedScheduleId = scheduleId ?? currentAttempt.scheduleId;
+    const precheckIdempotencyKey = [
+      currentAttempt.id,
+      ensureClientSessionIdForAttempt(currentAttempt),
+      result.completedAt,
+    ].join(':');
 
     try {
       const persisted = await backendPost<any>(
@@ -1106,7 +1111,12 @@ export function StudentAttemptProvider({
           preCheck: result,
           deviceFingerprintHash: currentAttempt.integrity.deviceFingerprintHash ?? undefined,
         },
-        { retries: 0 },
+        {
+          retries: 0,
+          headers: {
+            'Idempotency-Key': precheckIdempotencyKey,
+          },
+        },
       );
       const nextAttempt = mapBackendStudentAttempt(persisted);
       // The pre-check POST is authoritative in runtime-backed delivery. Any locally queued

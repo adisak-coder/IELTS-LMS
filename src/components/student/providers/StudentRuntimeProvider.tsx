@@ -346,6 +346,10 @@ function getInitialPhase(
     return 'pre-check';
   }
 
+  if (runtimeBacked && attemptSnapshot.phase === 'pre-check') {
+    return 'exam';
+  }
+
   if (!runtimeBacked && attemptSnapshot.phase === 'post-exam') {
     return 'post-exam';
   }
@@ -572,8 +576,18 @@ function runtimeReducer(
         action.runtimeBacked &&
         !terminalVerified &&
         (runtimeStatus === 'live' || runtimeStatus === 'paused' || hasActiveSection);
+      const completedPreCheckInRuntimeBackedFlow =
+        action.runtimeBacked && Boolean(action.snapshot.integrity.preCheck?.completedAt);
+      const shouldPreserveExamPhaseAfterPreCheck =
+        completedPreCheckInRuntimeBackedFlow &&
+        state.phase === 'exam' &&
+        action.snapshot.phase === 'pre-check' &&
+        !shouldPromoteToExamPhase &&
+        !terminalVerified;
       const nextPhase = terminalVerified
         ? 'post-exam'
+        : shouldPreserveExamPhaseAfterPreCheck
+          ? 'exam'
         : shouldPromoteToExamPhase
           ? 'exam'
         : action.snapshot.phase === 'post-exam'

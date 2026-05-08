@@ -46,6 +46,52 @@ function writeEditorPlainText(editor: HTMLTextAreaElement, value: string): void 
   }
 }
 
+function canonicalizeWritingTaskId(taskId: string): string {
+  return taskId.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function resolveWritingTaskId(taskIds: string[], candidate: string | null | undefined): string | null {
+  if (typeof candidate !== 'string') {
+    return null;
+  }
+
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  if (taskIds.includes(trimmed)) {
+    return trimmed;
+  }
+
+  const canonicalCandidate = canonicalizeWritingTaskId(trimmed);
+  const matched = taskIds.find((taskId) => canonicalizeWritingTaskId(taskId) === canonicalCandidate);
+  return matched ?? null;
+}
+
+function readWritingAnswerByTaskId(
+  writingAnswers: Record<string, string>,
+  taskId: string,
+): string {
+  const exact = writingAnswers[taskId];
+  if (typeof exact === 'string') {
+    return exact;
+  }
+
+  const canonicalTaskId = canonicalizeWritingTaskId(taskId);
+  if (!canonicalTaskId) {
+    return '';
+  }
+
+  for (const [candidateTaskId, value] of Object.entries(writingAnswers)) {
+    if (canonicalizeWritingTaskId(candidateTaskId) === canonicalTaskId) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
 export function StudentWriting({
   state,
   writingAnswers,
@@ -68,7 +114,12 @@ export function StudentWriting({
   const resolvedSessionId = sessionId ?? attemptContext?.state.attempt?.scheduleId;
   const resolvedStudentId = studentId ?? attemptContext?.state.attemptId ?? undefined;
   const writingConfig = state.config.sections.writing;
-  const [activeTaskId, setActiveTaskId] = useState<string>(currentQuestionId || writingConfig.tasks[0]?.id || 'task1');
+  const configuredTaskIds = writingConfig.tasks.map((task) => task.id);
+  const resolvedCurrentQuestionTaskId =
+    resolveWritingTaskId(configuredTaskIds, currentQuestionId);
+  const [activeTaskId, setActiveTaskId] = useState<string>(
+    resolvedCurrentQuestionTaskId ?? configuredTaskIds[0] ?? 'task1',
+  );
   const [isEditorFocused, setIsEditorFocused] = useState(false);
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lastKeydownRef = useRef<number>(0);
@@ -86,7 +137,7 @@ export function StudentWriting({
   });
 
   const currentTask = writingConfig.tasks.find((t) => t.id === activeTaskId) || writingConfig.tasks[0];
-  const currentText = writingAnswers[activeTaskId] || '';
+  const currentText = readWritingAnswerByTaskId(writingAnswers, activeTaskId);
   const showEditorPlaceholder = !isEditorFocused && currentText.trim().length === 0;
 
   const commitDraftText = useCallback(
@@ -128,10 +179,13 @@ export function StudentWriting({
   }, [commitEditorDraft, registerDraftCommit]);
 
   useEffect(() => {
-    if (currentQuestionId && currentQuestionId !== activeTaskId) {
-      setActiveTaskId(currentQuestionId);
+    if (
+      resolvedCurrentQuestionTaskId &&
+      resolvedCurrentQuestionTaskId !== activeTaskId
+    ) {
+      setActiveTaskId(resolvedCurrentQuestionTaskId);
     }
-  }, [activeTaskId, currentQuestionId]);
+  }, [activeTaskId, resolvedCurrentQuestionTaskId]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -602,7 +656,7 @@ export function StudentWriting({
 
             <div className="flex-1 overflow-y-auto p-6 space-y-4">
               {writingConfig.tasks.map((task) => {
-                const text = writingAnswers[task.id] || '';
+                const text = readWritingAnswerByTaskId(writingAnswers, task.id);
                 const hasResponse = text.length > 0;
 
                 return (

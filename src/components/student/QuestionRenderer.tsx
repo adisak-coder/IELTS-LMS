@@ -643,14 +643,29 @@ export function QuestionRenderer({
       cell: TableCompletionBlock['cells'][number];
       index: number;
       slotId: string;
+      placeholderIndex: number;
     };
 
-    const cellMap = new Map<string, TableSlot>(
-      tableBlock.cells.map((cell, index): [string, TableSlot] => [
-        `${cell.row}:${cell.col}`,
-        { cell, index, slotId: getSlotId(index, `${tableBlock.id}:${cell.id}`) },
-      ]),
-    );
+    const slotsByCoordinate = new Map<string, TableSlot[]>();
+    for (const [index, cell] of tableBlock.cells.entries()) {
+      const placeholderIndex =
+        typeof cell.placeholderIndex === 'number' &&
+        Number.isInteger(cell.placeholderIndex) &&
+        cell.placeholderIndex >= 0
+          ? cell.placeholderIndex
+          : -1;
+      const coordinateKey = `${cell.row}:${cell.col}`;
+      const next = slotsByCoordinate.get(coordinateKey) ?? [];
+      next.push({
+        cell,
+        index,
+        slotId: getSlotId(index, `${tableBlock.id}:${cell.id}`),
+        placeholderIndex,
+      });
+      slotsByCoordinate.set(coordinateKey, next);
+    }
+
+    const placeholderPattern = /_{2,}/g;
 
     return (
       <div className="overflow-x-auto rounded-2xl border border-gray-200">
@@ -681,9 +696,9 @@ export function QuestionRenderer({
             {tableBlock.rows.map((row, rowIndex) => (
               <tr key={`row-${rowIndex}`}>
                 {row.map((cellValue, cellIndex) => {
-                  const slot = cellMap.get(`${rowIndex}:${cellIndex}`);
+                  const slots = slotsByCoordinate.get(`${rowIndex}:${cellIndex}`) ?? null;
 
-                  if (!slot) {
+                  if (!slots) {
                     return (
                       <td
                         key={`cell-${rowIndex}-${cellIndex}`}
@@ -700,34 +715,157 @@ export function QuestionRenderer({
                     );
                   }
 
-                  const placeholderPattern = /_{2,}/g;
-                  const promptSegments = cellValue.split(placeholderPattern);
-                  const promptPrefixText = (promptSegments[0] ?? '').trimEnd();
-                  const promptSuffixText = promptSegments.length > 1
-                    ? (promptSegments.slice(1).join(' ').trimStart())
-                    : '';
+                  const promptSegmentsFromText = cellValue.split(placeholderPattern);
+                  const placeholderCountFromText = Math.max(0, promptSegmentsFromText.length - 1);
+                  const placeholderCount = Math.max(
+                    1,
+                    placeholderCountFromText,
+                    slots.length,
+                  );
+                  const promptSegments =
+                    placeholderCountFromText > 0 ? promptSegmentsFromText : [cellValue, ''];
+                  while (promptSegments.length < placeholderCount + 1) {
+                    promptSegments.push('');
+                  }
+
+                  const orderedSlots = [...slots].sort((left, right) => left.index - right.index);
+                  const slotByPlaceholderPosition: Array<TableSlot | null> = Array.from(
+                    { length: placeholderCount },
+                    () => null,
+                  );
+                  const usedSlotIds = new Set<string>();
+                  for (const slot of orderedSlots) {
+                    const index = slot.placeholderIndex;
+                    if (index >= 0 && index < placeholderCount && !slotByPlaceholderPosition[index]) {
+                      slotByPlaceholderPosition[index] = slot;
+                      usedSlotIds.add(slot.slotId);
+                    }
+                  }
+                  for (const slot of orderedSlots) {
+                    if (usedSlotIds.has(slot.slotId)) {
+                      continue;
+                    }
+                    const openIndex = slotByPlaceholderPosition.findIndex((value) => value === null);
+                    if (openIndex < 0) {
+                      break;
+                    }
+                    slotByPlaceholderPosition[openIndex] = slot;
+                    usedSlotIds.add(slot.slotId);
+                  }
+
+                  if (placeholderCount === 1 && orderedSlots.length === 1) {
+                    const slot = orderedSlots[0];
+                    const promptPrefixText = (promptSegments[0] ?? '').trimEnd();
+                    const promptSuffixText =
+                      promptSegments.length > 1
+                        ? promptSegments.slice(1).join(' ').trimStart()
+                        : '';
+
+                    return (
+                      <TableCompletionSlotCell
+                        key={slot.cell.id}
+                        slotId={slot.slotId}
+                        isActive={currentQuestionId === slot.slotId}
+                        isFlagged={Boolean(flags[slot.slotId])}
+                        promptPrefixText={promptPrefixText}
+                        promptSuffixText={promptSuffixText}
+                        slotNumber={number + slot.index}
+                        answerValue={stringArrayAnswer[slot.index] ?? ''}
+                        ariaLabel={`Answer for question ${number + slot.index}`}
+                        highlightEnabled={highlightEnabled}
+                        highlightColor={highlightColor}
+                        security={security}
+                        sessionId={sessionId}
+                        studentId={studentId}
+                        onChange={(nextValue) =>
+                          updateIndexedAnswer(
+                            slot.index,
+                            nextValue,
+                            tableBlock.cells.length,
+                            slot.slotId,
+                          )
+                        }
+                        renderFlagButton={renderFlagButton}
+                      />
+                    );
+                  }
+
+                  const isActive = orderedSlots.some(
+                    (candidate) => candidate.slotId === currentQuestionId,
+                  );
+                  const isFlagged = orderedSlots.some((candidate) => Boolean(flags[candidate.slotId]));
 
                   return (
-                    <TableCompletionSlotCell
-                      key={slot.cell.id}
-                      slotId={slot.slotId}
-                      isActive={currentQuestionId === slot.slotId}
-                      isFlagged={Boolean(flags[slot.slotId])}
-                      promptPrefixText={promptPrefixText}
-                      promptSuffixText={promptSuffixText}
-                      slotNumber={number + slot.index}
-                      answerValue={stringArrayAnswer[slot.index] ?? ''}
-                      ariaLabel={`Answer for question ${number + slot.index}`}
-                      highlightEnabled={highlightEnabled}
-                      highlightColor={highlightColor}
-                      security={security}
-                      sessionId={sessionId}
-                      studentId={studentId}
-                      onChange={(nextValue) =>
-                        updateIndexedAnswer(slot.index, nextValue, tableBlock.cells.length, slot.slotId)
-                      }
-                      renderFlagButton={renderFlagButton}
-                    />
+                    <td
+                      key={`cell-${rowIndex}-${cellIndex}`}
+                      className={`border border-gray-200 px-3 py-2 align-top ${
+                        isActive ? 'ring-2 ring-blue-500 ring-inset' : ''
+                      } ${isFlagged ? 'bg-amber-50' : ''}`}
+                    >
+                      <div className="space-y-2">
+                        <div className="text-[length:var(--student-control-font-size)] text-gray-800 [white-space:pre-wrap]">
+                          {promptSegments.map((segment, segmentIndex) => {
+                            const slot =
+                              segmentIndex < placeholderCount
+                                ? slotByPlaceholderPosition[segmentIndex]
+                                : null;
+                            return (
+                              <React.Fragment
+                                key={`table-segment-${rowIndex}-${cellIndex}-${segmentIndex}`}
+                              >
+                                <FormattedText
+                                  as="span"
+                                  className="text-[length:var(--student-control-font-size)] text-gray-800"
+                                  text={segment}
+                                  highlightEnabled={highlightEnabled}
+                                  highlightColor={highlightColor}
+                                />
+                                {segmentIndex < placeholderCount && slot ? (
+                                  <span
+                                    id={`question-${slot.slotId}`}
+                                    className="mx-1 inline-flex items-center gap-2 align-middle"
+                                  >
+                                    <span className="font-bold text-gray-900">
+                                      {number + slot.index}.
+                                    </span>
+                                    <span className="inline-block min-w-[11rem] max-w-full align-middle">
+                                      <ProtectedInput
+                                        type="text"
+                                        name={slot.slotId}
+                                        value={stringArrayAnswer[slot.index] ?? ''}
+                                        onChange={(event) =>
+                                          updateIndexedAnswer(
+                                            slot.index,
+                                            event.target.value,
+                                            tableBlock.cells.length,
+                                            slot.slotId,
+                                          )
+                                        }
+                                        className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                                        placeholder="Enter answer..."
+                                        security={security}
+                                        sessionId={sessionId}
+                                        studentId={studentId}
+                                        aria-label={`Answer for question ${number + slot.index}`}
+                                      />
+                                    </span>
+                                  </span>
+                                ) : null}
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                        <div className="flex justify-end">
+                          <div className="mt-1 flex flex-wrap items-center gap-2">
+                            {orderedSlots.map((slot) => (
+                              <React.Fragment key={`flag-${slot.slotId}`}>
+                                {renderFlagButton(slot.slotId)}
+                              </React.Fragment>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
                   );
                 })}
               </tr>

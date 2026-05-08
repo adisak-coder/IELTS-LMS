@@ -72,6 +72,7 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
                 }),
                 device_fingerprint_hash: Some("fp-alice".to_owned()),
             },
+            None,
         )
         .await
         .expect("persist precheck");

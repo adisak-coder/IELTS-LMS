@@ -56,6 +56,25 @@ function setWritingEditorText(editor: HTMLElement, value: string) {
   fireEvent.input(editor);
 }
 
+function WritingHarnessWithTaskAlias() {
+  const [writingAnswers, setWritingAnswers] = React.useState<Record<string, string>>({});
+  const [currentQuestionId, setCurrentQuestionId] = React.useState<string | null>('task-1');
+
+  return (
+    <StudentWriting
+      state={createExamState()}
+      writingAnswers={writingAnswers}
+      onWritingChange={(taskId, text) => {
+        setWritingAnswers((prev) => ({ ...prev, [taskId]: text }));
+      }}
+      onSubmit={() => undefined}
+      currentQuestionId={currentQuestionId}
+      onNavigate={setCurrentQuestionId}
+      showSubmitButton={false}
+    />
+  );
+}
+
 describe('StudentWriting lifecycle durability', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -285,5 +304,19 @@ describe('StudentWriting lifecycle durability', () => {
     fireEvent.blur(editor);
 
     expect(onWritingChange).toHaveBeenCalledWith('task1', 'Line 1\n\nLine 3');
+  });
+
+  it('preserves task 1 text when runtime task id uses dashed alias during task switches', () => {
+    render(<WritingHarnessWithTaskAlias />);
+
+    const editor = screen.getByRole('textbox', { name: /writing response/i }) as HTMLTextAreaElement;
+    setWritingEditorText(editor, 'Boundary draft');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Task 2' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Task 1' }));
+
+    expect((screen.getByRole('textbox', { name: /writing response/i }) as HTMLTextAreaElement).value).toBe(
+      'Boundary draft',
+    );
   });
 });

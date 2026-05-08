@@ -71,6 +71,7 @@ async fn phase_progression_precheck_lobby_exam_post_exam() {
                 }),
                 device_fingerprint_hash: Some("fp-alice".to_owned()),
             },
+            None,
         )
         .await
         .expect("persist precheck");

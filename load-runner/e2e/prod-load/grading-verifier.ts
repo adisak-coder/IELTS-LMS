@@ -21,6 +21,10 @@ export interface GradingVerifyResult {
     actual: string;
     match: boolean;
   }>;
+  writingTasksRaw: Array<{
+    taskId: string;
+    studentText: string;
+  }>;
 }
 
 function normalizeAnswer(value: unknown): unknown {
@@ -139,6 +143,7 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
   ): Promise<GradingVerifyResult> => {
     const mismatches: GradingVerifyResult['mismatches'] = [];
     const writingComparisons: GradingVerifyResult['writingComparisons'] = [];
+    const writingTasksRaw: GradingVerifyResult['writingTasksRaw'] = [];
 
     const sectionsRes = await api.get(`/api/v1/grading/submissions/${submissionId}/sections`);
     if (!sectionsRes.ok()) {
@@ -195,15 +200,21 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
       const taskId = task['taskId'];
       if (typeof taskId !== 'string' || taskId.length === 0) continue;
       const actual = typeof task['studentText'] === 'string' ? task['studentText'] : '';
+      writingTasksRaw.push({ taskId, studentText: actual });
       const exp = expected.writingAnswers[taskId];
       const hasExpected = exp !== undefined;
+      const actualNormalized = actual.trim();
+      const missingExpectedAndEmptyActual = !hasExpected && actualNormalized.length === 0;
       writingComparisons.push({
         taskId,
         expected: hasExpected ? exp : null,
         actual,
-        match: hasExpected ? actual === exp : false,
+        match: hasExpected ? actual === exp : missingExpectedAndEmptyActual,
       });
       if (exp === undefined) {
+        if (missingExpectedAndEmptyActual) {
+          continue;
+        }
         mismatches.push({ kind: 'writing', id: taskId, expected: undefined, actual });
         continue;
       }
@@ -214,9 +225,9 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
 
     const ok = mismatches.length === 0;
     if (!ok && config.strict) {
-      return { ok: false, mismatches, writingComparisons };
+      return { ok: false, mismatches, writingComparisons, writingTasksRaw };
     }
-    return { ok, mismatches, writingComparisons };
+    return { ok, mismatches, writingComparisons, writingTasksRaw };
   };
 
   return {
