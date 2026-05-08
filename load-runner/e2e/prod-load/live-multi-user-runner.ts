@@ -142,9 +142,8 @@ function findSubmissionIdDeep(value: unknown, depth = 0): string | null {
   return null;
 }
 
-function isUuid(value: string | null): value is string {
-  if (!value) return false;
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+function isSubmissionId(value: string | null): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 async function defaultLoginOrRegister(page: Page, user: VirtualUser, registerUrl: string): Promise<void> {
@@ -695,15 +694,17 @@ async function run(): Promise<void> {
           }, { origin: ctx.origin, scheduleId: ctx.scheduleId }).catch(() => null);
           submissionId = findSubmissionIdDeep(sessionSnapshot);
         }
-        if (!isUuid(submissionId)) {
-          submissionId = await gradingVerifier.findLatestSubmissionIdForStudent(ctx.scheduleId, [
-            user.candidateId ?? '',
-            user.email,
-            user.userId,
-          ]);
+        if (!isSubmissionId(submissionId)) {
+          const candidates = [user.candidateId ?? '', user.email, user.userId];
+          const deadlineMs = Date.now() + 20_000;
+          while (!isSubmissionId(submissionId) && Date.now() < deadlineMs) {
+            submissionId = await gradingVerifier.findLatestSubmissionIdForStudent(ctx.scheduleId, candidates);
+            if (isSubmissionId(submissionId)) break;
+            await page.waitForTimeout(1000).catch(() => {});
+          }
         }
-        if (!isUuid(submissionId)) {
-          throw new Error('GRADING_VERIFY_NO_SUBMISSION_ID: unable to resolve UUID grading submission for student.');
+        if (!isSubmissionId(submissionId)) {
+          throw new Error('GRADING_VERIFY_NO_SUBMISSION_ID: unable to resolve grading submission id for student.');
         }
         const verifyResult = await gradingVerifier.verifySubmission(submissionId, answerCapture.expected);
         if (!verifyResult.ok) {

@@ -44,8 +44,7 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
     throw new Error(`GRADING_VERIFY_LOGIN_FAILED: status=${loginRes.status()} body=${await loginRes.text().catch(() => '')}`);
   }
 
-  const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const isUuid = (value: unknown): value is string => typeof value === 'string' && uuidPattern.test(value);
+  const isSubmissionId = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
   const findLatestSubmissionIdForStudent = async (scheduleId: string, candidates: string[]): Promise<string | null> => {
     const normalized = candidates.map((item) => item.trim().toLowerCase()).filter(Boolean);
@@ -82,7 +81,7 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
     for (const item of submissions) {
       if (!isRecord(item)) continue;
       const id = item['id'];
-      if (!isUuid(id)) continue;
+      if (!isSubmissionId(id)) continue;
       const points = score(item);
       if (points <= 0) continue;
       const submittedAtRaw = item['submittedAt'];
