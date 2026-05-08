@@ -34,4 +34,14 @@ describe('normalizeReadingContentForHighlightText', () => {
     expect(output).toContain('***Questions 1-13***');
     expect(output.startsWith('*You should spend about 20 minutes on')).toBe(true);
   });
+
+  it('preserves editor-style emphasis markers from span styles and classes', () => {
+    const input =
+      '<p><span style="font-style: italic;">You should spend about 20 minutes on <span style="font-weight: 700;" class="ql-bold">Questions 1-13</span>.</span></p>';
+
+    const output = normalizeReadingContentForHighlightedFormattedText(input);
+
+    expect(output).toContain('***Questions 1-13***');
+    expect(output.startsWith('*You should spend about 20 minutes on')).toBe(true);
+  });
 });

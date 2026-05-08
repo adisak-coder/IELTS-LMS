@@ -227,6 +227,47 @@ function inlineWrapWithMarkers(text: string, markerState: { bold: boolean; itali
   return text;
 }
 
+function hasBoldStyle(styleValue: string | null): boolean {
+  if (!styleValue) {
+    return false;
+  }
+  const normalized = styleValue.toLowerCase();
+  if (/font-weight\s*:\s*(bold|bolder)/.test(normalized)) {
+    return true;
+  }
+  const numericMatch = normalized.match(/font-weight\s*:\s*([1-9]00)/);
+  if (!numericMatch) {
+    return false;
+  }
+  const numericWeight = Number.parseInt(numericMatch[1], 10);
+  return Number.isFinite(numericWeight) && numericWeight >= 600;
+}
+
+function hasItalicStyle(styleValue: string | null): boolean {
+  if (!styleValue) {
+    return false;
+  }
+  return /font-style\s*:\s*(italic|oblique)/i.test(styleValue);
+}
+
+function hasBoldClass(className: string): boolean {
+  if (!className) {
+    return false;
+  }
+  return /\b(ql-bold|font-bold|fw-bold)\b/i.test(className);
+}
+
+function hasItalicClass(className: string): boolean {
+  if (!className) {
+    return false;
+  }
+  return /\b(ql-italic|italic|font-italic|fst-italic)\b/i.test(className);
+}
+
+function normalizeInlineText(text: string): string {
+  return text.replace(/\s+/g, ' ');
+}
+
 function htmlToMarkedText(html: string): string {
   if (typeof DOMParser === 'undefined') {
     return htmlToPlainText(html);
@@ -240,7 +281,7 @@ function htmlToMarkedText(html: string): string {
     markerState: { bold: boolean; italic: boolean },
   ): string => {
     if (node.nodeType === Node.TEXT_NODE) {
-      const value = normalizeLineContent(node.textContent ?? '');
+      const value = normalizeInlineText(node.textContent ?? '');
       return inlineWrapWithMarkers(value, markerState);
     }
 
@@ -250,9 +291,16 @@ function htmlToMarkedText(html: string): string {
 
     const element = node as HTMLElement;
     const tag = element.tagName.toLowerCase();
+    const className = element.className ?? '';
+    const styleValue = element.getAttribute('style');
     const nextState = {
-      bold: markerState.bold || tag === 'strong' || tag === 'b',
-      italic: markerState.italic || tag === 'em' || tag === 'i',
+      bold: markerState.bold || tag === 'strong' || tag === 'b' || hasBoldStyle(styleValue) || hasBoldClass(className),
+      italic:
+        markerState.italic ||
+        tag === 'em' ||
+        tag === 'i' ||
+        hasItalicStyle(styleValue) ||
+        hasItalicClass(className),
     };
 
     if (tag === 'br') {
@@ -263,7 +311,7 @@ function htmlToMarkedText(html: string): string {
       .map((child) => renderNode(child, nextState))
       .filter(Boolean);
 
-    const joined = children.join(' ').replace(/[ \t\f\v]+/g, ' ').trim();
+    const joined = children.join('').replace(/[ \t\f\v]+/g, ' ');
     return joined;
   };
 
