@@ -1567,6 +1567,38 @@ describe('StudentApp runtime-backed mode', () => {
     expect(((await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement).value).toContain('LOCAL_TYPED');
   });
 
+  it('preserves a writing task draft after navigating away and back in runtime-backed mode', async () => {
+    const user = userEvent.setup();
+    const writingState: ExamState = {
+      ...state,
+      activeModule: 'writing',
+    };
+    const attemptSnapshot = createWritingAttemptSnapshot();
+
+    render(
+      <StudentAppWrapper
+        state={writingState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={createWritingRuntimeSnapshot()}
+      />,
+    );
+
+    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement;
+    await user.type(editor, 'Task 1 draft before switch');
+    expect(editor.value).toBe('Task 1 draft before switch');
+
+    await user.click(screen.getByRole('button', { name: 'Task 2' }));
+    await user.click(screen.getByRole('button', { name: 'Task 1' }));
+
+    await waitFor(() => {
+      expect((screen.getByRole('textbox', { name: /writing response/i }) as HTMLTextAreaElement).value).toBe(
+        'Task 1 draft before switch',
+      );
+    });
+  });
+
   it('keeps local choice selection stable during same-attempt refresh', async () => {
     const user = userEvent.setup();
 

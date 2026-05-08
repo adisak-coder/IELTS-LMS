@@ -32,6 +32,7 @@ import { isRuntimeStructurallyCompleted, isVerifiedTerminalStudentState } from '
 import { resolveObjectiveAnswerUpdate } from './resolveObjectiveAnswerUpdate';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
 import { shouldLockViewportForExamSession } from './browserParityPolicy';
+import { emitAnswerMutationDebugLog } from './answerMutationDebug';
 import type { StudentAnswerMutationMeta, StudentAnswerValue } from '../../types/studentAttempt';
 
 function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['blocking']['reason']) {
@@ -850,6 +851,13 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     }
     const currentValue = latestAnswersRef.current[questionId];
     const resolvedAnswer = resolveObjectiveAnswerUpdate(currentValue, answer, meta);
+    emitAnswerMutationDebugLog('StudentApp.handleAnswerChange', {
+      questionId,
+      incomingAnswer: answer,
+      currentValue,
+      resolvedAnswer,
+      mutationMeta: meta ?? null,
+    });
 
     latestAnswersRef.current = {
       ...latestAnswersRef.current,

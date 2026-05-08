@@ -44,6 +44,7 @@ import type {
   StudentAttemptMutationType,
   StudentPreCheckResult,
 } from '../../../types/studentAttempt';
+import { emitAnswerMutationDebugLog } from '../answerMutationDebug';
 import { useStudentRuntime } from './StudentRuntimeProvider';
 import { isVerifiedTerminalStudentState } from './verifiedTerminalState';
 
@@ -987,6 +988,12 @@ export function StudentAttemptProvider({
     if (typeof meta?.slotCount === 'number' && Number.isInteger(meta.slotCount) && meta.slotCount > 0) {
       payload.slotCount = meta.slotCount;
     }
+    emitAnswerMutationDebugLog('StudentAttemptProvider.persistAnswer', {
+      questionId,
+      answer,
+      mutationMeta: meta ?? null,
+      payload,
+    });
 
     void applyPatch(
       {

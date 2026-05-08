@@ -32,6 +32,7 @@ import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { TableCompletionSlotCell } from './TableCompletionSlotCell';
+import { emitAnswerMutationDebugLog } from './answerMutationDebug';
 
 interface QuestionRendererProps {
   question:
@@ -127,6 +128,16 @@ export function QuestionRenderer({
     const next = Array.from({ length: total }, (_, candidateIndex) =>
       candidateIndex === index ? value : (stringArrayAnswer[candidateIndex] ?? ''),
     );
+    emitAnswerMutationDebugLog('QuestionRenderer.updateIndexedAnswer', {
+      blockType: block.type,
+      blockId: block.id,
+      slotIndex: index,
+      slotId: slotId ?? null,
+      slotCount: total,
+      slotValue: value,
+      nextAnswer: next,
+      currentAnswer: stringArrayAnswer,
+    });
     onChange(next, {
       slotIndex: index,
       slotId,

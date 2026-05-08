@@ -84,7 +84,7 @@ function readWritingAnswerByTaskId(
   }
 
   for (const [candidateTaskId, value] of Object.entries(writingAnswers)) {
-    if (canonicalizeWritingTaskId(candidateTaskId) === canonicalTaskId) {
+    if (canonicalizeWritingTaskId(candidateTaskId) === canonicalTaskId && typeof value === 'string') {
       return value;
     }
   }
@@ -121,12 +121,14 @@ export function StudentWriting({
     resolvedCurrentQuestionTaskId ?? configuredTaskIds[0] ?? 'task1',
   );
   const [isEditorFocused, setIsEditorFocused] = useState(false);
+  const [localDraftsByTask, setLocalDraftsByTask] = useState<Record<string, string>>({});
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
   const lastCommittedDraftByTaskRef = useRef<Record<string, string>>({});
   const deferredBlurCommitTimerRef = useRef<number | null>(null);
   const editorHasFocusRef = useRef(false);
+  const commitEditorDraftRef = useRef<() => void>(() => undefined);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const { handleDrag, leftWidth, splitPaneStyle, workspaceRef } = useSplitPaneResize({
     isTabletMode,
@@ -137,7 +139,8 @@ export function StudentWriting({
   });
 
   const currentTask = writingConfig.tasks.find((t) => t.id === activeTaskId) || writingConfig.tasks[0];
-  const currentText = readWritingAnswerByTaskId(writingAnswers, activeTaskId);
+  const externalCurrentText = readWritingAnswerByTaskId(writingAnswers, activeTaskId);
+  const currentText = localDraftsByTask[activeTaskId] ?? externalCurrentText;
   const showEditorPlaceholder = !isEditorFocused && currentText.trim().length === 0;
 
   const commitDraftText = useCallback(
@@ -148,6 +151,11 @@ export function StudentWriting({
         onWritingChange(taskId, normalizedText);
         lastCommittedDraftByTaskRef.current[taskId] = normalizedText;
       }
+      setLocalDraftsByTask((current) => (
+        current[taskId] === normalizedText
+          ? current
+          : { ...current, [taskId]: normalizedText }
+      ));
       registerLiveWritingAnswer?.(taskId, normalizedText);
       if (options?.flushDurability !== false) {
         attemptContext?.actions.flushAnswerDurabilityNow?.();
@@ -167,16 +175,24 @@ export function StudentWriting({
   }, [activeTaskId, commitDraftText]);
 
   useEffect(() => {
+    commitEditorDraftRef.current = commitEditorDraft;
+  }, [commitEditorDraft]);
+
+  useEffect(() => {
     if (!registerDraftCommit) {
       return;
     }
 
-    registerDraftCommit(commitEditorDraft);
+    const commitLatestEditorDraft = () => {
+      commitEditorDraftRef.current();
+    };
+
+    registerDraftCommit(commitLatestEditorDraft);
     return () => {
-      commitEditorDraft();
+      commitLatestEditorDraft();
       registerDraftCommit(null);
     };
-  }, [commitEditorDraft, registerDraftCommit]);
+  }, [registerDraftCommit]);
 
   useEffect(() => {
     if (
@@ -386,6 +402,11 @@ export function StudentWriting({
   const handleEditorInput = () => {
     if (editorRef.current) {
       const textContent = readEditorPlainText(editorRef.current);
+      setLocalDraftsByTask((current) => (
+        current[activeTaskId] === textContent
+          ? current
+          : { ...current, [activeTaskId]: textContent }
+      ));
       onWritingChange(activeTaskId, textContent);
     }
   };

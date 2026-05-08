@@ -103,6 +103,21 @@ describe('StudentWriting a11y', () => {
     });
   });
 
+  it('renders a blank editor when a persisted writing answer is null', () => {
+    render(
+      <StudentWriting
+        state={createExamState()}
+        writingAnswers={{ task1: null } as unknown as Record<string, string>}
+        onWritingChange={() => undefined}
+        onSubmit={() => undefined}
+        currentQuestionId={null}
+        onNavigate={() => undefined}
+      />,
+    );
+
+    expect(screen.getByRole('textbox', { name: /writing response/i })).toHaveValue('');
+  });
+
   it('matches tablet resizer dimensions used in reading and listening', () => {
     render(
       <StudentWriting
