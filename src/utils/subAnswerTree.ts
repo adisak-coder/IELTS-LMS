@@ -118,7 +118,8 @@ export function hasSubAnswerTreeMode(block: QuestionBlock): boolean {
   if (!('subAnswerModeEnabled' in block)) {
     return false;
   }
-  const enabled = Boolean((block as QuestionBlock & { subAnswerModeEnabled?: boolean }).subAnswerModeEnabled);
+  const enabled =
+    (block as QuestionBlock & { subAnswerModeEnabled?: unknown }).subAnswerModeEnabled === true;
   if (!enabled) {
     return false;
   }

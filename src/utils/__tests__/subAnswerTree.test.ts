@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   evaluateSubAnswerRootUnordered,
   flattenSubAnswerTree,
+  hasSubAnswerTreeMode,
   normalizeSubAnswerTree,
   SUB_ANSWER_TREE_MAX_DEPTH,
   validateSubAnswerTree,
@@ -163,5 +164,20 @@ describe('subAnswerTree', () => {
       'leaf-a': true,
       'leaf-b': true,
     });
+  });
+
+  it('treats only strict boolean true as enabled mode', () => {
+    const block = {
+      id: 'block-1',
+      type: 'SHORT_ANSWER',
+      instruction: '',
+      questions: [],
+      answerTree: [{ id: 'root-1', label: 'Root', children: [] }],
+    } as any;
+
+    expect(hasSubAnswerTreeMode({ ...block, subAnswerModeEnabled: true })).toBe(true);
+    expect(hasSubAnswerTreeMode({ ...block, subAnswerModeEnabled: false })).toBe(false);
+    expect(hasSubAnswerTreeMode({ ...block, subAnswerModeEnabled: 'false' })).toBe(false);
+    expect(hasSubAnswerTreeMode({ ...block, subAnswerModeEnabled: 'true' })).toBe(false);
   });
 });

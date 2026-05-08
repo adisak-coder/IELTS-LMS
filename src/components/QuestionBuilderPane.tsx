@@ -49,6 +49,24 @@ const createDefaultSingleMcqQuestion = (id = createId('q')) => ({
   ],
 });
 
+function blockHasSubAnswerData(block: QuestionBlock): boolean {
+  const candidate = block as QuestionBlock & {
+    subAnswerModeEnabled?: unknown;
+    answerTree?: unknown;
+  };
+  if ('subAnswerModeEnabled' in candidate) {
+    return true;
+  }
+  return Array.isArray(candidate.answerTree) && candidate.answerTree.length > 0;
+}
+
+function clearSubAnswerData(block: QuestionBlock): QuestionBlock {
+  const next = { ...(block as Record<string, unknown>) };
+  delete next.subAnswerModeEnabled;
+  delete next.answerTree;
+  return next as QuestionBlock;
+}
+
 export function QuestionBuilderPane({
   blocks,
   title,
@@ -170,6 +188,26 @@ export function QuestionBuilderPane({
       alert(error instanceof Error ? error.message : 'Failed to add question to bank.');
     }
   };
+
+  const handleTurnOffSubAnswerForSelectedBlock = () => {
+    if (!selectedBlockId) {
+      alert('Please select a question block first by clicking on it.');
+      return;
+    }
+
+    updateBlocks((currentBlocks) =>
+      currentBlocks.map((block) =>
+        block.id === selectedBlockId ? clearSubAnswerData(block) : block,
+      ),
+    );
+  };
+
+  const selectedBlock = selectedBlockId
+    ? blocks.find((block) => block.id === selectedBlockId) ?? null
+    : null;
+  const selectedBlockHasSubAnswerData = selectedBlock
+    ? blockHasSubAnswerData(selectedBlock)
+    : false;
 
   const handleAddQuestionToBlock = (blockId: string) => {
     updateBlocks((currentBlocks) => {
@@ -682,6 +720,14 @@ export function QuestionBuilderPane({
             title="Save selected question block to bank"
           >
             <Library size={14} /> Save to Bank
+          </button>
+          <button
+            onClick={handleTurnOffSubAnswerForSelectedBlock}
+            className="bg-amber-100 text-amber-800 hover:bg-amber-200 px-3 py-1.5 rounded-sm text-xs font-medium flex items-center gap-1 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Remove sub-answer settings from selected block"
+            disabled={!selectedBlockHasSubAnswerData}
+          >
+            <X size={14} /> Turn Off Sub-Answer
           </button>
         </div>
       </div>

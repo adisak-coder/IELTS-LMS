@@ -217,4 +217,43 @@ describe('QuestionBuilderPane', () => {
     });
   });
 
+  it('clears sub-answer fields from selected block via toolbar control', async () => {
+    function Harness() {
+      const [blocks, setBlocks] = useState([
+        {
+          id: 'block-1',
+          type: 'TFNG',
+          mode: 'TFNG',
+          instruction: 'Read and answer',
+          questions: [{ id: 'q-1', statement: 'Statement', correctAnswer: 'T' }],
+          subAnswerModeEnabled: true,
+          answerTree: [{ id: 'root-1', children: [{ id: 'leaf-1', acceptedAnswers: ['A'] }] }],
+        } as any,
+      ]);
+
+      const selected = blocks[0] as any;
+      const hasSubAnswer =
+        Object.prototype.hasOwnProperty.call(selected, 'subAnswerModeEnabled') ||
+        Object.prototype.hasOwnProperty.call(selected, 'answerTree');
+
+      return (
+        <>
+          <QuestionBuilderPane title="Reading" blocks={blocks} updateBlocks={setBlocks} />
+          <div data-testid="has-sub-answer">{String(hasSubAnswer)}</div>
+        </>
+      );
+    }
+
+    render(<Harness />);
+
+    expect(screen.getByTestId('has-sub-answer')).toHaveTextContent('true');
+
+    fireEvent.click(screen.getByTestId('tfng-block'));
+    fireEvent.click(screen.getByRole('button', { name: /turn off sub-answer/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('has-sub-answer')).toHaveTextContent('false');
+    });
+  });
+
 });
