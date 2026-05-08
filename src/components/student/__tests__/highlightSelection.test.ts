@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { studentHighlightPalette } from '../highlightPalette';
-import { applyHighlightFromSnapshot, applySelectionHighlight, createHighlightSelectionSnapshot } from '../highlightSelection';
+import {
+  applyHighlightFromSnapshot,
+  applyHighlightFromSnapshotWithPolicy,
+  applySelectionHighlight,
+  applySelectionHighlightWithPolicy,
+  createHighlightSelectionSnapshot,
+} from '../highlightSelection';
 
 describe('applySelectionHighlight', () => {
   it('wraps the selected text without removing the passage', () => {
@@ -32,7 +38,7 @@ describe('applySelectionHighlight', () => {
     expect(container.textContent).toBe('Alpha beta gamma');
   });
 
-  it('splits the highlight when the selection spans multiple paragraphs', () => {
+  it('rejects highlight when the selection spans multiple paragraphs', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
 
@@ -59,24 +65,10 @@ describe('applySelectionHighlight', () => {
       removeAllRanges,
     } as unknown as Selection;
 
-    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
-
-    expect(html).not.toBeNull();
-    if (!html) {
-      throw new Error('Expected highlight HTML for multi-paragraph selection');
-    }
-
-    const rendered = document.createElement('div');
-    rendered.innerHTML = html;
-
-    const marks = rendered.querySelectorAll('mark[data-highlighted="true"]');
-    expect(marks).toHaveLength(2);
-    expect(marks[0]).toHaveTextContent('beta');
-    expect(marks[1]).toHaveTextContent('Gamma');
-    expect(rendered.querySelectorAll('p')).toHaveLength(2);
-    expect(rendered.querySelectorAll('p')[0]).toHaveTextContent('Alpha beta');
-    expect(rendered.querySelectorAll('p')[1]).toHaveTextContent('Gamma delta');
-    expect(removeAllRanges).toHaveBeenCalledTimes(1);
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.html).toBeNull();
+    expect(result.reason).toBe('cross_block_selection');
+    expect(removeAllRanges).not.toHaveBeenCalled();
   });
 
   it('still highlights when selection stays inside a single paragraph', () => {
@@ -106,7 +98,7 @@ describe('applySelectionHighlight', () => {
     expect(html).toContain('data-highlighted="true"');
   });
 
-  it('can apply a cross-paragraph snapshot into split highlights', () => {
+  it('rejects cross-paragraph snapshot highlight', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
 
@@ -135,21 +127,12 @@ describe('applySelectionHighlight', () => {
     const snapshot = createHighlightSelectionSnapshot(container, selection);
     expect(snapshot).not.toBeNull();
 
-    const html = applyHighlightFromSnapshot(container, snapshot!, 'bg-blue-200');
-    expect(html).not.toBeNull();
-    if (!html) {
-      throw new Error('Expected highlight HTML from cross-paragraph snapshot');
-    }
-
-    const rendered = document.createElement('div');
-    rendered.innerHTML = html;
-    const marks = rendered.querySelectorAll('mark[data-highlighted="true"]');
-    expect(marks).toHaveLength(2);
-    expect(marks[0]).toHaveTextContent('beta');
-    expect(marks[1]).toHaveTextContent('Gamma');
+    const result = applyHighlightFromSnapshotWithPolicy(container, snapshot!, 'bg-blue-200');
+    expect(result.html).toBeNull();
+    expect(result.reason).toBe('cross_block_selection');
   });
 
-  it('splits a container-boundary cross-paragraph selection into paragraph-local marks', () => {
+  it('rejects container-boundary cross-paragraph selection', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p><strong>Alpha</strong> beta gamma</p><p>Delta <em>epsilon</em> zeta</p><p>Theta iota</p>';
 
@@ -164,26 +147,12 @@ describe('applySelectionHighlight', () => {
       removeAllRanges: vi.fn(),
     } as unknown as Selection;
 
-    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
-    expect(html).not.toBeNull();
-    if (!html) {
-      throw new Error('Expected highlight HTML for container boundary range');
-    }
-
-    const rendered = document.createElement('div');
-    rendered.innerHTML = html;
-    const marks = rendered.querySelectorAll('mark[data-highlighted="true"]');
-    expect(marks).toHaveLength(5);
-    expect(marks[0]).toHaveTextContent('Alpha');
-    expect(marks[1]?.textContent?.trim()).toBe('beta gamma');
-    expect(marks[2]?.textContent?.trim()).toBe('Delta');
-    expect(marks[3]).toHaveTextContent('epsilon');
-    expect(marks[4]?.textContent?.trim()).toBe('zeta');
-    expect(rendered.querySelector('mark > p')).toBeNull();
-    expect(rendered.querySelectorAll('p')).toHaveLength(3);
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.html).toBeNull();
+    expect(result.reason).toBe('cross_block_selection');
   });
 
-  it('highlights only selected fragments for cross-paragraph partial selections with inline tags', () => {
+  it('rejects cross-paragraph partial selections with inline tags', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p><strong>Alpha</strong> beta gamma</p><p>Delta <em>epsilon</em> zeta</p>';
 
@@ -209,19 +178,9 @@ describe('applySelectionHighlight', () => {
       removeAllRanges: vi.fn(),
     } as unknown as Selection;
 
-    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
-    expect(html).not.toBeNull();
-    if (!html) {
-      throw new Error('Expected highlight HTML for partial cross-paragraph range');
-    }
-
-    const rendered = document.createElement('div');
-    rendered.innerHTML = html;
-    const marks = rendered.querySelectorAll('mark[data-highlighted="true"]');
-    expect(marks).toHaveLength(2);
-    expect(marks[0]).toHaveTextContent('beta gamma');
-    expect(marks[1]).toHaveTextContent('Del');
-    expect(rendered.textContent).toBe('Alpha beta gammaDelta epsilon zeta');
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.html).toBeNull();
+    expect(result.reason).toBe('cross_block_selection');
   });
 
   it('uses highlight styles that do not add spacing around highlighted text', () => {
@@ -307,7 +266,7 @@ describe('applySelectionHighlight', () => {
     expect(html).toBeNull();
   });
 
-  it('anchors nested-inline cross-paragraph selection at the exact start token', () => {
+  it('rejects nested-inline cross-paragraph selection', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p><strong>Intro</strong> alpha <em>beta</em> gamma</p><p>delta epsilon</p>';
 
@@ -333,22 +292,12 @@ describe('applySelectionHighlight', () => {
       removeAllRanges: vi.fn(),
     } as unknown as Selection;
 
-    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
-    expect(html).not.toBeNull();
-    if (!html) {
-      throw new Error('Expected highlight HTML');
-    }
-
-    const rendered = document.createElement('div');
-    rendered.innerHTML = html;
-    const marks = Array.from(rendered.querySelectorAll('mark[data-highlighted="true"]'));
-    expect(marks.length).toBeGreaterThanOrEqual(2);
-    expect(marks[0]).toHaveTextContent('eta');
-    expect(marks.some((node) => (node.textContent ?? '').includes('delta'))).toBe(true);
-    expect(rendered.textContent).toBe('Intro alpha beta gammadelta epsilon');
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.html).toBeNull();
+    expect(result.reason).toBe('cross_block_selection');
   });
 
-  it('skips whitespace-only fragments in split cross-paragraph highlights', () => {
+  it('rejects cross-paragraph highlights with whitespace-only separators', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p>\n\n<p>Gamma delta</p>';
 
@@ -374,18 +323,8 @@ describe('applySelectionHighlight', () => {
       removeAllRanges: vi.fn(),
     } as unknown as Selection;
 
-    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
-    expect(html).not.toBeNull();
-    if (!html) {
-      throw new Error('Expected highlight HTML');
-    }
-
-    const rendered = document.createElement('div');
-    rendered.innerHTML = html;
-    const marks = Array.from(rendered.querySelectorAll('mark[data-highlighted="true"]'));
-    expect(marks).toHaveLength(2);
-    expect(marks.every((node) => (node.textContent ?? '').trim().length > 0)).toBe(true);
-    expect(marks[0]).toHaveTextContent('beta');
-    expect(marks[1]).toHaveTextContent('Gamma');
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.html).toBeNull();
+    expect(result.reason).toBe('cross_block_selection');
   });
 });

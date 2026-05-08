@@ -16,6 +16,18 @@ export interface HighlightSelectionSnapshot {
   signature: string;
 }
 
+export type HighlightPolicyReason =
+  | 'cross_block_selection'
+  | 'no_snapshot'
+  | 'clone_range_failed'
+  | 'text_mismatch_guard'
+  | 'empty_selection';
+
+export interface HighlightApplyResult {
+  html: string | null;
+  reason: HighlightPolicyReason | null;
+}
+
 const isHighlightDebugEnabled =
   typeof import.meta !== 'undefined' &&
   typeof import.meta.env !== 'undefined' &&
@@ -37,17 +49,25 @@ export function applySelectionHighlight(
   selection: Selection,
   highlightClassName = 'rounded-sm bg-yellow-200/80 text-gray-900',
 ): string | null {
+  return applySelectionHighlightWithPolicy(container, selection, highlightClassName).html;
+}
+
+export function applySelectionHighlightWithPolicy(
+  container: HTMLElement,
+  selection: Selection,
+  highlightClassName = 'rounded-sm bg-yellow-200/80 text-gray-900',
+): HighlightApplyResult {
   const snapshot = createHighlightSelectionSnapshot(container, selection);
   if (!snapshot) {
     debugHighlight('applySelectionHighlight:no_snapshot');
-    return null;
+    return { html: null, reason: 'no_snapshot' };
   }
 
   const clonedContainer = container.cloneNode(true) as HTMLElement;
   const clonedRange = createClonedRangeFromSnapshot(clonedContainer, snapshot);
   if (!clonedRange) {
     debugHighlight('applySelectionHighlight:clone_range_failed');
-    return null;
+    return { html: null, reason: 'clone_range_failed' };
   }
 
   const normalizedSnapshotText = normalizeSelectionText(snapshot.selectedText);
@@ -57,21 +77,21 @@ export function applySelectionHighlight(
       snapshot: normalizedSnapshotText,
       range: normalizedRangeText,
     });
-    return null;
+    return { html: null, reason: 'text_mismatch_guard' };
   }
 
-  const highlightedHtml = applyHighlightToClonedRange(
+  const highlightedResult = applyHighlightToClonedRange(
     clonedContainer,
     clonedRange,
     highlightClassName,
   );
-  if (!highlightedHtml) {
-    return null;
+  if (!highlightedResult.html) {
+    return highlightedResult;
   }
 
   selection.removeAllRanges();
 
-  return highlightedHtml;
+  return highlightedResult;
 }
 
 export function applyHighlightFromSnapshot(
@@ -79,11 +99,19 @@ export function applyHighlightFromSnapshot(
   snapshot: HighlightSelectionSnapshot,
   highlightClassName = 'rounded-sm bg-yellow-200/80 text-gray-900',
 ): string | null {
+  return applyHighlightFromSnapshotWithPolicy(container, snapshot, highlightClassName).html;
+}
+
+export function applyHighlightFromSnapshotWithPolicy(
+  container: HTMLElement,
+  snapshot: HighlightSelectionSnapshot,
+  highlightClassName = 'rounded-sm bg-yellow-200/80 text-gray-900',
+): HighlightApplyResult {
   const clonedContainer = container.cloneNode(true) as HTMLElement;
   const clonedRange = createClonedRangeFromSnapshot(clonedContainer, snapshot);
   if (!clonedRange) {
     debugHighlight('applyHighlightFromSnapshot:clone_range_failed');
-    return null;
+    return { html: null, reason: 'clone_range_failed' };
   }
 
   const normalizedSnapshotText = normalizeSelectionText(snapshot.selectedText);
@@ -93,7 +121,7 @@ export function applyHighlightFromSnapshot(
       snapshot: normalizedSnapshotText,
       range: normalizedRangeText,
     });
-    return null;
+    return { html: null, reason: 'text_mismatch_guard' };
   }
 
   return applyHighlightToClonedRange(
@@ -223,25 +251,22 @@ function applyHighlightToClonedRange(
   clonedContainer: HTMLElement,
   clonedRange: Range,
   highlightClassName: string,
-): string | null {
+): HighlightApplyResult {
   if (!clonedRange.toString().trim()) {
-    return null;
+    return { html: null, reason: 'empty_selection' };
   }
 
   if (selectionCrossesBlockBoundary(clonedContainer, clonedRange)) {
-    const didApplySplitHighlight = applySplitRangeHighlight(
-      clonedContainer,
-      clonedRange,
-      highlightClassName,
-    );
-    return didApplySplitHighlight ? clonedContainer.innerHTML : null;
+    return { html: null, reason: 'cross_block_selection' };
   }
 
   const didApplySingleHighlight = applySingleRangeHighlight(
     clonedRange,
     highlightClassName,
   );
-  return didApplySingleHighlight ? clonedContainer.innerHTML : null;
+  return didApplySingleHighlight
+    ? { html: clonedContainer.innerHTML, reason: null }
+    : { html: null, reason: 'empty_selection' };
 }
 
 function applySingleRangeHighlight(

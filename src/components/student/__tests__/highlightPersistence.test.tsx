@@ -491,4 +491,64 @@ describe('student highlight persistence', () => {
 
     getSelectionSpy.mockRestore();
   });
+
+  it('shows a single throttled hint when cross-paragraph highlight is blocked', async () => {
+    vi.useFakeTimers();
+    let firstParagraphTextNode: ChildNode | null = null;
+    let secondParagraphTextNode: ChildNode | null = null;
+    const selectionMock = {
+      rangeCount: 1,
+      getRangeAt: () => {
+        if (!firstParagraphTextNode || !secondParagraphTextNode) {
+          throw new Error('Expected paragraph text nodes');
+        }
+        const range = document.createRange();
+        range.setStart(firstParagraphTextNode, 6);
+        range.setEnd(secondParagraphTextNode, 5);
+        return range;
+      },
+      toString: () => {
+        if (!firstParagraphTextNode || !secondParagraphTextNode) {
+          return '';
+        }
+        const range = document.createRange();
+        range.setStart(firstParagraphTextNode, 6);
+        range.setEnd(secondParagraphTextNode, 5);
+        return range.toString();
+      },
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+    const getSelectionSpy = vi.spyOn(window, 'getSelection').mockReturnValue(selectionMock);
+
+    const { container } = render(
+      <RichTextHighlighter
+        content="<p>Alpha beta</p><p>Gamma delta</p>"
+        contentType="html"
+        enabled
+      />,
+    );
+
+    const highlightable = container.querySelector('[data-student-highlightable="true"]');
+    if (!highlightable) {
+      throw new Error('Expected a rendered highlight container');
+    }
+    const paragraphs = highlightable.querySelectorAll('p');
+    firstParagraphTextNode = paragraphs[0]?.firstChild ?? null;
+    secondParagraphTextNode = paragraphs[1]?.firstChild ?? null;
+
+    fireEvent.mouseDown(highlightable);
+    fireEvent.mouseUp(highlightable);
+    fireEvent.mouseDown(highlightable);
+    fireEvent.mouseUp(highlightable);
+
+    const hints = screen.getAllByText('Highlight works within one paragraph at a time.');
+    expect(hints).toHaveLength(1);
+    expect(container.querySelectorAll('mark[data-highlighted="true"]')).toHaveLength(0);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1900);
+    });
+    expect(screen.queryByText('Highlight works within one paragraph at a time.')).not.toBeInTheDocument();
+    getSelectionSpy.mockRestore();
+  });
 });

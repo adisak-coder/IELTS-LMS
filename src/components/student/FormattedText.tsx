@@ -1,10 +1,11 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { parseBoldMarkdown } from '../../utils/boldMarkdown';
 import {
-  applyHighlightFromSnapshot,
-  applySelectionHighlight,
+  applyHighlightFromSnapshotWithPolicy,
+  applySelectionHighlightWithPolicy,
   escapeHtml,
   removeHighlightAtIndex,
+  type HighlightPolicyReason,
   type HighlightSelectionSnapshot,
 } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
@@ -21,6 +22,8 @@ type FormattedTextProps = {
   highlightPersistenceKey?: string | undefined;
 };
 const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
+const HIGHLIGHT_POLICY_HINT_MS = 1800;
+const HIGHLIGHT_POLICY_HINT_THROTTLE_MS = 1200;
 
 export function FormattedText({
   text,
@@ -47,6 +50,33 @@ export function FormattedText({
     initialHtml,
     highlightPersistenceKey,
   );
+  const [highlightPolicyHint, setHighlightPolicyHint] = useState<string | null>(null);
+  const hintTimerRef = useRef<number | null>(null);
+  const lastHintAtRef = useRef<number>(0);
+
+  const clearHintTimer = useCallback(() => {
+    if (hintTimerRef.current !== null) {
+      window.clearTimeout(hintTimerRef.current);
+      hintTimerRef.current = null;
+    }
+  }, []);
+
+  const maybeShowPolicyHint = useCallback((reason: HighlightPolicyReason | null) => {
+    if (reason !== 'cross_block_selection') {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastHintAtRef.current < HIGHLIGHT_POLICY_HINT_THROTTLE_MS) {
+      return;
+    }
+    lastHintAtRef.current = now;
+    setHighlightPolicyHint('Highlight works within one paragraph at a time.');
+    clearHintTimer();
+    hintTimerRef.current = window.setTimeout(() => {
+      setHighlightPolicyHint(null);
+      hintTimerRef.current = null;
+    }, HIGHLIGHT_POLICY_HINT_MS);
+  }, [clearHintTimer]);
 
   const handleSelection = useCallback(() => {
     if (!highlightEnabled) {
@@ -59,20 +89,21 @@ export function FormattedText({
       return false;
     }
 
-    const nextHtml = applySelectionHighlight(
+    const result = applySelectionHighlightWithPolicy(
       container,
       selection,
       highlightClassName ??
         (highlightColor ? getStudentHighlightClassName(highlightColor) : 'rounded-sm bg-yellow-200/80 text-gray-900'),
     );
 
-    if (nextHtml) {
-      setHtml(nextHtml);
+    if (result.html) {
+      setHtml(result.html);
       return true;
     }
+    maybeShowPolicyHint(result.reason);
 
     return false;
-  }, [highlightClassName, highlightColor, highlightEnabled, setHtml]);
+  }, [highlightClassName, highlightColor, highlightEnabled, maybeShowPolicyHint, setHtml]);
   const handleMouseUp = useCallback(() => {
     const applied = handleSelection();
     if (applied) {
@@ -90,22 +121,23 @@ export function FormattedText({
         return false;
       }
 
-      const nextHtml = applyHighlightFromSnapshot(
+      const result = applyHighlightFromSnapshotWithPolicy(
         container,
         snapshot,
         highlightClassName ??
           (highlightColor ? getStudentHighlightClassName(highlightColor) : 'rounded-sm bg-yellow-200/80 text-gray-900'),
       );
 
-      if (!nextHtml) {
+      if (!result.html) {
+        maybeShowPolicyHint(result.reason);
         return false;
       }
 
-      setHtml(nextHtml);
+      setHtml(result.html);
       window.getSelection()?.removeAllRanges();
       return true;
     },
-    [highlightClassName, highlightColor, highlightEnabled, setHtml],
+    [highlightClassName, highlightColor, highlightEnabled, maybeShowPolicyHint, setHtml],
   );
   const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
     useDeferredSelectionHighlight({
@@ -146,6 +178,12 @@ export function FormattedText({
     [highlightEnabled, isWithinRecentTouchAutoApplyGuard, setHtml],
   );
 
+  useEffect(() => {
+    return () => {
+      clearHintTimer();
+    };
+  }, [clearHintTimer]);
+
   if (highlightEnabled || hasPersistedHtml) {
     return (
       <>
@@ -161,6 +199,17 @@ export function FormattedText({
           onKeyUp={highlightEnabled ? handleSelection : undefined}
           dangerouslySetInnerHTML={{ __html: html }}
         />
+        {highlightPolicyHint ? (
+          <div
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none fixed inset-x-0 bottom-4 z-[85] flex justify-center px-4"
+          >
+            <div className="rounded-sm border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-md">
+              {highlightPolicyHint}
+            </div>
+          </div>
+        ) : null}
       </>
     );
   }

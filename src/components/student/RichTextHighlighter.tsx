@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import {
-  applyHighlightFromSnapshot,
-  applySelectionHighlight,
+  applyHighlightFromSnapshotWithPolicy,
+  applySelectionHighlightWithPolicy,
   escapeHtml,
   removeHighlightAtIndex,
   createHighlightSelectionSnapshot,
+  type HighlightPolicyReason,
   type HighlightSelectionSnapshot,
 } from './highlightSelection';
 import { getStudentHighlightClassName, type StudentHighlightColor } from './highlightPalette';
@@ -27,6 +28,8 @@ interface RichTextHighlighterProps {
 const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
 const DESKTOP_RETRY_DELAY_MS = 45;
 const DESKTOP_RETRY_MAX_ATTEMPTS = 3;
+const HIGHLIGHT_POLICY_HINT_MS = 1800;
+const HIGHLIGHT_POLICY_HINT_THROTTLE_MS = 1200;
 
 export function RichTextHighlighter({
   content,
@@ -46,6 +49,9 @@ export function RichTextHighlighter({
   const pendingSelectionSnapshotRef = useRef<HighlightSelectionSnapshot | null>(null);
   const mouseSelectionActiveRef = useRef(false);
   const desktopRetryTimerRef = useRef<number | null>(null);
+  const highlightPolicyHintTimerRef = useRef<number | null>(null);
+  const lastPolicyHintAtRef = useRef<number>(0);
+  const [highlightPolicyHint, setHighlightPolicyHint] = useState<string | null>(null);
   const initialHtml = useMemo(
     () => (contentType === 'html' ? sanitizeHtml(content) : escapeHtml(content)),
     [content, contentType],
@@ -66,18 +72,19 @@ export function RichTextHighlighter({
       return false;
     }
 
-    const nextHtml = applySelectionHighlight(
+    const result = applySelectionHighlightWithPolicy(
       container,
       selection,
       highlightClassName ??
         (highlightColor ? getStudentHighlightClassName(highlightColor) : 'rounded-sm bg-yellow-200/80 text-gray-900'),
     );
 
-    if (nextHtml) {
-      setHtml(nextHtml);
+    if (result.html) {
+      setHtml(result.html);
       return true;
     }
 
+    maybeShowPolicyHint(result.reason);
     return false;
   }, [enabled, highlightClassName, highlightColor, setHtml]);
 
@@ -87,6 +94,30 @@ export function RichTextHighlighter({
       desktopRetryTimerRef.current = null;
     }
   }, []);
+
+  const clearHighlightPolicyHintTimer = useCallback(() => {
+    if (highlightPolicyHintTimerRef.current !== null) {
+      window.clearTimeout(highlightPolicyHintTimerRef.current);
+      highlightPolicyHintTimerRef.current = null;
+    }
+  }, []);
+
+  const maybeShowPolicyHint = useCallback((reason: HighlightPolicyReason | null) => {
+    if (reason !== 'cross_block_selection') {
+      return;
+    }
+    const now = Date.now();
+    if (now - lastPolicyHintAtRef.current < HIGHLIGHT_POLICY_HINT_THROTTLE_MS) {
+      return;
+    }
+    lastPolicyHintAtRef.current = now;
+    setHighlightPolicyHint('Highlight works within one paragraph at a time.');
+    clearHighlightPolicyHintTimer();
+    highlightPolicyHintTimerRef.current = window.setTimeout(() => {
+      setHighlightPolicyHint(null);
+      highlightPolicyHintTimerRef.current = null;
+    }, HIGHLIGHT_POLICY_HINT_MS);
+  }, [clearHighlightPolicyHintTimer]);
 
   const captureSelectionSnapshot = useCallback(() => {
     if (!enabled) {
@@ -124,22 +155,23 @@ export function RichTextHighlighter({
         return false;
       }
 
-      const nextHtml = applyHighlightFromSnapshot(
+      const result = applyHighlightFromSnapshotWithPolicy(
         container,
         snapshot,
         highlightClassName ??
           (highlightColor ? getStudentHighlightClassName(highlightColor) : 'rounded-sm bg-yellow-200/80 text-gray-900'),
       );
 
-      if (!nextHtml) {
+      if (!result.html) {
+        maybeShowPolicyHint(result.reason);
         return false;
       }
 
-      setHtml(nextHtml);
+      setHtml(result.html);
       window.getSelection()?.removeAllRanges();
       return true;
     },
-    [enabled, highlightClassName, highlightColor, setHtml],
+    [enabled, highlightClassName, highlightColor, maybeShowPolicyHint, setHtml],
   );
   const applyPendingSelectionSnapshot = useCallback(() => {
     const snapshot = pendingSelectionSnapshotRef.current;
@@ -226,6 +258,7 @@ export function RichTextHighlighter({
       pendingSelectionSnapshotRef.current = null;
       mouseSelectionActiveRef.current = false;
       clearDesktopRetryTimer();
+      clearHighlightPolicyHintTimer();
       return;
     }
 
@@ -246,8 +279,15 @@ export function RichTextHighlighter({
     return () => {
       document.removeEventListener('selectionchange', handleSelectionChange);
       clearDesktopRetryTimer();
+      clearHighlightPolicyHintTimer();
     };
-  }, [captureSelectionSnapshot, clearDesktopRetryTimer, enabled]);
+  }, [captureSelectionSnapshot, clearDesktopRetryTimer, clearHighlightPolicyHintTimer, enabled]);
+
+  useEffect(() => {
+    return () => {
+      clearHighlightPolicyHintTimer();
+    };
+  }, [clearHighlightPolicyHintTimer]);
 
   return (
     <>
@@ -272,6 +312,17 @@ export function RichTextHighlighter({
         >
           {highlightButtonLabel}
         </button>
+      ) : null}
+      {highlightPolicyHint ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed inset-x-0 bottom-4 z-[85] flex justify-center px-4"
+        >
+          <div className="rounded-sm border border-gray-300 bg-white px-3 py-2 text-xs font-semibold text-gray-800 shadow-md">
+            {highlightPolicyHint}
+          </div>
+        </div>
       ) : null}
     </>
   );

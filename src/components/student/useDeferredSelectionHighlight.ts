@@ -13,9 +13,9 @@ interface UseDeferredSelectionHighlightOptions {
 }
 
 const TOUCH_AUTO_APPLY_REMOVE_GUARD_MS = 700;
-const DEFAULT_TOUCH_APPLY_DELAY_MS = 120;
-const DEFAULT_TOUCH_APPLY_RETRY_INTERVAL_MS = 90;
-const DEFAULT_TOUCH_APPLY_MAX_RETRIES = 3;
+const DEFAULT_TOUCH_APPLY_DELAY_MS = 160;
+const DEFAULT_TOUCH_APPLY_RETRY_INTERVAL_MS = 110;
+const DEFAULT_TOUCH_APPLY_MAX_RETRIES = 5;
 
 export function useDeferredSelectionHighlight({
   enabled,
