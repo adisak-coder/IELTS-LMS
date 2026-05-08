@@ -1383,6 +1383,7 @@ fn violation_business_id_from_payload(payload: &Value) -> Result<String, ApiErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ielts_backend_domain::attempt::MutationType;
 
     #[test]
     fn mutation_batch_rejects_unknown_top_level_fields() {

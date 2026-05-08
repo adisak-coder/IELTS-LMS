@@ -41,9 +41,16 @@ impl BuilderService {
     ) -> Result<(), BuilderError> {
         let draft_version_ids: Vec<String> = sqlx::query_scalar(
             r#"
-            SELECT id
-            FROM exam_versions
-            WHERE exam_id = ? AND is_draft = true
+            SELECT v.id
+            FROM exam_versions v
+            WHERE
+                v.exam_id = ?
+                AND v.is_draft = true
+                AND NOT EXISTS (
+                    SELECT 1
+                    FROM exam_schedules s
+                    WHERE s.published_version_id = v.id
+                )
             ORDER BY created_at DESC, version_number DESC
             "#,
         )

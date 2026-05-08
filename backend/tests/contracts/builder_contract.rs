@@ -390,7 +390,7 @@ async fn patch_draft_does_not_delete_versions_referenced_by_schedules() {
     }
 
     let protected_version = saved_versions
-        .last()
+        .first()
         .expect("oldest saved draft")
         .id
         .to_string();
