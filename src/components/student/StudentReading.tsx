@@ -13,7 +13,10 @@ import type { StudentHighlightColor } from './highlightPalette';
 import type { StimulusAnnotation } from '../../types';
 import { formatQuestionRange } from './questionRangeLabel';
 import { useSplitPaneResize } from './useSplitPaneResize';
-import { normalizeReadingPlainTextForDisplay } from './normalizeReadingPassageText';
+import {
+  normalizeReadingContentForHighlightText,
+  normalizeReadingPlainTextForDisplay,
+} from './normalizeReadingPassageText';
 import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
 
 interface StudentReadingProps {
@@ -112,6 +115,10 @@ export function StudentReading({
     const content = activePassage?.content ?? '';
     return passageHasHtml ? content : normalizeReadingPlainTextForDisplay(content);
   }, [activePassage?.content, passageHasHtml]);
+  const highlightPassageText = useMemo(
+    () => normalizeReadingContentForHighlightText(activePassage?.content ?? ''),
+    [activePassage?.content],
+  );
   const passageContentClassName = passageHasHtml
     ? 'student-accessible-table-typography whitespace-normal break-words [overflow-wrap:anywhere]'
     : 'student-accessible-table-typography whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
@@ -242,14 +249,25 @@ export function StudentReading({
             {activePassage.title}
           </h2>
           <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} break-normal text-gray-900 [&_h1]:font-black [&_h1]:leading-tight [&_h1]:[font-size:var(--student-passage-h1-font-size)] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:[font-size:var(--student-passage-h2-font-size)] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:[font-size:var(--student-passage-h3-font-size)] [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_p]:my-3 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
-            <RichTextHighlighter
-              content={renderedPassageContent}
-              contentType="html"
-              enabled={highlightEnabled}
-              className="whitespace-pre-wrap break-normal"
-              highlightColor={highlightColor}
-              highlightClassName={highlightClassName}
-            />
+            {highlightEnabled ? (
+              <FormattedText
+                as="div"
+                text={highlightPassageText}
+                className="whitespace-pre-wrap break-normal"
+                highlightEnabled
+                highlightColor={highlightColor}
+                highlightClassName={highlightClassName}
+              />
+            ) : (
+              <RichTextHighlighter
+                content={renderedPassageContent}
+                contentType="html"
+                enabled={false}
+                className="whitespace-pre-wrap break-normal"
+                highlightColor={highlightColor}
+                highlightClassName={highlightClassName}
+              />
+            )}
             {(activePassage.images ?? []).map((image) => (
               <StudentZoomableMedia
                 key={image.id}

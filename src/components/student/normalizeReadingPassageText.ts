@@ -170,3 +170,42 @@ export function normalizeReadingPlainTextForDisplay(content: string): string {
     })
     .join('');
 }
+
+function htmlToPlainText(html: string): string {
+  if (typeof DOMParser !== 'undefined') {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const blockTexts = Array.from(
+      doc.body.querySelectorAll('p,div,section,article,li,h1,h2,h3,h4,h5,h6,blockquote,pre'),
+    )
+      .map((node) => normalizeLineContent(node.textContent ?? ''))
+      .filter(Boolean);
+
+    if (blockTexts.length > 0) {
+      return blockTexts.join('\n\n');
+    }
+
+    return normalizeLineContent(doc.body.textContent ?? '');
+  }
+
+  return normalizeLineContent(
+    html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|section|article|li|h[1-6]|blockquote|pre)>/gi, '\n\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' '),
+  );
+}
+
+export function normalizeReadingContentForHighlightText(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  if (/<\/?[a-z][\s\S]*>/i.test(content)) {
+    return htmlToPlainText(content);
+  }
+
+  const blocks = toStructuredParagraphBlocks(content);
+  return blocks.map((block) => block.text).join('\n\n');
+}
