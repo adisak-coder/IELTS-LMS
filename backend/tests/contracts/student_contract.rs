@@ -101,6 +101,51 @@ async fn get_student_session_returns_schedule_and_version_before_bootstrap() {
 }
 
 #[tokio::test]
+async fn live_session_applies_schedule_overload_backpressure() {
+    let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let (auth, _student_key) = create_student_auth(database.pool(), schedule_id, "alice").await;
+    let mut config = AppConfig::default();
+    config.rate_limit_student_live_per_schedule = 1;
+    config.rate_limit_student_live_per_schedule_window_secs = 60;
+    config.rate_limit_student_live_global = 100;
+    config.rate_limit_student_live_global_window_secs = 60;
+    let app = build_router(AppState::with_pool(config, database.pool().clone()));
+
+    let first = app
+        .clone()
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/student/sessions/{schedule_id}/live?candidateId=alice"
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+
+    let limited = app
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/student/sessions/{schedule_id}/live?candidateId=alice"
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
+    let json = json_body(limited).await;
+    assert_eq!(json["success"], false);
+    assert_eq!(json["error"]["code"], "RATE_LIMIT_EXCEEDED");
+    assert_eq!(json["error"]["details"]["scope"], "schedule");
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn precheck_persists_integrity_on_the_attempt() {
     let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;

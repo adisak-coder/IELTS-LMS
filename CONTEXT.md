@@ -15,6 +15,13 @@
   - short timeout budget for overloaded paths,
   - deterministic overload response (`429` + `Retry-After`) instead of cascading `502`.
 
+## Join-Storm Mitigation Status (2026-05-08)
+
+- Implemented backend live-session backpressure for `GET /api/v1/student/sessions/:schedule_id/live`:
+  - per-schedule limiter and global limiter now reject overload with deterministic `429` payloads.
+- Operational caveat:
+  - frontend assets are still served by the same API process fallback, so hard failure-domain separation is not complete without deployment topology split.
+
 ## Student Runtime Integrity Policy (Resolved, Pre-Production)
 
 - Global policy: `offline`, `heartbeat_lost`, and `device_mismatch` are log-only integrity signals in student runtime.

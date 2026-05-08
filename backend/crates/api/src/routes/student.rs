@@ -170,6 +170,65 @@ pub async fn get_student_live_session(
         UserRole::Builder,
         UserRole::Proctor,
     ])?;
+
+    let per_schedule_key = RateLimitKey::Custom(format!("student.live.schedule:{schedule_id}"));
+    let per_schedule_config = RateLimitConfig::new(
+        state.config.rate_limit_student_live_per_schedule,
+        state
+            .config
+            .rate_limit_student_live_per_schedule_window_secs,
+    )
+    .with_burst(25);
+    if let RateLimitResult::Denied { retry_after } = state
+        .check_exam_rate_limit(
+            "student.live.schedule",
+            &per_schedule_key,
+            &per_schedule_config,
+        )
+        .await
+    {
+        let retry_after_secs = retry_after.as_secs().max(1);
+        return Err(
+            ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMIT_EXCEEDED",
+                &format!(
+                    "Live session refresh is temporarily overloaded for this schedule. Retry after {retry_after_secs} seconds."
+                ),
+            )
+            .with_details(json!({
+                "scope": "schedule",
+                "retryAfterSeconds": retry_after_secs,
+            })),
+        );
+    }
+
+    let global_key = RateLimitKey::Custom("student.live.global".to_owned());
+    let global_config = RateLimitConfig::new(
+        state.config.rate_limit_student_live_global,
+        state.config.rate_limit_student_live_global_window_secs,
+    )
+    .with_burst(50);
+    if let RateLimitResult::Denied { retry_after } = state
+        .check_exam_rate_limit("student.live.global", &global_key, &global_config)
+        .await
+    {
+        let retry_after_secs = retry_after.as_secs().max(1);
+        return Err(
+            ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMIT_EXCEEDED",
+                &format!(
+                    "Live session service is temporarily overloaded. Retry after {retry_after_secs} seconds."
+                ),
+            )
+            .with_details(json!({
+                "scope": "global",
+                "retryAfterSeconds": retry_after_secs,
+            })),
+        );
+    }
+
     let access = authorize_student(
         &state,
         &principal,

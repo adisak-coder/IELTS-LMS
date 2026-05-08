@@ -54,6 +54,10 @@ pub struct AppConfig {
     pub rate_limit_student_entry_per_schedule_window_secs: u64,
     pub rate_limit_student_bootstrap_per_user: u32,
     pub rate_limit_student_bootstrap_per_user_window_secs: u64,
+    pub rate_limit_student_live_per_schedule: u32,
+    pub rate_limit_student_live_per_schedule_window_secs: u64,
+    pub rate_limit_student_live_global: u32,
+    pub rate_limit_student_live_global_window_secs: u64,
     pub rate_limit_mutation_per_attempt: u32,
     pub rate_limit_mutation_per_attempt_window_secs: u64,
     pub rate_limit_heartbeat_per_attempt: u32,
@@ -326,6 +330,30 @@ impl AppConfig {
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(default.rate_limit_student_bootstrap_per_user_window_secs),
+            rate_limit_student_live_per_schedule: resolve_rate_limit_count(
+                env::var("RATE_LIMIT_STUDENT_LIVE_PER_SCHEDULE")
+                    .ok()
+                    .as_deref(),
+                global_rate_limit,
+                default.rate_limit_student_live_per_schedule,
+            ),
+            rate_limit_student_live_per_schedule_window_secs: env::var(
+                "RATE_LIMIT_STUDENT_LIVE_PER_SCHEDULE_WINDOW_SECS",
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.rate_limit_student_live_per_schedule_window_secs),
+            rate_limit_student_live_global: resolve_rate_limit_count(
+                env::var("RATE_LIMIT_STUDENT_LIVE_GLOBAL").ok().as_deref(),
+                global_rate_limit,
+                default.rate_limit_student_live_global,
+            ),
+            rate_limit_student_live_global_window_secs: env::var(
+                "RATE_LIMIT_STUDENT_LIVE_GLOBAL_WINDOW_SECS",
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(default.rate_limit_student_live_global_window_secs),
             rate_limit_mutation_per_attempt: resolve_rate_limit_count(
                 env::var("RATE_LIMIT_MUTATION_PER_ATTEMPT").ok().as_deref(),
                 global_rate_limit,
@@ -581,6 +609,10 @@ impl Default for AppConfig {
             rate_limit_student_entry_per_schedule_window_secs: 600,
             rate_limit_student_bootstrap_per_user: 5,
             rate_limit_student_bootstrap_per_user_window_secs: 60,
+            rate_limit_student_live_per_schedule: 1200,
+            rate_limit_student_live_per_schedule_window_secs: 60,
+            rate_limit_student_live_global: 10_000,
+            rate_limit_student_live_global_window_secs: 60,
             rate_limit_mutation_per_attempt: 100,
             rate_limit_mutation_per_attempt_window_secs: 60,
             rate_limit_heartbeat_per_attempt: 300,

@@ -401,42 +401,55 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
       writes += 1;
     }
 
-    const writingValue = `writing-${user.userId}-${writes}`;
-    const writingInputs = page.locator(
-      [
-        'textarea[aria-label="Writing response"]',
-        'textarea[aria-label*="writing response" i]',
-        'textarea[placeholder*="write your answer" i]',
-        '[contenteditable="true"]',
-      ].join(', '),
-    );
-    const writingCount = await writingInputs.count().catch(() => 0);
-    for (let i = 0; i < writingCount; i += 1) {
-      const input = writingInputs.nth(i);
-      if (!(await input.isVisible().catch(() => false))) continue;
-      await input.click().catch(() => {});
-      await input.fill(writingValue).catch(() => {});
-      await input.press('End').catch(() => {});
-      await input.type(' ').catch(() => {});
-      await input.press('Backspace').catch(() => {});
-      // Controlled editor expects input/change via onChange, plus fallback for legacy rich text.
-      await input
-        .evaluate((node, value) => {
+    const writeIntoEditor = async (value: string): Promise<boolean> => {
+      const writingInput = page
+        .locator('textarea[aria-label="Writing response"], textarea[aria-label*="writing response" i], [contenteditable="true"]')
+        .first();
+      if (!(await writingInput.isVisible().catch(() => false))) return false;
+      await writingInput.click().catch(() => {});
+      await writingInput.fill(value).catch(() => {});
+      await writingInput.press('End').catch(() => {});
+      await writingInput.type(' ').catch(() => {});
+      await writingInput.press('Backspace').catch(() => {});
+      await writingInput
+        .evaluate((node, text) => {
           if (!(node instanceof HTMLElement)) return;
           const target = node as HTMLInputElement | HTMLTextAreaElement;
           if ('value' in target) {
-            target.value = value;
+            target.value = text;
             target.dispatchEvent(new Event('input', { bubbles: true }));
             target.dispatchEvent(new Event('change', { bubbles: true }));
             return;
           }
           if (node.isContentEditable) {
-            node.textContent = value;
-            node.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+            node.textContent = text;
+            node.dispatchEvent(new InputEvent('input', { bubbles: true, data: text, inputType: 'insertText' }));
           }
-        }, writingValue)
+        }, value)
         .catch(() => {});
-      writes += 1;
+      return true;
+    };
+
+    const writingTaskButtons = page.getByRole('button', { name: /^Task\s*\d+$/i });
+    const writingTaskCount = await writingTaskButtons.count().catch(() => 0);
+    if (writingTaskCount > 0) {
+      for (let i = 0; i < writingTaskCount; i += 1) {
+        const taskButton = writingTaskButtons.nth(i);
+        if (!(await taskButton.isVisible().catch(() => false))) continue;
+        await taskButton.click({ timeout: 3000 }).catch(() => {});
+        await page.waitForTimeout(120);
+        const writingValue = `writing-${user.userId}-task${i + 1}-${writes}`;
+        const wrote = await writeIntoEditor(writingValue);
+        if (wrote) {
+          writes += 1;
+        }
+      }
+    } else {
+      const writingValue = `writing-${user.userId}-${writes}`;
+      const wrote = await writeIntoEditor(writingValue);
+      if (wrote) {
+        writes += 1;
+      }
     }
 
     const finishButton = page.getByRole('button', { name: 'Finish' }).first();
