@@ -14,7 +14,7 @@ import type { StimulusAnnotation } from '../../types';
 import { formatQuestionRange } from './questionRangeLabel';
 import { useSplitPaneResize } from './useSplitPaneResize';
 import {
-  normalizeReadingContentForHighlightText,
+  normalizeReadingContentForHighlightedFormattedText,
   normalizeReadingPlainTextForDisplay,
 } from './normalizeReadingPassageText';
 import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
@@ -116,7 +116,7 @@ export function StudentReading({
     return passageHasHtml ? content : normalizeReadingPlainTextForDisplay(content);
   }, [activePassage?.content, passageHasHtml]);
   const highlightPassageText = useMemo(
-    () => normalizeReadingContentForHighlightText(activePassage?.content ?? ''),
+    () => normalizeReadingContentForHighlightedFormattedText(activePassage?.content ?? ''),
     [activePassage?.content],
   );
   const passageContentClassName = passageHasHtml
@@ -257,6 +257,7 @@ export function StudentReading({
                 highlightEnabled
                 highlightColor={highlightColor}
                 highlightClassName={highlightClassName}
+                preserveInlineEmphasis
               />
             ) : (
               <RichTextHighlighter

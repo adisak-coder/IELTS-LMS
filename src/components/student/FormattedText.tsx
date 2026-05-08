@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { parseBoldMarkdown } from '../../utils/boldMarkdown';
+import { parseBoldMarkdown, parseRichMarkdown } from '../../utils/boldMarkdown';
 import {
   applyHighlightFromSnapshotWithPolicy,
   applySelectionHighlightWithPolicy,
@@ -20,6 +20,7 @@ type FormattedTextProps = {
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
   highlightPersistenceKey?: string | undefined;
+  preserveInlineEmphasis?: boolean | undefined;
 };
 const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
 const HIGHLIGHT_POLICY_HINT_MS = 1800;
@@ -33,16 +34,35 @@ export function FormattedText({
   highlightColor,
   highlightClassName,
   highlightPersistenceKey,
+  preserveInlineEmphasis = false,
 }: FormattedTextProps) {
   const Tag = as as any;
-  const segments = useMemo(() => parseBoldMarkdown(text), [text]);
+  const segments = useMemo(
+    () => (preserveInlineEmphasis ? parseRichMarkdown(text) : parseBoldMarkdown(text)),
+    [preserveInlineEmphasis, text],
+  );
   const classes = ['whitespace-pre-wrap', 'break-words', className].filter(Boolean).join(' ');
   const containerRef = useRef<HTMLElement | null>(null);
   const lastMouseSelectionIntentAtRef = useRef<number | null>(null);
   const initialHtml = useMemo(
     () =>
       segments
-        .map((segment) => (segment.bold ? `<strong>${escapeHtml(segment.text)}</strong>` : escapeHtml(segment.text)))
+        .map((segment) => {
+          const escapedText = escapeHtml(segment.text);
+          const isBold = Boolean(segment.bold);
+          const isItalic = preserveInlineEmphasis ? Boolean((segment as { italic?: boolean }).italic) : false;
+
+          if (isBold && isItalic) {
+            return `<strong><em>${escapedText}</em></strong>`;
+          }
+          if (isBold) {
+            return `<strong>${escapedText}</strong>`;
+          }
+          if (isItalic) {
+            return `<em>${escapedText}</em>`;
+          }
+          return escapedText;
+        })
         .join(''),
     [segments],
   );
@@ -218,9 +238,17 @@ export function FormattedText({
     <Tag className={classes}>
       {segments.map((segment, index) =>
         segment.bold ? (
-          <strong key={index} className="font-bold">
-            {segment.text}
-          </strong>
+          preserveInlineEmphasis && (segment as { italic?: boolean }).italic ? (
+            <strong key={index} className="font-bold">
+              <em>{segment.text}</em>
+            </strong>
+          ) : (
+            <strong key={index} className="font-bold">
+              {segment.text}
+            </strong>
+          )
+        ) : preserveInlineEmphasis && (segment as { italic?: boolean }).italic ? (
+          <em key={index}>{segment.text}</em>
         ) : (
           <React.Fragment key={index}>{segment.text}</React.Fragment>
         ),

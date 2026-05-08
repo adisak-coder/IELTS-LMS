@@ -209,3 +209,83 @@ export function normalizeReadingContentForHighlightText(content: string): string
   const blocks = toStructuredParagraphBlocks(content);
   return blocks.map((block) => block.text).join('\n\n');
 }
+
+function inlineWrapWithMarkers(text: string, markerState: { bold: boolean; italic: boolean }): string {
+  if (!text) {
+    return '';
+  }
+
+  if (markerState.bold && markerState.italic) {
+    return `***${text}***`;
+  }
+  if (markerState.bold) {
+    return `**${text}**`;
+  }
+  if (markerState.italic) {
+    return `*${text}*`;
+  }
+  return text;
+}
+
+function htmlToMarkedText(html: string): string {
+  if (typeof DOMParser === 'undefined') {
+    return htmlToPlainText(html);
+  }
+
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+
+  const renderNode = (
+    node: Node,
+    markerState: { bold: boolean; italic: boolean },
+  ): string => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const value = normalizeLineContent(node.textContent ?? '');
+      return inlineWrapWithMarkers(value, markerState);
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return '';
+    }
+
+    const element = node as HTMLElement;
+    const tag = element.tagName.toLowerCase();
+    const nextState = {
+      bold: markerState.bold || tag === 'strong' || tag === 'b',
+      italic: markerState.italic || tag === 'em' || tag === 'i',
+    };
+
+    if (tag === 'br') {
+      return '\n';
+    }
+
+    const children = Array.from(element.childNodes)
+      .map((child) => renderNode(child, nextState))
+      .filter(Boolean);
+
+    const joined = children.join(' ').replace(/[ \t\f\v]+/g, ' ').trim();
+    return joined;
+  };
+
+  const blocks = Array.from(doc.body.querySelectorAll('p,div,section,article,li,h1,h2,h3,h4,h5,h6,blockquote,pre'))
+    .map((node) => renderNode(node, { bold: false, italic: false }))
+    .filter(Boolean);
+
+  if (blocks.length > 0) {
+    return blocks.join('\n\n');
+  }
+
+  return renderNode(doc.body, { bold: false, italic: false });
+}
+
+export function normalizeReadingContentForHighlightedFormattedText(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  if (/<\/?[a-z][\s\S]*>/i.test(content)) {
+    return htmlToMarkedText(content);
+  }
+
+  return normalizeReadingContentForHighlightText(content);
+}

@@ -3,6 +3,12 @@ export type BoldSegment = {
   bold: boolean;
 };
 
+export type RichSegment = {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+};
+
 export function parseBoldMarkdown(text: string): BoldSegment[] {
   const segments: BoldSegment[] = [];
   let cursor = 0;
@@ -49,6 +55,66 @@ export function parseBoldMarkdown(text: string): BoldSegment[] {
 
 export function stripBoldMarkdown(text: string): string {
   return text.replaceAll('**', '');
+}
+
+export function parseRichMarkdown(text: string): RichSegment[] {
+  const segments: RichSegment[] = [];
+  let cursor = 0;
+  let bold = false;
+  let italic = false;
+  let buffer = '';
+
+  const pushBuffer = () => {
+    if (!buffer) {
+      return;
+    }
+    const previous = segments[segments.length - 1];
+    if (previous && previous.bold === bold && previous.italic === italic) {
+      previous.text += buffer;
+    } else {
+      segments.push({ text: buffer, bold, italic });
+    }
+    buffer = '';
+  };
+
+  while (cursor < text.length) {
+    const nextThree = text.slice(cursor, cursor + 3);
+    const nextTwo = text.slice(cursor, cursor + 2);
+    const nextOne = text[cursor];
+
+    if (nextThree === '***') {
+      pushBuffer();
+      bold = !bold;
+      italic = !italic;
+      cursor += 3;
+      continue;
+    }
+
+    if (nextTwo === '**') {
+      pushBuffer();
+      bold = !bold;
+      cursor += 2;
+      continue;
+    }
+
+    if (nextOne === '*') {
+      pushBuffer();
+      italic = !italic;
+      cursor += 1;
+      continue;
+    }
+
+    buffer += nextOne;
+    cursor += 1;
+  }
+
+  pushBuffer();
+
+  if (segments.length === 0) {
+    return [{ text: '', bold: false, italic: false }];
+  }
+
+  return segments;
 }
 
 export type ToggleBoldResult = {

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { normalizeReadingContentForHighlightText } from '../normalizeReadingPassageText';
+import {
+  normalizeReadingContentForHighlightedFormattedText,
+  normalizeReadingContentForHighlightText,
+} from '../normalizeReadingPassageText';
 
 describe('normalizeReadingContentForHighlightText', () => {
   it('converts html passage content into paragraph-separated plain text for FormattedText highlighting', () => {
@@ -19,5 +22,16 @@ describe('normalizeReadingContentForHighlightText', () => {
     expect(output).toContain('Alpha beta gamma.');
     expect(output).toContain('Delta epsilon zeta.');
     expect(output).toContain('Eta theta.');
+  });
+
+  it('preserves bold and italic emphasis markers for FormattedText highlight mode', () => {
+    const input =
+      '<p><em>You should spend about 20 minutes on <strong>Questions 1-13</strong>.</em></p>';
+
+    const output = normalizeReadingContentForHighlightedFormattedText(input);
+
+    expect(output).toContain('Questions 1-13');
+    expect(output).toContain('***Questions 1-13***');
+    expect(output.startsWith('*You should spend about 20 minutes on')).toBe(true);
   });
 });
