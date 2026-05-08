@@ -442,7 +442,7 @@ describe('student highlight persistence', () => {
     });
   });
 
-  it('retries desktop mouse apply when selection collapses right after mouseup', async () => {
+  it('does not auto-retry desktop highlight after a collapsed mouseup selection', async () => {
     vi.useFakeTimers();
     let currentTextNode: ChildNode | null = null;
     let collapsed = false;
@@ -477,17 +477,15 @@ describe('student highlight persistence', () => {
 
     currentTextNode = textElement.firstChild;
     collapsed = true;
-    fireEvent.mouseDown(textElement);
     fireEvent.mouseUp(textElement);
     expect(container.querySelector('mark')).toBeNull();
 
     collapsed = false;
     await act(async () => {
-      vi.advanceTimersByTime(120);
+      vi.advanceTimersByTime(200);
     });
 
-    expect(container.querySelector('mark')).not.toBeNull();
-    expect(container.querySelector('mark')).toHaveTextContent('beta');
+    expect(container.querySelector('mark')).toBeNull();
 
     getSelectionSpy.mockRestore();
   });

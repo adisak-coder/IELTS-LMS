@@ -5,7 +5,6 @@ import {
   applySelectionHighlightWithPolicy,
   escapeHtml,
   removeHighlightAtIndex,
-  createHighlightSelectionSnapshot,
   type HighlightPolicyReason,
   type HighlightSelectionSnapshot,
 } from './highlightSelection';
@@ -26,8 +25,6 @@ interface RichTextHighlighterProps {
   highlightButtonLabel?: string | undefined;
 }
 const MOUSE_SELECTION_REMOVE_GUARD_MS = 450;
-const DESKTOP_RETRY_DELAY_MS = 45;
-const DESKTOP_RETRY_MAX_ATTEMPTS = 3;
 const HIGHLIGHT_POLICY_HINT_MS = 1800;
 const HIGHLIGHT_POLICY_HINT_THROTTLE_MS = 1200;
 
@@ -46,9 +43,6 @@ export function RichTextHighlighter({
   const Tag = as as any;
   const containerRef = useRef<HTMLElement | null>(null);
   const lastMouseSelectionIntentAtRef = useRef<number | null>(null);
-  const pendingSelectionSnapshotRef = useRef<HighlightSelectionSnapshot | null>(null);
-  const mouseSelectionActiveRef = useRef(false);
-  const desktopRetryTimerRef = useRef<number | null>(null);
   const highlightPolicyHintTimerRef = useRef<number | null>(null);
   const lastPolicyHintAtRef = useRef<number>(0);
   const [highlightPolicyHint, setHighlightPolicyHint] = useState<string | null>(null);
@@ -88,13 +82,6 @@ export function RichTextHighlighter({
     return false;
   }, [enabled, highlightClassName, highlightColor, setHtml]);
 
-  const clearDesktopRetryTimer = useCallback(() => {
-    if (desktopRetryTimerRef.current !== null) {
-      window.clearTimeout(desktopRetryTimerRef.current);
-      desktopRetryTimerRef.current = null;
-    }
-  }, []);
-
   const clearHighlightPolicyHintTimer = useCallback(() => {
     if (highlightPolicyHintTimerRef.current !== null) {
       window.clearTimeout(highlightPolicyHintTimerRef.current);
@@ -118,31 +105,6 @@ export function RichTextHighlighter({
       highlightPolicyHintTimerRef.current = null;
     }, HIGHLIGHT_POLICY_HINT_MS);
   }, [clearHighlightPolicyHintTimer]);
-
-  const captureSelectionSnapshot = useCallback(() => {
-    if (!enabled) {
-      return;
-    }
-    const container = containerRef.current;
-    const selection = window.getSelection();
-    if (!container || !selection) {
-      return;
-    }
-    const snapshot = createHighlightSelectionSnapshot(container, selection);
-    if (snapshot) {
-      pendingSelectionSnapshotRef.current = snapshot;
-    }
-  }, [enabled]);
-
-  const handleMouseDown = useCallback(() => {
-    if (!enabled) {
-      return;
-    }
-    mouseSelectionActiveRef.current = true;
-    pendingSelectionSnapshotRef.current = null;
-    clearDesktopRetryTimer();
-    captureSelectionSnapshot();
-  }, [captureSelectionSnapshot, clearDesktopRetryTimer, enabled]);
 
   const applySelectionFromSnapshot = useCallback(
     (snapshot: HighlightSelectionSnapshot) => {
@@ -173,47 +135,15 @@ export function RichTextHighlighter({
     },
     [enabled, highlightClassName, highlightColor, maybeShowPolicyHint, setHtml],
   );
-  const applyPendingSelectionSnapshot = useCallback(() => {
-    const snapshot = pendingSelectionSnapshotRef.current;
-    if (!snapshot) {
-      return false;
-    }
-    const applied = applySelectionFromSnapshot(snapshot);
-    if (applied) {
-      pendingSelectionSnapshotRef.current = null;
-    }
-    return applied;
-  }, [applySelectionFromSnapshot]);
-  const scheduleDesktopRetry = useCallback(
-    (attempt = 1) => {
-      clearDesktopRetryTimer();
-      if (attempt > DESKTOP_RETRY_MAX_ATTEMPTS) {
-        return;
-      }
-      desktopRetryTimerRef.current = window.setTimeout(() => {
-        const applied = applyPendingSelectionSnapshot() || handleSelection();
-        if (!applied) {
-          scheduleDesktopRetry(attempt + 1);
-          return;
-        }
-        lastMouseSelectionIntentAtRef.current = Date.now();
-      }, DESKTOP_RETRY_DELAY_MS);
-    },
-    [applyPendingSelectionSnapshot, clearDesktopRetryTimer, handleSelection],
-  );
   const handleMouseUp = useCallback(() => {
     if (!enabled) {
       return;
     }
-    mouseSelectionActiveRef.current = false;
-    captureSelectionSnapshot();
-    const applied = applyPendingSelectionSnapshot() || handleSelection();
+    const applied = handleSelection();
     if (applied) {
       lastMouseSelectionIntentAtRef.current = Date.now();
-      return;
     }
-    scheduleDesktopRetry(1);
-  }, [applyPendingSelectionSnapshot, captureSelectionSnapshot, enabled, handleSelection, scheduleDesktopRetry]);
+  }, [enabled, handleSelection]);
   const { isWithinRecentTouchAutoApplyGuard, startTouchSelectionSession, scheduleSelectionHighlight } =
     useDeferredSelectionHighlight({
     enabled,
@@ -255,33 +185,12 @@ export function RichTextHighlighter({
 
   useEffect(() => {
     if (!enabled) {
-      pendingSelectionSnapshotRef.current = null;
-      mouseSelectionActiveRef.current = false;
-      clearDesktopRetryTimer();
       clearHighlightPolicyHintTimer();
-      return;
     }
-
-    const handleSelectionChange = () => {
-      const container = containerRef.current;
-      const selection = window.getSelection();
-      const anchorNode = selection?.anchorNode ?? null;
-      if (!container || !selection || !anchorNode) {
-        return;
-      }
-      if (!container.contains(anchorNode)) {
-        return;
-      }
-      captureSelectionSnapshot();
-    };
-
-    document.addEventListener('selectionchange', handleSelectionChange);
     return () => {
-      document.removeEventListener('selectionchange', handleSelectionChange);
-      clearDesktopRetryTimer();
       clearHighlightPolicyHintTimer();
     };
-  }, [captureSelectionSnapshot, clearDesktopRetryTimer, clearHighlightPolicyHintTimer, enabled]);
+  }, [clearHighlightPolicyHintTimer, enabled]);
 
   useEffect(() => {
     return () => {
@@ -297,7 +206,6 @@ export function RichTextHighlighter({
         data-student-highlightable="true"
         style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
         onClick={removeTappedHighlight}
-        onMouseDown={enabled && !showHighlightButton ? handleMouseDown : undefined}
         onMouseUp={enabled && !showHighlightButton ? handleMouseUp : undefined}
         onTouchStart={enabled && !showHighlightButton ? startTouchSelectionSession : undefined}
         onTouchEnd={enabled && !showHighlightButton ? scheduleSelectionHighlight : undefined}
