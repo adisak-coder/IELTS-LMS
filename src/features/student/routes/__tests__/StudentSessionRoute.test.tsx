@@ -72,7 +72,7 @@ describe('StudentSessionRoute', () => {
     vi.spyOn(authService, 'logoutAll').mockResolvedValue();
     useStudentSessionRouteDataMock.mockReturnValue({
       attemptSnapshot: null,
-      error: 'Invalid access code. Please check in again.',
+      error: 'Invalid wcode. Please check in again.',
       isLoading: false,
       retry: vi.fn(),
       runtimeSnapshot: null,

@@ -181,7 +181,7 @@ export function StudentEntryRoute() {
     const newErrors: Partial<Record<keyof EntryFormData, string>> = {};
 
     if (!normalizedWcode) {
-      newErrors.wcode = 'Access code is required';
+      newErrors.wcode = 'Wcode is required';
     }
 
     if (!normalizedEmail || !validateEmail(normalizedEmail)) {
@@ -305,21 +305,21 @@ export function StudentEntryRoute() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="wcode" className="block text-sm font-medium text-gray-700 mb-2">
-              Access code
+              Wcode
             </label>
             <input
               id="wcode"
               type="text"
               value={formData.wcode}
               onChange={(e) => handleInputChange('wcode', e.target.value)}
-              placeholder="Enter your access code"
+              placeholder="Enter your wcode"
               disabled={isLoading || Boolean(queuedAdmission)}
               className={`w-full px-3 py-2 border rounded-md ${
                 errors.wcode ? 'border-red-300' : 'border-gray-300'
               } focus:outline-none focus:ring-2 focus:ring-blue-500`}
             />
             {errors.wcode && <p className="mt-1 text-sm text-red-600">{errors.wcode}</p>}
-            <p className="mt-1 text-xs text-gray-500">Enter the access code provided to you.</p>
+            <p className="mt-1 text-xs text-gray-500">Enter the wcode provided to you.</p>
           </div>
 
           <div>

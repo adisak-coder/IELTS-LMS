@@ -714,12 +714,12 @@ export function useStudentSessionRouteData(
       return;
     }
 
-    applyLoadTransition(source, { type: 'requested' });
+      applyLoadTransition(source, { type: 'requested' });
 
-    try {
-      if (!candidateId) {
-        throw new Error('Invalid access code. Please check in again.');
-      }
+      try {
+        if (!candidateId) {
+        throw new Error('Invalid wcode. Please check in again.');
+        }
 
       if (!studentKey) {
         throw new Error('Student identity not found');
