@@ -167,7 +167,7 @@ describe('StudentKeyboardProvider', () => {
     };
   }
 
-  it('blocks clipboard shortcuts during exam phase', () => {
+  it('allows copy shortcut outside answer inputs during exam phase', () => {
     const harness = renderHarness();
     const event = new KeyboardEvent('keydown', {
       key: 'c',
@@ -180,8 +180,8 @@ describe('StudentKeyboardProvider', () => {
       document.dispatchEvent(event);
     });
 
-    expect(event.defaultPrevented).toBe(true);
-    expect(harness.runtime.state.violations.at(-1)?.type).toBe('RESTRICTED_SHORTCUT');
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.runtime.state.violations).toHaveLength(0);
   });
 
   it('allows clipboard shortcuts when config disables clipboard blocking', () => {
@@ -203,7 +203,7 @@ describe('StudentKeyboardProvider', () => {
     expect(harness.runtime.state.violations).toHaveLength(0);
   });
 
-  it('defaults to blocking clipboard shortcuts when flag is missing', () => {
+  it('defaults to allowing copy shortcut when clipboard flag is missing', () => {
     const harness = renderHarness((state) => {
       delete (state.config.security as any).blockClipboard;
     });
@@ -218,12 +218,12 @@ describe('StudentKeyboardProvider', () => {
       document.dispatchEvent(event);
     });
 
-    expect(event.defaultPrevented).toBe(true);
-    expect(harness.runtime.state.violations.at(-1)?.type).toBe('RESTRICTED_SHORTCUT');
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.runtime.state.violations).toHaveLength(0);
   });
 
-  it('blocks context menu interactions during exam phase', () => {
-    const harness = renderHarness();
+  it('allows context menu interactions during exam phase', () => {
+    renderHarness();
     const event = new MouseEvent('contextmenu', {
       bubbles: true,
       cancelable: true,
@@ -233,8 +233,7 @@ describe('StudentKeyboardProvider', () => {
       document.dispatchEvent(event);
     });
 
-    expect(event.defaultPrevented).toBe(true);
-    expect(harness.runtime.state.violations.at(-1)?.type).toBe('CONTEXT_MENU_BLOCKED');
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it('allows context menu inside highlightable reading text when highlight mode is active', () => {
@@ -258,24 +257,47 @@ describe('StudentKeyboardProvider', () => {
     expect(harness.runtime.state.violations).toHaveLength(0);
   });
 
-  it('still blocks context menu inside highlightable text when highlight mode is off', () => {
+  it('allows context menu inside highlightable text when highlight mode is off', () => {
     const harness = renderHarness();
-
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     act(() => {
-      harness.runtime.actions.setCurrentModule('reading');
+      harness.highlightTarget.dispatchEvent(event);
     });
+    expect(event.defaultPrevented).toBe(false);
+  });
 
-    const event = new MouseEvent('contextmenu', {
+  it('blocks paste shortcut inside answer inputs', () => {
+    const harness = renderHarness();
+    const event = new KeyboardEvent('keydown', {
+      key: 'v',
+      ctrlKey: true,
       bubbles: true,
       cancelable: true,
     });
 
     act(() => {
-      harness.highlightTarget.dispatchEvent(event);
+      harness.editor.dispatchEvent(event);
     });
 
     expect(event.defaultPrevented).toBe(true);
-    expect(harness.runtime.state.violations.at(-1)?.type).toBe('CONTEXT_MENU_BLOCKED');
+    expect(harness.runtime.state.violations.at(-1)?.type).toBe('CLIPBOARD_BLOCKED');
+  });
+
+  it('allows paste shortcut outside answer inputs', () => {
+    const harness = renderHarness();
+    const event = new KeyboardEvent('keydown', {
+      key: 'v',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      document.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(false);
+    expect(harness.runtime.state.violations).toHaveLength(0);
   });
 
   it('blocks drag and drop interactions during exam phase', () => {

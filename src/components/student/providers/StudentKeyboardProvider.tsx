@@ -10,15 +10,7 @@ interface KeyboardProviderProps {
   children: ReactNode;
 }
 
-const blockedModifierKeys = new Set([
-  'a',
-  'c',
-  'f',
-  'p',
-  's',
-  'v',
-  'x',
-]);
+const blockedGlobalModifierKeys = new Set(['f', 'p', 's']);
 
 const blockedInspectorShortcuts = new Set(['i', 'c', 'j']);
 const allowedEditingKeys = new Set([
@@ -211,15 +203,25 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
         }
       }
 
-      if (shouldBlockClipboard && (event.metaKey || event.ctrlKey) && blockedModifierKeys.has(normalizedKey)) {
-        if (editingTarget && normalizedKey === 'a' && !event.altKey && !event.shiftKey) {
-          return;
-        }
+      if (
+        shouldBlockClipboard &&
+        editingTarget &&
+        (event.metaKey || event.ctrlKey) &&
+        normalizedKey === 'v'
+      ) {
+        handleRestrictedInteraction(
+          event,
+          'CLIPBOARD_BLOCKED',
+          'Pasting answers is blocked during the exam.',
+        );
+        return;
+      }
 
+      if (shouldBlockClipboard && (event.metaKey || event.ctrlKey) && blockedGlobalModifierKeys.has(normalizedKey)) {
         handleRestrictedInteraction(
           event,
           'RESTRICTED_SHORTCUT',
-          'Copy, paste, print, search, and save shortcuts are blocked during the exam.',
+          'Print, search, and save shortcuts are blocked during the exam.',
         );
         return;
       }
@@ -326,11 +328,14 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
     };
 
     const handleClipboardEvent = (event: ClipboardEvent) => {
-      if (!shouldBlockClipboard) {
+      if (!shouldBlockClipboard || event.type !== 'paste') {
         return;
       }
 
       const target = event.target;
+      if (!isEditingTarget(target)) {
+        return;
+      }
       const targetElement = target instanceof HTMLElement ? target : null;
       
       // Log paste attempts with metadata
@@ -350,32 +355,12 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
       handleRestrictedInteraction(
         event,
         'CLIPBOARD_BLOCKED',
-        'Clipboard operations are blocked during the exam.',
+        'Pasting answers is blocked during the exam.',
       );
     };
 
-    const handleContextMenu = (event: MouseEvent) => {
-      if (!shouldBlockClipboard) {
-        return;
-      }
-
-      const target = event.target;
-      const targetElement = target instanceof HTMLElement ? target : null;
-      const highlightModeEnabled = uiState.accessibilitySettings.highlightMode;
-      const isReadingModule = runtimeState.currentModule === 'reading';
-      const withinHighlightableContainer = Boolean(
-        targetElement?.closest('[data-student-highlightable="true"]'),
-      );
-
-      if (highlightModeEnabled && isReadingModule && withinHighlightableContainer) {
-        return;
-      }
-
-      handleRestrictedInteraction(
-        event,
-        'CONTEXT_MENU_BLOCKED',
-        'The context menu is blocked during the exam.',
-      );
+    const handleContextMenu = (_event: MouseEvent) => {
+      // Native callout/context menu is intentionally allowed across exam text surfaces.
     };
 
     const handleDragDrop = (event: DragEvent) => {
