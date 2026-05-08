@@ -432,14 +432,41 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
       writes += 1;
     }
 
-    const writingEditors = page.locator('[contenteditable="true"]');
-    const writingCount = await writingEditors.count().catch(() => 0);
+    const writingValue = `writing-${user.userId}-${writes}`;
+    const writingInputs = page.locator(
+      [
+        // Updated writing UI: placeholder-driven text area on the right panel.
+        'textarea[placeholder*="write your answer" i]',
+        '[aria-label*="writing response" i] textarea',
+        '[aria-label*="essay" i]',
+        'textarea[name*="writing" i]',
+        // Keep support for old rich-text editors.
+        '[contenteditable="true"]',
+      ].join(', '),
+    );
+    const writingCount = await writingInputs.count().catch(() => 0);
     for (let i = 0; i < writingCount; i += 1) {
-      const editor = writingEditors.nth(i);
-      if (!(await editor.isVisible().catch(() => false))) continue;
-      await editor.click().catch(() => {});
-      await page.keyboard.press('Control+A').catch(() => {});
-      await page.keyboard.type(`writing-${user.userId}-${writes}`).catch(() => {});
+      const input = writingInputs.nth(i);
+      if (!(await input.isVisible().catch(() => false))) continue;
+      await input.click().catch(() => {});
+      await input.fill(writingValue).catch(() => {});
+      // Some editors require explicit input/change events to emit SetEssayText mutations.
+      await input
+        .evaluate((node, value) => {
+          if (!(node instanceof HTMLElement)) return;
+          const target = node as HTMLInputElement | HTMLTextAreaElement;
+          if ('value' in target) {
+            target.value = value;
+            target.dispatchEvent(new Event('input', { bubbles: true }));
+            target.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+          }
+          if (node.isContentEditable) {
+            node.textContent = value;
+            node.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+          }
+        }, writingValue)
+        .catch(() => {});
       writes += 1;
     }
 
