@@ -29,6 +29,7 @@ import { useStudentAttempt } from './providers/StudentAttemptProvider';
 import { useStudentRuntime } from './providers/StudentRuntimeProvider';
 import { useStudentUI } from './providers/StudentUIProvider';
 import { isRuntimeStructurallyCompleted, isVerifiedTerminalStudentState } from './providers/verifiedTerminalState';
+import { resolveObjectiveAnswerUpdate } from './resolveObjectiveAnswerUpdate';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
 import { shouldLockViewportForExamSession } from './browserParityPolicy';
 import type { StudentAnswerMutationMeta, StudentAnswerValue } from '../../types/studentAttempt';
@@ -136,6 +137,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const [finalSubmitStatus, setFinalSubmitStatus] = useState<'idle' | 'submitting' | 'retrying' | 'failed'>('idle');
   const blockingCopy = getBlockingCopy(runtimeState.blocking.reason);
   const { setShowTimeExtensionRequest } = uiActions;
+  const timeExtensionReason =
+    typeof uiState.timeExtensionReason === 'string' ? uiState.timeExtensionReason : '';
   const highlightColor = uiState.accessibilitySettings.highlightColor;
   const highlightClassName = getStudentHighlightClassName(highlightColor);
   const highlightNamespace = useMemo(
@@ -720,7 +723,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   }, [shouldShowTimeExtension, setShowTimeExtensionRequest]);
 
   const handleTimeExtensionRequest = () => {
-    if (uiState.timeExtensionReason.trim()) {
+    if (timeExtensionReason.trim()) {
       uiActions.grantTimeExtension(5);
       runtimeActions.setTimeRemaining(runtimeState.timeRemaining + 300);
     }
@@ -845,47 +848,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     if (runtimeState.blocking.reason === 'storage_unavailable') {
       return;
     }
-    const hasSlotIntent =
-      typeof meta?.slotIndex === 'number' &&
-      Number.isInteger(meta.slotIndex) &&
-      meta.slotIndex >= 0;
-    let resolvedAnswer = answer;
     const currentValue = latestAnswersRef.current[questionId];
-
-    if (hasSlotIntent) {
-      const slotIndex = meta!.slotIndex as number;
-      const currentSlots = Array.isArray(currentValue) ? currentValue : [];
-      const requestedSlotCount =
-        typeof meta?.slotCount === 'number' &&
-        Number.isInteger(meta.slotCount) &&
-        meta.slotCount > 0
-          ? meta.slotCount
-          : currentSlots.length;
-      const nextSlotCount = Math.max(requestedSlotCount, currentSlots.length, slotIndex + 1);
-      const nextSlots = Array.from({ length: nextSlotCount }, (_, index) => currentSlots[index] ?? '');
-      let nextSlotValue =
-        typeof meta?.slotValue === 'string'
-          ? meta.slotValue
-          : '';
-      if (nextSlotValue === '' && Array.isArray(answer)) {
-        const candidate = answer[slotIndex];
-        nextSlotValue = typeof candidate === 'string' ? candidate : '';
-      } else if (nextSlotValue === '' && typeof answer === 'string') {
-        nextSlotValue = answer;
-      } else if (nextSlotValue === '' && (answer === null || answer === undefined)) {
-        nextSlotValue = '';
-      } else if (nextSlotValue === '') {
-        nextSlotValue = String(answer);
-      }
-      nextSlots[slotIndex] = nextSlotValue;
-      resolvedAnswer = nextSlots;
-    } else if (Array.isArray(answer) && Array.isArray(currentValue) && currentValue.length > answer.length) {
-      // Defensive merge: preserve existing sibling slots when a partial array payload is emitted.
-      const nextSlotCount = Math.max(currentValue.length, answer.length);
-      resolvedAnswer = Array.from({ length: nextSlotCount }, (_, index) =>
-        index < answer.length ? (answer[index] ?? '') : (currentValue[index] ?? ''),
-      );
-    }
+    const resolvedAnswer = resolveObjectiveAnswerUpdate(currentValue, answer, meta);
 
     latestAnswersRef.current = {
       ...latestAnswersRef.current,
@@ -1377,7 +1341,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
               </label>
               <textarea
                 id="extension-reason"
-                value={uiState.timeExtensionReason}
+                value={timeExtensionReason}
                 onChange={(event) => uiActions.setTimeExtensionReason(event.target.value)}
                 className="w-full border border-gray-300 rounded-sm px-3 py-2 min-h-[120px]"
                 aria-label="Extension reason"

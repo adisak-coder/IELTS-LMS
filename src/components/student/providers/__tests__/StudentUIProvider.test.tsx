@@ -57,3 +57,26 @@ describe('StudentUIProvider readability controls', () => {
     );
   });
 });
+
+describe('StudentUIProvider time extension state', () => {
+  it('normalizes nullish time extension reasons to an empty string', () => {
+    let context: ReturnType<typeof useStudentUI> | null = null;
+
+    function Probe() {
+      context = useStudentUI();
+      return null;
+    }
+
+    render(
+      <StudentUIProvider>
+        <Probe />
+      </StudentUIProvider>,
+    );
+
+    act(() => {
+      context!.actions.setTimeExtensionReason(null as unknown as string);
+    });
+
+    expect(context!.state.timeExtensionReason).toBe('');
+  });
+});

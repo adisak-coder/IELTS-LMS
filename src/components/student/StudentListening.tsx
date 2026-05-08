@@ -70,8 +70,15 @@ export function StudentListening({
     if (incomingMeta?.slotIndex !== undefined || typeof defaultEntryAnswerIndex !== 'number') {
       return incomingMeta;
     }
-    if (typeof value !== 'string') {
-      return incomingMeta;
+
+    let slotValue = '';
+    if (typeof value === 'string') {
+      slotValue = value;
+    } else if (Array.isArray(value)) {
+      const candidate = value[defaultEntryAnswerIndex];
+      slotValue = typeof candidate === 'string' ? candidate : '';
+    } else if (value !== null && value !== undefined) {
+      slotValue = String(value);
     }
 
     return {
@@ -79,7 +86,7 @@ export function StudentListening({
       slotIndex: defaultEntryAnswerIndex,
       slotId,
       slotCount,
-      slotValue: value,
+      slotValue,
       interactionType: 'typing',
     };
   };

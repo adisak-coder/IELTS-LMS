@@ -64,7 +64,7 @@ export function StudentUIProvider({ children }: UIProviderProps) {
   const [showSubmitConfirm, setShowSubmitConfirm] = useState(false);
   const [showAccessibility, setShowAccessibility] = useState(false);
   const [showTimeExtensionRequest, setShowTimeExtensionRequest] = useState(false);
-  const [timeExtensionReason, setTimeExtensionReason] = useState('');
+  const [timeExtensionReason, setTimeExtensionReasonState] = useState('');
   const [timeExtensionGranted, setTimeExtensionGranted] = useState(false);
   const [timeExtensionMinutes, setTimeExtensionMinutes] = useState(0);
   const [accessibilitySettings, setAccessibilitySettings] = useState({
@@ -80,7 +80,11 @@ export function StudentUIProvider({ children }: UIProviderProps) {
     setTimeExtensionGranted(true);
     setTimeExtensionMinutes(minutes);
     setShowTimeExtensionRequest(false);
-    setTimeExtensionReason('');
+    setTimeExtensionReasonState('');
+  }, []);
+
+  const setTimeExtensionReason = useCallback((reason: string) => {
+    setTimeExtensionReasonState(typeof reason === 'string' ? reason : '');
   }, []);
 
   const setFontSize = useCallback((size: StudentFontSize) => {
