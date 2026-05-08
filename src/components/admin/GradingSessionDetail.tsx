@@ -16,7 +16,7 @@ import {
 } from './gradingReviewUtils';
 import type { ExamState } from '../../types';
 import { sanitizeHtml } from '../../utils/sanitizeHtml';
-import { htmlToPlainText } from '../../utils/htmlText';
+import { htmlToPlainText, htmlToPlainTextPreserveLineBreaks } from '../../utils/htmlText';
 
 interface SessionWritingPrintDocument {
   pages: SessionWritingPrintPage[];
@@ -598,7 +598,7 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
                   <h4>Student Response</h4>
                   {page.task ? (
                     <div className="session-writing-print-response">
-                      {htmlToPlainText(page.task.studentText) || 'No writing response recorded.'}
+                      {htmlToPlainTextPreserveLineBreaks(page.task.studentText) || 'No writing response recorded.'}
                     </div>
                   ) : (
                     <div className="session-writing-print-empty">No writing response recorded.</div>

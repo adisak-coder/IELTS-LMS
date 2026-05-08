@@ -696,4 +696,26 @@ describe('gradingReviewUtils', () => {
 
     expect(csv).toContain('"Hello, ""world""\n=SUM(A1:A2)"');
   });
+
+  test('wide writing export preserves consecutive blank lines for plain-text responses', () => {
+    const exportData = buildWideWritingExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      writingSubmissions: [
+        {
+          submissionId: 'sub-1',
+          writing: [
+            createWritingTaskSubmission(
+              'sub-1',
+              'task1',
+              'Line 1\nLine 2\n\n\nLine 5',
+              5,
+            ),
+          ],
+        },
+      ],
+    });
+
+    expect(exportData.rows[0]?.['task1:response']).toBe('Line 1\nLine 2\n\n\nLine 5');
+  });
 });

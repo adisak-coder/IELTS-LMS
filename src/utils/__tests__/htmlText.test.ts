@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { htmlToPlainText } from '../htmlText';
+import { htmlToPlainText, htmlToPlainTextPreserveLineBreaks } from '../htmlText';
 
 describe('htmlToPlainText', () => {
   test('converts block-level html boundaries into normalized line breaks', () => {
@@ -24,5 +24,10 @@ describe('htmlToPlainText', () => {
       '<div>Safe</div><script>alert("x")</script><style>.x{display:none;}</style><div>Text</div>';
 
     expect(htmlToPlainText(input)).toBe('Safe\nText');
+  });
+
+  test('preserves consecutive blank lines for plain-text writing responses', () => {
+    const input = 'Line 1\nLine 2\n\n\nLine 5';
+    expect(htmlToPlainTextPreserveLineBreaks(input)).toBe('Line 1\nLine 2\n\n\nLine 5');
   });
 });

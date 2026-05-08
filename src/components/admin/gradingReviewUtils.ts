@@ -17,7 +17,7 @@ import {
   getStudentAnswerDisplay,
   isStudentAnswerCorrect,
 } from './gradingAnswerUtils';
-import { htmlToPlainText } from '../../utils/htmlText';
+import { htmlToPlainText, htmlToPlainTextPreserveLineBreaks } from '../../utils/htmlText';
 
 export type GradingExportSection = 'reading' | 'listening' | 'writing';
 
@@ -558,7 +558,7 @@ function assignWritingTaskColumns(row: Record<string, unknown>, slot: 'task1' | 
   const rubric = task.rubricAssessment;
 
   row[`${slot}:wordCount`] = task.wordCount;
-  row[`${slot}:response`] = htmlToPlainText(task.studentText);
+  row[`${slot}:response`] = htmlToPlainTextPreserveLineBreaks(task.studentText);
   row[`${slot}:taskResponseBand`] = rubric?.taskResponseBand ?? '';
   row[`${slot}:coherenceBand`] = rubric?.coherenceBand ?? '';
   row[`${slot}:lexicalBand`] = rubric?.lexicalBand ?? '';

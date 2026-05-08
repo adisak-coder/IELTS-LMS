@@ -11,6 +11,10 @@ function normalizePlainText(text: string): string {
     .join('\n');
 }
 
+function normalizePlainTextPreservingLineBreaks(text: string): string {
+  return text.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ');
+}
+
 function decodeEntities(text: string): string {
   return text
     .replace(/&nbsp;/gi, ' ')
@@ -41,4 +45,26 @@ export function htmlToPlainText(content: string): string {
   return normalizePlainText(
     decodeEntities(contentWithBreaks.replace(/<[^>]+>/g, '')),
   );
+}
+
+export function htmlToPlainTextPreserveLineBreaks(content: string): string {
+  if (!HTML_TAG_PATTERN.test(content)) {
+    return normalizePlainTextPreservingLineBreaks(decodeEntities(content));
+  }
+
+  const contentWithBreaks = content
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(BLOCK_BREAK_PATTERN, '\n')
+    .replace(/<li\b[^>]*>/gi, '\n');
+
+  if (typeof document !== 'undefined') {
+    const template = document.createElement('template');
+    template.innerHTML = contentWithBreaks;
+    return normalizePlainTextPreservingLineBreaks(template.content.textContent ?? '').replace(/\n+$/g, '');
+  }
+
+  return normalizePlainTextPreservingLineBreaks(
+    decodeEntities(contentWithBreaks.replace(/<[^>]+>/g, '')),
+  ).replace(/\n+$/g, '');
 }
