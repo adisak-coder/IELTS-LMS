@@ -179,6 +179,34 @@ describe('student question experience', () => {
 
     expect(screen.getByText('no _______ (red)')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Answer for question 5' })).toBeInTheDocument();
+    expect(screen.queryByText('5.')).not.toBeInTheDocument();
+  });
+
+  it('keeps table completion slots free from injected numeric badges inside the authored cell', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-no-badge',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Item', 'Details'],
+      rows: [['Special dietary requirements:', 'no _______ (red)']],
+      cells: [{ id: 'cell-1', row: 0, col: 1, correctAnswer: 'nuts' }],
+      answerRule: 'ONE_WORD',
+    };
+
+    const { container } = render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={5}
+        answer={['']}
+        onChange={() => {}}
+      />,
+    );
+
+    const slotCell = container.querySelector('#question-table-no-badge\\:cell-1');
+    expect(slotCell).not.toBeNull();
+    expect(slotCell).toHaveTextContent('no _______ (red)');
+    expect(slotCell?.querySelector('span.text-blue-700')).toBeNull();
   });
 
   it('emits slot metadata for table completion edits so shared answer keys persist per question slot', () => {

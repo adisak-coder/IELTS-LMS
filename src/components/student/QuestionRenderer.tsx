@@ -31,6 +31,7 @@ import { getImageUrlCandidates } from '../../utils/imageUrl';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
+import { TableCompletionSlotCell } from './TableCompletionSlotCell';
 
 interface QuestionRendererProps {
   question:
@@ -700,48 +701,24 @@ export function QuestionRenderer({
                   }
 
                   return (
-                    <td
+                    <TableCompletionSlotCell
                       key={slot.cell.id}
-                      id={`question-${slot.slotId}`}
-                      className={`border border-gray-200 px-3 py-2 align-top ${
-                        currentQuestionId === slot.slotId ? 'ring-2 ring-blue-500 ring-inset' : ''
-                      } ${flags[slot.slotId] ? 'bg-amber-50' : ''}`}
-                    >
-                      <div className="space-y-2">
-                        <FormattedText
-                          as="p"
-                          className="text-[length:var(--student-control-font-size)] text-gray-800"
-                          text={cellValue}
-                          highlightEnabled={highlightEnabled}
-                          highlightColor={highlightColor}
-                        />
-                        <div className="flex items-start gap-3">
-                          <span className="mt-2 min-w-[1.75rem] font-bold text-blue-700">{number + slot.index}.</span>
-                          <div className="min-w-0 flex-1">
-                            <ProtectedInput
-                              type="text"
-                              name={slot.slotId}
-                              value={stringArrayAnswer[slot.index] ?? ''}
-                              onChange={(event) =>
-                                updateIndexedAnswer(
-                                  slot.index,
-                                  event.target.value,
-                                  tableBlock.cells.length,
-                                  slot.slotId,
-                                )
-                              }
-                              className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-                              placeholder="Enter answer..."
-                              security={security}
-                              sessionId={sessionId}
-                              studentId={studentId}
-                              aria-label={`Answer for question ${number + slot.index}`}
-                            />
-                          </div>
-                          <div className="mt-1">{renderFlagButton(slot.slotId)}</div>
-                        </div>
-                      </div>
-                    </td>
+                      slotId={slot.slotId}
+                      isActive={currentQuestionId === slot.slotId}
+                      isFlagged={Boolean(flags[slot.slotId])}
+                      promptText={cellValue}
+                      answerValue={stringArrayAnswer[slot.index] ?? ''}
+                      ariaLabel={`Answer for question ${number + slot.index}`}
+                      highlightEnabled={highlightEnabled}
+                      highlightColor={highlightColor}
+                      security={security}
+                      sessionId={sessionId}
+                      studentId={studentId}
+                      onChange={(nextValue) =>
+                        updateIndexedAnswer(slot.index, nextValue, tableBlock.cells.length, slot.slotId)
+                      }
+                      renderFlagButton={renderFlagButton}
+                    />
                   );
                 })}
               </tr>
