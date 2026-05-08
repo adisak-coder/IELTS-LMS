@@ -10,6 +10,13 @@ export interface DeviceFingerprintComponents {
   webglRenderer: string | null;
 }
 
+export interface DeviceFingerprint {
+  components: DeviceFingerprintComponents;
+  hash: string;
+}
+
+let cachedDeviceFingerprintPromise: Promise<DeviceFingerprint> | null = null;
+
 function fallbackHash(value: string): string {
   let hash = 2166136261;
 
@@ -55,6 +62,16 @@ function getCanvasHash(): string | null {
   }
 }
 
+function releaseWebGlContext(context: WebGLRenderingContext) {
+  const loseContextExtension = context.getExtension('WEBGL_lose_context') as
+    | { loseContext: () => void }
+    | null;
+
+  if (loseContextExtension) {
+    loseContextExtension.loseContext();
+  }
+}
+
 function getWebGlRenderer(): string | null {
   if (isJsdomCanvasEnvironment()) {
     return null;
@@ -71,13 +88,19 @@ function getWebGlRenderer(): string | null {
     }
 
     const gl = context as WebGLRenderingContext;
-    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    try {
+      const debugInfo = gl.getExtension('WEBGL_debug_renderer_info') as
+        | { UNMASKED_RENDERER_WEBGL: number }
+        | null;
 
-    if (debugInfo) {
-      return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) as string;
+      if (debugInfo) {
+        return gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) as string;
+      }
+
+      return gl.getParameter(gl.RENDERER) as string;
+    } finally {
+      releaseWebGlContext(gl);
     }
-
-    return gl.getParameter(gl.RENDERER) as string;
   } catch {
     return null;
   }
@@ -114,12 +137,25 @@ export async function hashFingerprint(components: DeviceFingerprintComponents): 
   return fallbackHash(value);
 }
 
-export async function getDeviceFingerprint() {
-  const components = await collectDeviceFingerprintComponents();
-  const hash = await hashFingerprint(components);
+export function clearCachedDeviceFingerprintForTesting() {
+  cachedDeviceFingerprintPromise = null;
+}
 
-  return {
-    components,
-    hash,
-  };
+export async function getDeviceFingerprint(): Promise<DeviceFingerprint> {
+  if (!cachedDeviceFingerprintPromise) {
+    cachedDeviceFingerprintPromise = (async () => {
+      const components = await collectDeviceFingerprintComponents();
+      const hash = await hashFingerprint(components);
+
+      return {
+        components,
+        hash,
+      };
+    })().catch((error) => {
+      cachedDeviceFingerprintPromise = null;
+      throw error;
+    });
+  }
+
+  return cachedDeviceFingerprintPromise;
 }

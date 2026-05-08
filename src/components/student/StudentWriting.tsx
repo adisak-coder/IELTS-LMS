@@ -35,15 +35,15 @@ function normalizeWritingPlainText(value: string): string {
   return value.replace(/\r\n?/g, '\n');
 }
 
-function readEditorPlainText(editor: HTMLDivElement): string {
-  const raw = typeof editor.innerText === 'string' ? editor.innerText : (editor.textContent ?? '');
+function readEditorPlainText(editor: HTMLTextAreaElement): string {
+  const raw = editor.value ?? '';
   return normalizeWritingPlainText(raw);
 }
 
-function writeEditorPlainText(editor: HTMLDivElement, value: string): void {
+function writeEditorPlainText(editor: HTMLTextAreaElement, value: string): void {
   const normalized = normalizeWritingPlainText(value);
-  if ((editor.textContent ?? '') !== normalized) {
-    editor.textContent = normalized;
+  if ((editor.value ?? '') !== normalized) {
+    editor.value = normalized;
   }
 }
 
@@ -71,7 +71,7 @@ export function StudentWriting({
   const writingConfig = state.config.sections.writing;
   const [activeTaskId, setActiveTaskId] = useState<string>(currentQuestionId || writingConfig.tasks[0]?.id || 'task1');
   const [isEditorFocused, setIsEditorFocused] = useState(false);
-  const editorRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const lastKeydownRef = useRef<number>(0);
   const previousValueRef = useRef<string>('');
   const lastCommittedDraftByTaskRef = useRef<Record<string, string>>({});
@@ -214,7 +214,7 @@ export function StudentWriting({
     };
 
     const handleInput = (event: Event) => {
-      const target = event.currentTarget as HTMLDivElement | null;
+      const target = event.currentTarget as HTMLTextAreaElement | null;
       const newValue = target ? readEditorPlainText(target) : '';
       const previousValue = previousValueRef.current;
       
@@ -339,9 +339,9 @@ export function StudentWriting({
 
   const blockWritingEditorInteraction = (
     event:
-      | React.ClipboardEvent<HTMLDivElement>
-      | React.DragEvent<HTMLDivElement>
-      | React.MouseEvent<HTMLDivElement>,
+      | React.ClipboardEvent<HTMLTextAreaElement>
+      | React.DragEvent<HTMLTextAreaElement>
+      | React.MouseEvent<HTMLTextAreaElement>,
   ) => {
     event.preventDefault();
     event.stopPropagation();
@@ -350,9 +350,9 @@ export function StudentWriting({
         resolvedSessionId,
         'PASTE_BLOCKED',
         {
-          targetName: 'DIV',
+          targetName: event.currentTarget.tagName,
           targetType: 'writing-editor',
-          isContentEditable: true,
+          isContentEditable: Boolean(event.currentTarget.isContentEditable),
         },
         resolvedStudentId,
       );
@@ -520,14 +520,11 @@ export function StudentWriting({
                     Write your answer here…
                   </div>
               )}
-              <div
+              <textarea
                 ref={editorRef}
-                contentEditable
-                onInput={handleEditorInput}
-                  suppressContentEditableWarning
-                  role="textbox"
-                  aria-multiline="true"
-                  aria-label="Writing response"
+                value={currentText}
+                onChange={handleEditorInput}
+                aria-label="Writing response"
                   onFocus={() => {
                     editorHasFocusRef.current = true;
                     setIsEditorFocused(true);
@@ -555,6 +552,7 @@ export function StudentWriting({
                 spellCheck={!security.preventAutocorrect}
                 autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
                 autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
+                placeholder="Write your answer here…"
               />
               </div>
 	          </div>

@@ -1022,16 +1022,16 @@ describe('student question experience', () => {
     fireEvent.mouseMove(document, { clientX: 0 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--reading-pane-width': '6%',
-      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
+      '--reading-pane-width': '37.5%',
+      '--question-pane-width': 'calc(62.5% - var(--split-divider-width))',
     });
 
     fireEvent.mouseDown(resizer, { clientX: 200 });
     fireEvent.mouseMove(document, { clientX: 1800 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--reading-pane-width': '92%',
-      '--question-pane-width': 'calc(8% - var(--split-divider-width))',
+      '--reading-pane-width': '58%',
+      '--question-pane-width': 'calc(42% - var(--split-divider-width))',
     });
   });
 
@@ -1973,16 +1973,16 @@ describe('student question experience', () => {
     fireEvent.mouseMove(document, { clientX: 0 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--listening-pane-width': '6%',
-      '--question-pane-width': 'calc(94% - var(--split-divider-width))',
+      '--listening-pane-width': '37.5%',
+      '--question-pane-width': 'calc(62.5% - var(--split-divider-width))',
     });
 
     fireEvent.mouseDown(resizer, { clientX: 200 });
     fireEvent.mouseMove(document, { clientX: 1800 });
     fireEvent.mouseUp(document);
     expect(workspace).toHaveStyle({
-      '--listening-pane-width': '92%',
-      '--question-pane-width': 'calc(8% - var(--split-divider-width))',
+      '--listening-pane-width': '58%',
+      '--question-pane-width': 'calc(42% - var(--split-divider-width))',
     });
   });
 

@@ -54,8 +54,7 @@ describe('StudentWriting a11y', () => {
 	    );
 
 	    const editor = screen.getByRole('textbox', { name: /writing response/i });
-	    expect(editor.tagName).toBe('DIV');
-	    expect(editor).toHaveAttribute('contenteditable');
+	    expect(editor.tagName).toBe('TEXTAREA');
 	    expect(editor.getAttribute('class')).toMatch(/focus-visible/);
 	    expect(editor).toHaveClass('flex-1');
 	    expect(editor).toHaveClass('w-full');
