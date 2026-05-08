@@ -490,7 +490,7 @@ describe('student highlight persistence', () => {
     getSelectionSpy.mockRestore();
   });
 
-  it('shows a single throttled hint when cross-paragraph highlight is blocked', async () => {
+  it('highlights cross-paragraph selection without showing a policy hint', async () => {
     vi.useFakeTimers();
     let firstParagraphTextNode: ChildNode | null = null;
     let secondParagraphTextNode: ChildNode | null = null;
@@ -536,17 +536,9 @@ describe('student highlight persistence', () => {
 
     fireEvent.mouseDown(highlightable);
     fireEvent.mouseUp(highlightable);
-    fireEvent.mouseDown(highlightable);
-    fireEvent.mouseUp(highlightable);
 
-    const hints = screen.getAllByText('Highlight works within one paragraph at a time.');
-    expect(hints).toHaveLength(1);
-    expect(container.querySelectorAll('mark[data-highlighted="true"]')).toHaveLength(0);
-
-    await act(async () => {
-      vi.advanceTimersByTime(1900);
-    });
     expect(screen.queryByText('Highlight works within one paragraph at a time.')).not.toBeInTheDocument();
+    expect(container.querySelectorAll('mark[data-highlighted="true"]').length).toBeGreaterThan(0);
     getSelectionSpy.mockRestore();
   });
 });

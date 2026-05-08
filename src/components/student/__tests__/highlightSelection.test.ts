@@ -38,7 +38,7 @@ describe('applySelectionHighlight', () => {
     expect(container.textContent).toBe('Alpha beta gamma');
   });
 
-  it('rejects highlight when the selection spans multiple paragraphs', () => {
+  it('highlights when the selection spans multiple paragraphs by splitting per text segment', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
 
@@ -66,9 +66,11 @@ describe('applySelectionHighlight', () => {
     } as unknown as Selection;
 
     const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
-    expect(result.html).toBeNull();
-    expect(result.reason).toBe('cross_block_selection');
-    expect(removeAllRanges).not.toHaveBeenCalled();
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
+    expect(result.html).toContain('<p>Alpha <mark');
+    expect(result.html).toContain('<p><mark');
+    expect(removeAllRanges).toHaveBeenCalledTimes(1);
   });
 
   it('still highlights when selection stays inside a single paragraph', () => {
@@ -98,7 +100,7 @@ describe('applySelectionHighlight', () => {
     expect(html).toContain('data-highlighted="true"');
   });
 
-  it('rejects cross-paragraph snapshot highlight', () => {
+  it('highlights cross-paragraph snapshot selections by splitting per text segment', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p><p>Gamma delta</p>';
 
@@ -128,11 +130,13 @@ describe('applySelectionHighlight', () => {
     expect(snapshot).not.toBeNull();
 
     const result = applyHighlightFromSnapshotWithPolicy(container, snapshot!, 'bg-blue-200');
-    expect(result.html).toBeNull();
-    expect(result.reason).toBe('cross_block_selection');
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
+    expect(result.html).toContain('<p>Alpha <mark');
+    expect(result.html).toContain('<p><mark');
   });
 
-  it('rejects container-boundary cross-paragraph selection', () => {
+  it('highlights container-boundary cross-paragraph selection via split fallback', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p><strong>Alpha</strong> beta gamma</p><p>Delta <em>epsilon</em> zeta</p><p>Theta iota</p>';
 
@@ -148,11 +152,11 @@ describe('applySelectionHighlight', () => {
     } as unknown as Selection;
 
     const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
-    expect(result.html).toBeNull();
-    expect(result.reason).toBe('cross_block_selection');
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
   });
 
-  it('rejects cross-paragraph partial selections with inline tags', () => {
+  it('highlights cross-paragraph partial selections with inline tags via split fallback', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p><strong>Alpha</strong> beta gamma</p><p>Delta <em>epsilon</em> zeta</p>';
 
@@ -179,8 +183,8 @@ describe('applySelectionHighlight', () => {
     } as unknown as Selection;
 
     const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
-    expect(result.html).toBeNull();
-    expect(result.reason).toBe('cross_block_selection');
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
   });
 
   it('uses highlight styles that do not add spacing around highlighted text', () => {
@@ -266,7 +270,7 @@ describe('applySelectionHighlight', () => {
     expect(html).toBeNull();
   });
 
-  it('rejects nested-inline cross-paragraph selection', () => {
+  it('highlights nested-inline cross-paragraph selection via split fallback', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p><strong>Intro</strong> alpha <em>beta</em> gamma</p><p>delta epsilon</p>';
 
@@ -293,11 +297,11 @@ describe('applySelectionHighlight', () => {
     } as unknown as Selection;
 
     const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
-    expect(result.html).toBeNull();
-    expect(result.reason).toBe('cross_block_selection');
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
   });
 
-  it('rejects cross-paragraph highlights with whitespace-only separators', () => {
+  it('highlights cross-paragraph selections with whitespace-only separators via split fallback', () => {
     const container = document.createElement('div');
     container.innerHTML = '<p>Alpha beta</p>\n\n<p>Gamma delta</p>';
 
@@ -324,7 +328,7 @@ describe('applySelectionHighlight', () => {
     } as unknown as Selection;
 
     const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
-    expect(result.html).toBeNull();
-    expect(result.reason).toBe('cross_block_selection');
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
   });
 });

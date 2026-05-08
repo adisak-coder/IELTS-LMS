@@ -257,7 +257,14 @@ function applyHighlightToClonedRange(
   }
 
   if (selectionCrossesBlockBoundary(clonedContainer, clonedRange)) {
-    return { html: null, reason: 'cross_block_selection' };
+    const didApplySplitHighlight = applySplitRangeHighlight(
+      clonedContainer,
+      clonedRange,
+      highlightClassName,
+    );
+    return didApplySplitHighlight
+      ? { html: clonedContainer.innerHTML, reason: null }
+      : { html: null, reason: 'cross_block_selection' };
   }
 
   const didApplySingleHighlight = applySingleRangeHighlight(
