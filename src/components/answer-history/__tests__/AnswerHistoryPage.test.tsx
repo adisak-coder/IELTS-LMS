@@ -358,4 +358,35 @@ describe('AnswerHistoryPage', () => {
     expect(screen.queryByText('reading-q2')).not.toBeInTheDocument();
     expect(screen.queryByText(/objective • reading • reading-q2/i)).not.toBeInTheDocument();
   });
+
+  it('shows reconciliation badge state for flagged targets', () => {
+    mockOverviewHook.mockReturnValue({
+      data: {
+        ...overviewFixture,
+        signals: [
+          {
+            signalType: 'AUTO_RECONCILED',
+            severity: 'medium',
+            message: 'Automatic reconciliation applied.',
+            evidence: {
+              targetId: 'Q18',
+            },
+          },
+        ],
+      },
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <AnswerHistoryPage
+        submissionId="sub-1"
+        headingPrefix="Grading"
+        backLabel="Back"
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(screen.getAllByText('Auto reconciled').length).toBeGreaterThan(0);
+  });
 });

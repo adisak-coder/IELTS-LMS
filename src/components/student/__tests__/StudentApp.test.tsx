@@ -3519,6 +3519,37 @@ describe('StudentApp runtime-backed mode', () => {
     vi.useRealTimers();
   });
 
+  it('does not show dropped-mutation reconciliation banner to students', () => {
+    const runtimeSnapshot = createReadingRuntimeSnapshot();
+    const attemptSnapshot: StudentAttempt = {
+      ...createReadingAttemptSnapshot(),
+      recovery: {
+        ...createReadingAttemptSnapshot().recovery,
+        lastDroppedMutations: {
+          at: '2026-01-01T00:05:00.000Z',
+          count: 2,
+          fromModule: 'reading',
+          toModule: 'listening',
+          reason: 'SECTION_ADVANCED',
+          affectedAnswers: ['rq-1'],
+        },
+      },
+    };
+
+    render(
+      <StudentAppWrapper
+        state={readingState}
+        onExit={() => {}}
+        scheduleId={attemptSnapshot.scheduleId}
+        attemptSnapshot={attemptSnapshot}
+        runtimeSnapshot={runtimeSnapshot}
+      />,
+    );
+
+    expect(screen.queryByText(/This section has ended\. Moving you to the next section\./i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Dismiss notification/i })).not.toBeInTheDocument();
+  });
+
   it('blocks submission when unansweredSubmissionPolicy is block', async () => {
     const user = userEvent.setup();
     window.localStorage.clear();

@@ -15,6 +15,13 @@ export interface BlockingMachineState {
   current: ManagedBlockingReason | null;
 }
 
+const NON_BLOCKING_INTEGRITY_REASONS = new Set<ManagedBlockingReason>([
+  'offline',
+  'syncing_reconnect',
+  'heartbeat_lost',
+  'device_mismatch',
+]);
+
 const PRIORITY: ManagedBlockingReason[] = [
   'device_mismatch',
   'proctor_paused',
@@ -69,6 +76,10 @@ export function transitionBlockingMachine(
   reason: ManagedBlockingReason,
   active = true,
 ): BlockingMachineState {
+  if (NON_BLOCKING_INTEGRITY_REASONS.has(reason)) {
+    return previous;
+  }
+
   const flags = cloneFlags(previous.flags);
 
   if (active) {

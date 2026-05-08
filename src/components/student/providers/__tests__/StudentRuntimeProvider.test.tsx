@@ -255,21 +255,21 @@ describe('StudentRuntimeProvider', () => {
     expect(result.current.state.violations).toEqual(hydratedAttempt.violations);
   });
 
-  it('supports explicit blocking transitions', () => {
+  it('treats reconnect/device continuity transitions as non-blocking runtime signals', () => {
     const { result } = renderRuntime();
 
     act(() => {
       result.current.actions.transitionBlocking('offline', true);
     });
-    expect(result.current.state.blocking.reason).toBe('offline');
+    expect(result.current.state.blocking.reason).toBeNull();
 
     act(() => {
       result.current.actions.transitionBlocking('syncing_reconnect', true);
     });
-    expect(result.current.state.blocking.reason).toBe('syncing_reconnect');
+    expect(result.current.state.blocking.reason).toBeNull();
 
     act(() => {
-      result.current.actions.transitionBlocking('syncing_reconnect', false);
+      result.current.actions.transitionBlocking('device_mismatch', true);
     });
     expect(result.current.state.blocking.reason).toBeNull();
   });

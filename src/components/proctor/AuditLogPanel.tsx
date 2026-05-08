@@ -34,6 +34,14 @@ type LogFilter = {
 
 type SortOption = 'timestamp' | 'action' | 'actor';
 
+function resolveDisplayAction(log: SessionAuditLog): string {
+  const payloadEvent = log.payload?.event;
+  if (typeof payloadEvent === 'string' && payloadEvent.trim().length > 0) {
+    return payloadEvent;
+  }
+  return log.actionType;
+}
+
 export function AuditLogPanel({ auditLogs, sessionId, onClose }: AuditLogPanelProps) {
   const [filter, setFilter] = useState<LogFilter>({
     actionType: 'all',
@@ -58,7 +66,7 @@ export function AuditLogPanel({ auditLogs, sessionId, onClose }: AuditLogPanelPr
         if (sortBy === 'timestamp') {
           comparison = new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
         } else if (sortBy === 'action') {
-          comparison = a.actionType.localeCompare(b.actionType);
+          comparison = resolveDisplayAction(a).localeCompare(resolveDisplayAction(b));
         } else if (sortBy === 'actor') {
           comparison = a.actor.localeCompare(b.actor);
         }
@@ -392,7 +400,7 @@ export function AuditLogPanel({ auditLogs, sessionId, onClose }: AuditLogPanelPr
                       <Badge className={actionColors[log.actionType]}>
                         <div className="flex items-center gap-1">
                           <ActionIcon size={12} />
-                          {log.actionType.replace(/_/g, ' ')}
+                          {resolveDisplayAction(log).replace(/_/g, ' ')}
                         </div>
                       </Badge>
                     </div>

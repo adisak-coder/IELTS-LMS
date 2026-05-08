@@ -162,7 +162,7 @@ describe('StudentNetworkProvider', () => {
     );
   }
 
-  it('blocks the exam when the browser goes offline', async () => {
+  it('records offline state without entering blocking runtime mode', async () => {
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
       value: true,
@@ -185,9 +185,10 @@ describe('StudentNetworkProvider', () => {
     });
 
     await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBe('offline');
+      expect(result.current.network.state.isOnline).toBe(false);
     });
 
+    expect(result.current.runtime.state.blocking.reason).toBeNull();
     expect(result.current.network.state.isOnline).toBe(false);
     expect(result.current.network.state.lastDisconnectAt).not.toBeNull();
   });
@@ -293,7 +294,7 @@ describe('StudentNetworkProvider', () => {
     });
   });
 
-  it('keeps reconnect recovery active with syncing block when queued mutations fail to flush', async () => {
+  it('keeps reconnect recovery active without switching runtime blocking when queued mutations fail to flush', async () => {
     const pendingMutation: StudentAttemptMutation = {
       id: 'mutation-1',
       attemptId: 'attempt-1',
@@ -333,9 +334,7 @@ describe('StudentNetworkProvider', () => {
       window.dispatchEvent(new Event('online'));
     });
 
-    await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBe('syncing_reconnect');
-    });
+    expect(result.current.runtime.state.blocking.reason).toBeNull();
 
     await waitFor(() => {
       expect(result.current.attempt.state.attempt?.recovery.syncState).toBe('error');
@@ -344,7 +343,7 @@ describe('StudentNetworkProvider', () => {
     expect(result.current.network.state.isRecovering).toBe(true);
   });
 
-  it('hard-blocks once after repeated heartbeat failures', async () => {
+  it('records heartbeat-lost violations without entering blocking runtime mode', async () => {
     vi.useFakeTimers();
 
     const config = createExamState().config;
@@ -374,7 +373,7 @@ describe('StudentNetworkProvider', () => {
       await vi.advanceTimersByTimeAsync(60);
     });
 
-    expect(result.current.runtime.state.blocking.reason).toBe('heartbeat_lost');
+    expect(result.current.runtime.state.blocking.reason).toBeNull();
 
     expect(
       result.current.runtime.state.violations.filter((violation) => violation.type === 'HEARTBEAT_LOST'),
@@ -465,7 +464,7 @@ describe('StudentNetworkProvider', () => {
     }, { timeout: 3_000 });
   });
 
-  it('re-runs reconnect recovery on pageshow while online and offline-blocked', async () => {
+  it('does not force a pageshow reconnect refresh when runtime is no longer block-gated', async () => {
     vi.mocked(getDeviceFingerprint).mockResolvedValue({
       components: {},
       hash: 'fp-1',
@@ -485,23 +484,14 @@ describe('StudentNetworkProvider', () => {
     );
 
     act(() => {
-      result.current.runtime.actions.transitionBlocking('offline', true);
-      result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
-    });
-
-    act(() => {
       window.dispatchEvent(new Event('pageshow'));
     });
 
-    await waitFor(() => {
-      expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBeNull();
-    });
+    expect(onRefreshRuntime).toHaveBeenCalledTimes(0);
+    expect(result.current.runtime.state.blocking.reason).toBeNull();
   });
 
-  it('re-runs reconnect recovery on visibilitychange when tab returns visible from offline-blocked', async () => {
+  it('does not force a visibility reconnect refresh when runtime is no longer block-gated', async () => {
     vi.mocked(getDeviceFingerprint).mockResolvedValue({
       components: {},
       hash: 'fp-1',
@@ -525,11 +515,6 @@ describe('StudentNetworkProvider', () => {
     );
 
     act(() => {
-      result.current.runtime.actions.transitionBlocking('offline', true);
-      result.current.runtime.actions.setAttemptSyncState('syncing_reconnect');
-    });
-
-    act(() => {
       Object.defineProperty(document, 'visibilityState', {
         configurable: true,
         value: 'visible',
@@ -537,11 +522,7 @@ describe('StudentNetworkProvider', () => {
       document.dispatchEvent(new Event('visibilitychange'));
     });
 
-    await waitFor(() => {
-      expect(onRefreshRuntime).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(result.current.runtime.state.blocking.reason).toBeNull();
-    });
+    expect(onRefreshRuntime).toHaveBeenCalledTimes(0);
+    expect(result.current.runtime.state.blocking.reason).toBeNull();
   });
 });

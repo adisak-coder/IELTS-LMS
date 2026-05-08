@@ -79,9 +79,6 @@ export function StudentNetworkProvider({
     setIsOnline(false);
     setIsRecovering(false);
     setLastDisconnectAt(timestamp);
-    if (policy.pauseOnOffline) {
-      runtimeActions.transitionBlocking('offline', true);
-    }
     runtimeActions.setAttemptSyncState('offline');
     await attemptActions.recordNetworkStatus('offline', timestamp);
     await attemptActions
@@ -92,7 +89,7 @@ export function StudentNetworkProvider({
     await saveStudentAuditEvent(scheduleId, 'NETWORK_DISCONNECTED', {
       timestamp,
     }, attemptState.attemptId ?? undefined);
-  }, [attemptActions, attemptState.attemptId, policy.pauseOnOffline, runtimeActions, scheduleId]);
+  }, [attemptActions, attemptState.attemptId, runtimeActions, scheduleId]);
 
   const verifyDeviceContinuity = useCallback(async () => {
     const attempt = attemptState.attempt;
@@ -114,7 +111,6 @@ export function StudentNetworkProvider({
         'critical',
         'Device continuity check failed after reconnect.',
       );
-      runtimeActions.transitionBlocking('device_mismatch', true);
       await saveStudentAuditEvent(scheduleId, 'DEVICE_CONTINUITY_FAILED', {
         previousHash,
         nextHash: fingerprint.hash,
@@ -165,16 +161,12 @@ export function StudentNetworkProvider({
               }
             }
 
-            runtimeActions.transitionBlocking('syncing_reconnect', false);
-            runtimeActions.transitionBlocking('offline', false);
-            runtimeActions.transitionBlocking('heartbeat_lost', false);
             runtimeActions.setAttemptSyncState('saved');
             return;
           } catch {
             if (epoch !== recoveryEpochRef.current || !navigator.onLine) {
               return;
             }
-            runtimeActions.transitionBlocking('syncing_reconnect', true);
             runtimeActions.setAttemptSyncState('syncing_reconnect');
             const retryDelayMs = Math.min(10_000, 500 * 2 ** retryAttempt);
             retryAttempt = Math.min(retryAttempt + 1, 20);
@@ -217,7 +209,6 @@ export function StudentNetworkProvider({
       setIsOnline(true);
       setIsRecovering(true);
       setLastReconnectAt(timestamp);
-      runtimeActions.transitionBlocking('syncing_reconnect', true);
       runtimeActions.setAttemptSyncState('syncing_reconnect');
       await attemptActions.recordNetworkStatus('online', timestamp).catch(() => {});
       if (epoch !== recoveryEpochRef.current) {
@@ -263,17 +254,13 @@ export function StudentNetworkProvider({
     }
 
     const blockedForRecovery =
-      runtimeState.blocking.reason === 'offline' ||
-      runtimeState.blocking.reason === 'heartbeat_lost';
+      runtimeState.attemptSyncState === 'offline' ||
+      runtimeState.attemptSyncState === 'syncing_reconnect';
     if (!blockedForRecovery) {
       return;
     }
 
-    if (runtimeState.blocking.reason === 'offline') {
-      runtimeActions.transitionBlocking('offline', false);
-      runtimeActions.transitionBlocking('heartbeat_lost', false);
-      runtimeActions.setAttemptSyncState('syncing_reconnect');
-    }
+    runtimeActions.setAttemptSyncState('syncing_reconnect');
 
     const epoch = recoveryEpochRef.current;
     setIsOnline(true);
@@ -282,7 +269,7 @@ export function StudentNetworkProvider({
   }, [
     runReconnectRecovery,
     runtimeActions,
-    runtimeState.blocking.reason,
+    runtimeState.attemptSyncState,
   ]);
 
   useEffect(() => {
@@ -371,10 +358,6 @@ export function StudentNetworkProvider({
           }
 
           missedHeartbeatsRef.current = 0;
-
-          if (runtimeState.blocking.reason === 'heartbeat_lost') {
-            runtimeActions.transitionBlocking('heartbeat_lost', false);
-          }
         } catch {
           if (cancelled) {
             return;
@@ -403,7 +386,6 @@ export function StudentNetworkProvider({
               'high',
               `Heartbeat delivery failed after ${missedHeartbeatsRef.current} attempts.`,
             );
-            runtimeActions.transitionBlocking('heartbeat_lost', true);
             void attemptActions
               .recordHeartbeat('lost', {
                 reason: 'delivery_failed',
@@ -439,7 +421,6 @@ export function StudentNetworkProvider({
     isOnline,
     policy,
     runtimeActions,
-    runtimeState.blocking.reason,
     runtimeState.phase,
     scheduleId,
   ]);

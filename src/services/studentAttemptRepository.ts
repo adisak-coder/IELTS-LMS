@@ -2282,6 +2282,10 @@ class BackendStudentAttemptRepository implements IStudentAttemptRepository {
           fromModule: summary.fromModule,
           toModule: summary.toModule,
           reason: summary.reason,
+          affectedAnswers: summary.affectedAnswers,
+          affectedAnswerSlots: summary.affectedAnswerSlots,
+          affectedWritingAnswers: summary.affectedWritingAnswers,
+          affectedFlags: summary.affectedFlags,
           runtimeStatus,
         });
 

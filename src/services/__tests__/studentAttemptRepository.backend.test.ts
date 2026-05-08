@@ -1051,6 +1051,17 @@ describe('studentAttemptRepository backend mode', () => {
       expect(secondBody.mutations.map((mutation: { mutationId: string }) => mutation.mutationId)).toEqual([
         'mutation-live',
       ]);
+      const auditCalls = fetchMock.mock.calls.filter(
+        ([url]) => String(url) === '/api/v1/student/sessions/sched-1/audit',
+      );
+      expect(auditCalls).toHaveLength(1);
+      const auditBody = JSON.parse(String(auditCalls[0]?.[1]?.body));
+      expect(auditBody).toMatchObject({
+        payload: expect.objectContaining({
+          event: 'MUTATION_DROPPED_STALE_SECTION',
+          affectedAnswers: ['qOld'],
+        }),
+      });
 
       const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId('sched-1');
       const cached = cachedAttempts.find((candidate) => candidate.id === attempt.id) ?? null;

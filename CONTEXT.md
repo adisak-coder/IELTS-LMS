@@ -14,3 +14,12 @@
   - no unbounded request queue,
   - short timeout budget for overloaded paths,
   - deterministic overload response (`429` + `Retry-After`) instead of cascading `502`.
+
+## Student Runtime Integrity Policy (Resolved, Pre-Production)
+
+- Global policy: `offline`, `heartbeat_lost`, and `device_mismatch` are log-only integrity signals in student runtime.
+- Student UX: no hard blocking overlay for those three reasons; exam flow continues.
+- Student UX: no student-facing dropped-mutation reconciliation banner; reconciliation evidence stays in audit history.
+- Hard block retained: `storage_unavailable` remains a visible stop condition.
+- Submit behavior: student submit path is completion-first; immediate local completion is allowed if submit sync fails, with best-effort background submit retry.
+- Proctor/Admin visibility: reconciliation events include affected answer/task identifiers in audit payloads; answer history can render target-level reconciliation badges from signals.

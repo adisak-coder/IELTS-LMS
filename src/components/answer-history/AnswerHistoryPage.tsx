@@ -32,6 +32,8 @@ type AnswerHistoryPageProps = {
   onBack: () => void;
 };
 
+type ReconciliationBadgeState = 'auto_reconciled' | 'manual_override';
+
 function formatValue(value: unknown): string {
   if (typeof value === 'string') {
     return value || '(empty)';
@@ -56,6 +58,86 @@ function formatValue(value: unknown): string {
   }
 
   return String(value);
+}
+
+function signalTargetsAnswer(
+  evidence: Record<string, unknown> | null | undefined,
+  targetId: string,
+): boolean {
+  if (!evidence) {
+    return false;
+  }
+
+  const directTargetId = evidence.targetId;
+  if (typeof directTargetId === 'string' && directTargetId === targetId) {
+    return true;
+  }
+
+  const questionId = evidence.questionId;
+  if (typeof questionId === 'string' && questionId === targetId) {
+    return true;
+  }
+
+  const taskId = evidence.taskId;
+  if (typeof taskId === 'string' && taskId === targetId) {
+    return true;
+  }
+
+  const affectedAnswers = evidence.affectedAnswers;
+  if (Array.isArray(affectedAnswers) && affectedAnswers.some((value) => value === targetId)) {
+    return true;
+  }
+
+  const affectedWritingAnswers = evidence.affectedWritingAnswers;
+  if (
+    Array.isArray(affectedWritingAnswers) &&
+    affectedWritingAnswers.some((value) => value === targetId)
+  ) {
+    return true;
+  }
+
+  const affectedAnswerSlots = evidence.affectedAnswerSlots;
+  if (Array.isArray(affectedAnswerSlots)) {
+    return affectedAnswerSlots.some((slot) => {
+      if (!slot || typeof slot !== 'object') {
+        return false;
+      }
+      const slotQuestionId = (slot as { questionId?: unknown }).questionId;
+      return typeof slotQuestionId === 'string' && slotQuestionId === targetId;
+    });
+  }
+
+  return false;
+}
+
+function resolveReconciliationBadge(
+  signals: Array<{ signalType: string; evidence: Record<string, unknown> }>,
+  targetId: string,
+): ReconciliationBadgeState | null {
+  let hasAutoReconciled = false;
+
+  for (const signal of signals) {
+    if (!signalTargetsAnswer(signal.evidence, targetId)) {
+      continue;
+    }
+
+    const type = signal.signalType.toUpperCase();
+    if (type.includes('MANUAL_OVERRIDE') || type.includes('ADMIN_OVERRIDE')) {
+      return 'manual_override';
+    }
+    if (type.includes('RECONCILE') || type.includes('DROPPED_STALE_SECTION')) {
+      hasAutoReconciled = true;
+    }
+  }
+
+  return hasAutoReconciled ? 'auto_reconciled' : null;
+}
+
+function reconciliationBadgeLabel(badge: ReconciliationBadgeState): string {
+  if (badge === 'manual_override') {
+    return 'Manual override';
+  }
+  return 'Auto reconciled';
 }
 
 function saveDownloadedContent(filename: string, contentType: string, content: string) {
@@ -245,6 +327,37 @@ export function AnswerHistoryPage({
     };
   }, [checkpoints, selectedTargetId, selectedTargetType]);
 
+  const reconciliationBadgesByTarget = useMemo(() => {
+    const map = new Map<string, ReconciliationBadgeState>();
+    const signals = (overview?.signals ?? []).filter(
+      (signal): signal is { signalType: string; evidence: Record<string, unknown> } =>
+        Boolean(signal?.signalType) && Boolean(signal?.evidence && typeof signal.evidence === 'object'),
+    );
+    for (const summary of overview?.questionSummaries ?? []) {
+      const badge = resolveReconciliationBadge(signals, summary.targetId);
+      if (badge) {
+        map.set(summary.targetId, badge);
+      }
+    }
+    return map;
+  }, [overview?.questionSummaries, overview?.signals]);
+
+  const selectedTargetReconciliationBadge = useMemo(() => {
+    if (!selectedTargetSummary) {
+      return null;
+    }
+
+    const signals = [
+      ...(overview?.signals ?? []),
+      ...(detailQuery.data?.signals ?? []),
+    ].filter(
+      (signal): signal is { signalType: string; evidence: Record<string, unknown> } =>
+        Boolean(signal?.signalType) && Boolean(signal?.evidence && typeof signal.evidence === 'object'),
+    );
+
+    return resolveReconciliationBadge(signals, selectedTargetSummary.targetId);
+  }, [detailQuery.data?.signals, overview?.signals, selectedTargetSummary]);
+
   const handleDownload = async (format: 'json' | 'csv') => {
     if (!overview?.submissionId || !selectedTargetSummary) {
       return;
@@ -342,6 +455,7 @@ export function AnswerHistoryPage({
                     const selected =
                       item.targetId === selectedTargetId && item.targetType === selectedTargetType;
                     const unanswered = !item.answered;
+                    const reconciliationBadge = reconciliationBadgesByTarget.get(item.targetId) ?? null;
                     return (
                       <button
                         key={`${item.targetType}-${item.targetId}`}
@@ -359,6 +473,11 @@ export function AnswerHistoryPage({
                         <div className="flex items-center justify-between gap-2">
                           <p className="truncate font-medium">{item.label}</p>
                           <div className="flex items-center gap-1.5">
+                            {reconciliationBadge ? (
+                              <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
+                                {reconciliationBadgeLabel(reconciliationBadge)}
+                              </span>
+                            ) : null}
                             {unanswered ? (
                               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                                 Unanswered
@@ -390,6 +509,11 @@ export function AnswerHistoryPage({
                     <h2 className="text-lg font-semibold text-gray-900">
                       {selectedTargetSummary.label}
                     </h2>
+                    {selectedTargetReconciliationBadge ? (
+                      <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">
+                        {reconciliationBadgeLabel(selectedTargetReconciliationBadge)}
+                      </span>
+                    ) : null}
                     {!selectedTargetSummary.answered ? (
                       <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
                         Unanswered

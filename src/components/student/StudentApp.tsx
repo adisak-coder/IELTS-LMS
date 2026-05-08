@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { countAnsweredQuestions, countQuestionSlots } from '@services/examAdapterService';
-import { AlertTriangle, X } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { AccessibilitySettings } from './AccessibilitySettings';
 import { HelpModal } from './HelpModal';
@@ -240,7 +239,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
     return latestWarning;
   }, [attemptState.attempt]);
 
-  const droppedMutations = attemptState.attempt?.recovery.lastDroppedMutations ?? null;
   const verifiedTerminalState = useMemo(
     () =>
       isVerifiedTerminalStudentState({
@@ -1130,41 +1128,6 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         isExamActive={effectivePhase === 'exam'}
         showExitButton={effectivePhase !== 'exam'}
       />
-
-      {droppedMutations ? (
-        <div
-          className="mx-3 md:mx-4 lg:mx-6 mt-3 rounded-sm border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900 flex items-start gap-3"
-          role="status"
-          aria-live="polite"
-        >
-          <AlertTriangle size={18} className="text-sky-700 mt-0.5 flex-shrink-0" />
-          <div className="flex-1">
-            <div className="font-semibold">
-              This section has ended. Moving you to the next section.
-            </div>
-            <div className="text-sky-800">
-              {droppedMutations.fromModule && droppedMutations.toModule ? (
-                <>
-                  Your latest saved answers were preserved. Runtime advanced from{' '}
-                  {droppedMutations.fromModule} to {droppedMutations.toModule}.
-                </>
-              ) : (
-                <>Your latest saved answers were preserved while the runtime advanced sections.</>
-              )}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="p-1 rounded-sm hover:bg-sky-100 text-sky-800"
-            aria-label="Dismiss notification"
-            onClick={() => {
-              void attemptActions.dismissDroppedMutationsBanner();
-            }}
-          >
-            <X size={16} />
-          </button>
-        </div>
-      ) : null}
 
       <main id="main-content" className="flex-1 overflow-hidden relative flex flex-col" role="main">
         {runtimeState.currentModule === 'reading' ? (

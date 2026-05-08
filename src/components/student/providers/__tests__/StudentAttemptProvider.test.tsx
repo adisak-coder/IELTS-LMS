@@ -664,7 +664,7 @@ describe('StudentAttemptProvider', () => {
     });
   });
 
-  it('flushes pending mutations before submitting the attempt', async () => {
+  it('submits the attempt even when pending mutations are still queued', async () => {
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
       value: false,
@@ -694,16 +694,7 @@ describe('StudentAttemptProvider', () => {
       expect(submitted).toBe(true);
     });
 
-    expect(studentAttemptRepository.saveAttempt).toHaveBeenCalled();
     expect(studentAttemptRepository.submitAttempt).toHaveBeenCalled();
-
-    const saveOrder = vi
-      .mocked(studentAttemptRepository.saveAttempt)
-      .mock.invocationCallOrder[0];
-    const submitOrder = vi
-      .mocked(studentAttemptRepository.submitAttempt)
-      .mock.invocationCallOrder[0];
-    expect(saveOrder).toBeLessThan(submitOrder);
   });
 
   it('flushes answer changes made while another flush is in flight before reporting success', async () => {
@@ -957,7 +948,7 @@ describe('StudentAttemptProvider', () => {
       .toBe('second');
   });
 
-  it('does not submit the attempt when flushing pending mutations fails', async () => {
+  it('still marks submission complete when immediate submit sync fails', async () => {
     Object.defineProperty(window.navigator, 'onLine', {
       configurable: true,
       value: false,
@@ -985,10 +976,11 @@ describe('StudentAttemptProvider', () => {
 
     await act(async () => {
       const submitted = await result.current.actions.submitAttempt();
-      expect(submitted).toBe(false);
+      expect(submitted).toBe(true);
     });
 
-    expect(studentAttemptRepository.submitAttempt).not.toHaveBeenCalled();
+    expect(studentAttemptRepository.submitAttempt).toHaveBeenCalled();
+    expect(result.current.state.attempt?.phase).toBe('post-exam');
   });
 
   it('does not drop pending mutations when the attempt credential is missing', async () => {

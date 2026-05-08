@@ -310,6 +310,7 @@ export function StudentAttemptProvider({
   const writingFlushTimeoutRef = useRef<number | null>(null);
   const flushPendingRef = useRef<() => Promise<boolean>>(async () => true);
   const flushInFlightRef = useRef<Promise<boolean> | null>(null);
+  const backgroundSubmitInFlightRef = useRef<Promise<void> | null>(null);
   const durabilityMirrorRef = useRef<PendingMutationDurabilityMirror | null>(null);
 
   const syncAttemptState = useCallback((nextAttempt: StudentAttempt) => {
@@ -1218,14 +1219,56 @@ export function StudentAttemptProvider({
     );
   }, [persistenceEnabled, scheduleId, syncAttemptState]);
 
+  const scheduleBackgroundSubmitRetry = useCallback((seedAttempt: StudentAttempt) => {
+    if (!persistenceEnabled) {
+      return;
+    }
+
+    if (backgroundSubmitInFlightRef.current) {
+      return;
+    }
+
+    const retryWindowMs = 60 * 60 * 1000;
+    const startedAtMs = Date.now();
+
+    const promise = (async () => {
+      let retryDelayMs = 5_000;
+
+      while (Date.now() - startedAtMs <= retryWindowMs) {
+        if (!navigator.onLine) {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, retryDelayMs);
+          });
+          retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
+          continue;
+        }
+
+        const candidateAttempt = attemptRef.current ?? seedAttempt;
+        try {
+          const submittedAttempt = await studentAttemptRepository.submitAttempt(candidateAttempt);
+          syncAttemptState(submittedAttempt);
+          void queryClient.invalidateQueries();
+          return;
+        } catch {
+          await new Promise<void>((resolve) => {
+            window.setTimeout(resolve, retryDelayMs);
+          });
+          retryDelayMs = Math.min(retryDelayMs * 2, 60_000);
+        }
+      }
+    })();
+
+    backgroundSubmitInFlightRef.current = promise;
+    void promise.finally(() => {
+      if (backgroundSubmitInFlightRef.current === promise) {
+        backgroundSubmitInFlightRef.current = null;
+      }
+    });
+  }, [persistenceEnabled, syncAttemptState]);
+
   const submitAttempt = useCallback(async (): Promise<boolean> => {
     const currentAttempt = attemptRef.current;
     if (!currentAttempt) {
-      return false;
-    }
-
-    const flushed = await flushPending();
-    if (!flushed) {
       return false;
     }
 
@@ -1244,12 +1287,27 @@ export function StudentAttemptProvider({
       return true;
     }
 
-    const submittedAttempt = await studentAttemptRepository.submitAttempt(latestAttempt);
-    runtimeActions.setPhase('post-exam');
-    syncAttemptState(submittedAttempt);
-    void queryClient.invalidateQueries();
+    try {
+      const submittedAttempt = await studentAttemptRepository.submitAttempt(latestAttempt);
+      runtimeActions.setPhase('post-exam');
+      syncAttemptState(submittedAttempt);
+      void queryClient.invalidateQueries();
+      return true;
+    } catch {
+      const optimisticSubmittedAttempt = mergeAttempt(latestAttempt, {
+        phase: 'post-exam',
+        submittedAt: latestAttempt.submittedAt ?? new Date().toISOString(),
+        recovery: {
+          syncState: 'syncing_reconnect',
+        },
+      });
+      runtimeActions.setPhase('post-exam');
+      syncAttemptState(optimisticSubmittedAttempt);
+      scheduleBackgroundSubmitRetry(optimisticSubmittedAttempt);
+    }
+
     return true;
-  }, [flushPending, persistenceEnabled, runtimeActions, syncAttemptState]);
+  }, [persistenceEnabled, runtimeActions, scheduleBackgroundSubmitRetry, syncAttemptState]);
 
   const flushAnswerDurabilityNow = useCallback(() => {
     if (!persistenceEnabled) {

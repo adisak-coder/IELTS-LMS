@@ -24,6 +24,7 @@ export interface RunnerConfig {
   maxConcurrentUsers: number;
   logFile: string;
   userOffset: number;
+  lastAnswerCsvFile: string;
   deleteArtifactsOnFinish: boolean;
   gradingVerifyEnabled: boolean;
   gradingVerifyStrict: boolean;
@@ -107,6 +108,10 @@ function computeMedian(values: number[]): number {
     return Math.round((left + right) / 2);
   }
   return sorted[mid] ?? 0;
+}
+
+function csvEscape(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
 }
 
 function findSubmissionIdDeep(value: unknown, depth = 0): string | null {
@@ -515,6 +520,7 @@ async function run(): Promise<void> {
     maxConcurrentUsers: Math.max(1, num('MAX_CONCURRENT_USERS', 20)),
     logFile: process.env['LIVE_RUN_LOG_FILE'] ?? '',
     userOffset: Math.max(0, num('USER_OFFSET', 0)),
+    lastAnswerCsvFile: process.env['LAST_ANSWER_CSV_FILE']?.trim() ?? '',
     deleteArtifactsOnFinish: bool('DELETE_ARTIFACTS_ON_FINISH', false),
     gradingVerifyEnabled: bool('GRADING_VERIFY_ENABLED', false),
     gradingVerifyStrict: bool('GRADING_VERIFY_STRICT', true),
@@ -537,6 +543,33 @@ async function run(): Promise<void> {
   const appendLog = (line: string) => {
     fs.appendFileSync(liveLogFile, `${line}\n`);
   };
+  const lastAnswerCsvPath =
+    config.lastAnswerCsvFile.length > 0
+      ? path.resolve(process.cwd(), config.lastAnswerCsvFile)
+      : path.resolve(process.cwd(), config.outputDir, `live-run-last-answers-${Date.now()}.csv`);
+  fs.mkdirSync(path.dirname(lastAnswerCsvPath), { recursive: true });
+  const csvHeader = 'ts,userId,scheduleId,status,error,answersJson,writingAnswersJson';
+  fs.writeFileSync(lastAnswerCsvPath, `${csvHeader}\n`);
+  const appendLastAnswerRow = (input: {
+    userId: string;
+    status: 'done' | 'failed';
+    error?: string;
+    answersJson: string;
+    writingAnswersJson: string;
+  }) => {
+    const row = [
+      new Date().toISOString(),
+      input.userId,
+      parsed.scheduleId,
+      input.status,
+      input.error ?? '',
+      input.answersJson,
+      input.writingAnswersJson,
+    ]
+      .map(csvEscape)
+      .join(',');
+    fs.appendFileSync(lastAnswerCsvPath, `${row}\n`);
+  };
   appendLog(
     JSON.stringify({
       ts: new Date().toISOString(),
@@ -544,9 +577,11 @@ async function run(): Promise<void> {
       scheduleId: parsed.scheduleId,
       userOffset: config.userOffset,
       userCount: config.userCount,
+      lastAnswerCsvPath,
     }),
   );
   console.log(`[live-runner] events: ${liveLogFile}`);
+  console.log(`[live-runner] last answers csv: ${lastAnswerCsvPath}`);
 
   const dashboard = createMirroredBroadcaster(startLiveDashboardServer(config.dashboardPort));
   const headlessBrowser =
@@ -712,6 +747,12 @@ async function run(): Promise<void> {
         joinMs: Math.max(0, startedExamAt - startedAt),
         startMs: Math.max(0, Date.now() - startedAt),
       });
+      appendLastAnswerRow({
+        userId: user.userId,
+        status: 'done',
+        answersJson: JSON.stringify(answerCapture?.expected.answers ?? {}),
+        writingAnswersJson: JSON.stringify(answerCapture?.expected.writingAnswers ?? {}),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       setPhase('failed', 'failed', message);
@@ -722,6 +763,13 @@ async function run(): Promise<void> {
         joinMs: Math.max(0, startedExamAt ? startedExamAt - startedAt : 0),
         startMs: Math.max(0, Date.now() - startedAt),
         error: message,
+      });
+      appendLastAnswerRow({
+        userId: user.userId,
+        status: 'failed',
+        error: message,
+        answersJson: JSON.stringify(answerCapture?.expected.answers ?? {}),
+        writingAnswersJson: JSON.stringify(answerCapture?.expected.writingAnswers ?? {}),
       });
     } finally {
       stopCapture = true;
@@ -766,6 +814,7 @@ async function run(): Promise<void> {
   const summaryPath = path.resolve(process.cwd(), config.outputDir, `live-run-summary-${Date.now()}.json`);
   fs.writeFileSync(summaryPath, JSON.stringify(summary, null, 2));
   console.log(`[live-runner] summary: ${summaryPath}`);
+  console.log(`[live-runner] last answers csv: ${lastAnswerCsvPath}`);
   appendLog(JSON.stringify({ ts: new Date().toISOString(), event: 'live_runner_summary', summaryPath, liveLogFile }));
   if (config.deleteArtifactsOnFinish) {
     try {

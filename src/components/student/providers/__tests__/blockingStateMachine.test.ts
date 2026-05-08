@@ -6,16 +6,19 @@ import {
 } from '../blockingStateMachine';
 
 describe('blockingStateMachine', () => {
-  it('follows offline -> syncing_reconnect -> unblocked transitions', () => {
+  it('treats connectivity and integrity reasons as non-blocking signals', () => {
     let state = createBlockingMachineState();
 
     state = transitionBlockingMachine(state, 'offline', true);
-    expect(state.current).toBe('offline');
+    expect(state.current).toBeNull();
 
     state = transitionBlockingMachine(state, 'syncing_reconnect', true);
-    expect(state.current).toBe('syncing_reconnect');
+    expect(state.current).toBeNull();
 
-    state = transitionBlockingMachine(state, 'syncing_reconnect', false);
+    state = transitionBlockingMachine(state, 'heartbeat_lost', true);
+    expect(state.current).toBeNull();
+
+    state = transitionBlockingMachine(state, 'device_mismatch', true);
     expect(state.current).toBeNull();
   });
 
@@ -30,15 +33,12 @@ describe('blockingStateMachine', () => {
     expect(state.current).toBe('proctor_paused');
   });
 
-  it('applies documented priority ordering', () => {
+  it('applies documented priority ordering for true blocking reasons', () => {
     let state = createBlockingMachineState();
     state = transitionBlockingMachine(state, 'storage_unavailable', true);
-    state = transitionBlockingMachine(state, 'heartbeat_lost', true);
-    state = transitionBlockingMachine(state, 'offline', true);
     state = transitionBlockingMachine(state, 'proctor_paused', true);
-    state = transitionBlockingMachine(state, 'device_mismatch', true);
 
-    expect(state.current).toBe('device_mismatch');
+    expect(state.current).toBe('proctor_paused');
   });
 
   it('syncs proctor pause from proctor status', () => {
