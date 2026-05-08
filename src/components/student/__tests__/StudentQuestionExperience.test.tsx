@@ -156,6 +156,31 @@ describe('student question experience', () => {
     expect(answerInput).not.toHaveClass('text-sm');
   });
 
+  it('shows authored table cell prompt text above the slot input and keeps underscores', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-prompt',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Item', 'Details'],
+      rows: [['Special dietary requirements:', 'no _______ (red)']],
+      cells: [{ id: 'cell-1', row: 0, col: 1, correctAnswer: 'nuts' }],
+      answerRule: 'ONE_WORD',
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={5}
+        answer={['']}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('no _______ (red)')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 5' })).toBeInTheDocument();
+  });
+
   it('emits slot metadata for table completion edits so shared answer keys persist per question slot', () => {
     const onChange = vi.fn();
     const block: TableCompletionBlock = {
@@ -198,6 +223,35 @@ describe('student question experience', () => {
         slotValue: 'HIGH',
       }),
     );
+  });
+
+  it('keeps non-slot table cells rendered as plain text', () => {
+    const block: TableCompletionBlock = {
+      id: 'table-nonslot',
+      type: 'TABLE_COMPLETION',
+      instruction: 'Complete the table.',
+      headers: ['Metric', 'Value'],
+      rows: [
+        ['Temperature', 'no _______ (red)'],
+        ['Humidity', 'High'],
+      ],
+      cells: [{ id: 'cell-1', row: 0, col: 1, correctAnswer: 'Warm' }],
+      answerRule: 'ONE_WORD',
+    };
+
+    render(
+      <QuestionRenderer
+        question={null}
+        block={block}
+        number={9}
+        answer={['']}
+        onChange={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Humidity')).toBeInTheDocument();
+    expect(screen.getByText('High')).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Answer for question 9' })).toBeInTheDocument();
   });
 
   it('does not show decorative option tags for matching feature questions', () => {
