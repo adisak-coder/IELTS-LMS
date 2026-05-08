@@ -444,10 +444,13 @@ export function useStudentSessionRouteData(
       return null;
     }
 
-    const normalizedCandidateId = candidateId.trim().toUpperCase();
+    const normalizedCandidateId = normalizeWcodeCandidateId(candidateId);
+    if (!normalizedCandidateId) {
+      return null;
+    }
     const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId(scheduleId);
     const candidates = cachedAttempts.filter(
-      (attempt) => attempt.candidateId.trim().toUpperCase() === normalizedCandidateId,
+      (attempt) => normalizeWcodeCandidateId(attempt.candidateId) === normalizedCandidateId,
     );
 
     if (candidates.length === 0) {

@@ -846,6 +846,49 @@ describe('useStudentSessionRouteData backend mode', () => {
     ).toBe(false);
   });
 
+  it('ignores malformed cached attempts with null candidateId when live payload omits attempt', async () => {
+    vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
+    vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
+
+    const cachedAttempt = mapBackendStudentAttempt({
+      ...buildAttempt('ver-1'),
+      revision: 8,
+      answers: { q1: 'VALID_CACHED' },
+      updatedAt: '2026-01-01T09:08:00.000Z',
+    });
+    const malformedAttempt = {
+      ...cachedAttempt,
+      id: 'attempt-malformed',
+      candidateId: null,
+      updatedAt: '2026-01-01T09:09:00.000Z',
+    } as unknown as typeof cachedAttempt;
+    vi
+      .spyOn(studentAttemptRepository as any, 'getAttemptsByScheduleId')
+      .mockResolvedValue([malformedAttempt, cachedAttempt]);
+
+    const fetchMock = vi.fn((url: string) => {
+      if (url === '/api/v1/student/sessions/sched-1/static?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildStaticSessionContext()));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/live?candidateId=W250334') {
+        return Promise.resolve(jsonResponse(buildLiveSessionContext(null)));
+      }
+      return Promise.resolve(jsonResponse(buildBootstrapContext(buildAttempt())));
+    });
+    global.fetch = fetchMock as typeof fetch;
+
+    const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'W250334'), {
+      wrapper: createWrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.isLoading).toBe(false);
+      expect(result.current.error).toBeNull();
+      expect(result.current.attemptSnapshot?.id).toBe(cachedAttempt.id);
+      expect(result.current.attemptSnapshot?.answers.q1).toBe('VALID_CACHED');
+    });
+  });
+
   it('preserves last-known runtime snapshot when a refresh payload temporarily omits runtime', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
     vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
