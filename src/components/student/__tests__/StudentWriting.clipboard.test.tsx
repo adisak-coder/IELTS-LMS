@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { createDefaultConfig } from '../../../constants/examDefaults';
 import type { ExamState } from '../../../types';
@@ -69,8 +69,7 @@ describe('StudentWriting clipboard', () => {
       />,
     );
 
-    const editor = document.querySelector('textarea[aria-label="Writing response"]');
-    if (!editor) throw new Error('Expected writing editor to render');
+    const editor = screen.getByRole('textbox', { name: /writing response/i });
 
     const pasteEvent = new Event('paste', { bubbles: true, cancelable: true });
     fireEvent(editor, pasteEvent);
@@ -81,9 +80,9 @@ describe('StudentWriting clipboard', () => {
       'sched-1',
       'PASTE_BLOCKED',
       {
-        targetName: 'TEXTAREA',
+        targetName: 'DIV',
         targetType: 'writing-editor',
-        isContentEditable: false,
+        isContentEditable: true,
       },
       'attempt-1',
     );
@@ -102,8 +101,7 @@ describe('StudentWriting clipboard', () => {
       />,
     );
 
-    const editor = document.querySelector('textarea[aria-label="Writing response"]');
-    if (!editor) throw new Error('Expected writing editor to render');
+    const editor = screen.getByRole('textbox', { name: /writing response/i });
 
     for (const eventName of ['copy', 'cut', 'drop', 'contextmenu']) {
       const event = new Event(eventName, { bubbles: true, cancelable: true });

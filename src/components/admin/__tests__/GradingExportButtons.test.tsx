@@ -7,26 +7,26 @@ describe('GradingExportButtons', () => {
   test('renders and invokes the matching export callback', () => {
     const onExportReading = vi.fn();
     const onExportListening = vi.fn();
-    const onExportWriting = vi.fn();
+    const onPrintWriting = vi.fn();
 
     render(
       <GradingExportButtons
         exportingSection={null}
         onExportReading={onExportReading}
         onExportListening={onExportListening}
-        onExportWriting={onExportWriting}
+        onPrintWriting={onPrintWriting}
       />,
     );
 
-    expect(screen.getByText(/export \/ print/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /writing csv/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/export csv/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /print all writing/i })).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /reading csv/i }));
     fireEvent.click(screen.getByRole('button', { name: /listening csv/i }));
-    fireEvent.click(screen.getByRole('button', { name: /print writing/i }));
+    fireEvent.click(screen.getByRole('button', { name: /print all writing/i }));
 
     expect(onExportReading).toHaveBeenCalledTimes(1);
     expect(onExportListening).toHaveBeenCalledTimes(1);
-    expect(onExportWriting).toHaveBeenCalledTimes(1);
+    expect(onPrintWriting).toHaveBeenCalledTimes(1);
   });
 });

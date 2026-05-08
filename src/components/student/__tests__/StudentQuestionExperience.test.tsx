@@ -663,8 +663,8 @@ describe('student question experience', () => {
     );
 
     const image = screen.getByAltText('Uploaded diagram');
-    const stickyWrapper = image.closest('.lg\\:sticky');
-    expect(stickyWrapper).not.toBeNull();
+    const mediaWrapper = image.closest('.overflow-hidden.rounded-2xl');
+    expect(mediaWrapper).not.toBeNull();
   });
 
   it('uses accessibility typography variables for the reading passage panel', () => {
@@ -735,7 +735,7 @@ describe('student question experience', () => {
 
     const readingHighlighter = container.querySelector('[data-student-highlightable="true"]');
     expect(readingHighlighter).not.toBeNull();
-    expect(readingHighlighter).toHaveClass('student-accessible-table-typography');
+    expect(readingHighlighter).toHaveClass('whitespace-pre-wrap');
   });
 
   it('routes table completion changes through student reading with shared answer key slot metadata', () => {
@@ -941,7 +941,7 @@ describe('student question experience', () => {
       '--reading-pane-width': '97%',
       '--question-pane-width': 'calc(3%)',
     });
-    expect(screen.getByTestId('reading-question-scroll')).toHaveClass('p-2.5');
+    expect(screen.getByTestId('reading-question-scroll')).toHaveClass('p-4');
   });
 
   it('allows desktop reading split drag to reach near-boundary widths', () => {
@@ -1884,7 +1884,7 @@ describe('student question experience', () => {
       '--listening-pane-width': '97%',
       '--question-pane-width': 'calc(3%)',
     });
-    expect(screen.getByTestId('listening-question-scroll')).toHaveClass('p-2.5');
+    expect(screen.getByTestId('listening-question-scroll')).toHaveClass('p-4');
   });
 
   it('allows desktop listening split drag to reach near-boundary widths', () => {

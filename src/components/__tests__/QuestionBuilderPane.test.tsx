@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { QuestionBuilderPane } from '../QuestionBuilderPane';
 
@@ -135,8 +135,8 @@ describe('QuestionBuilderPane', () => {
 
     render(<Harness />);
 
-    const addQuestionButtons = screen.getAllByRole('button', { name: /^add question$/i });
-    fireEvent.click(addQuestionButtons[1]!);
+    const addQuestionButton = screen.getByRole('button', { name: /^add question$/i });
+    fireEvent.click(addQuestionButton);
 
     await waitFor(() => {
       expect(screen.getByTestId('single-question-count')).toHaveTextContent('2');
@@ -171,7 +171,7 @@ describe('QuestionBuilderPane', () => {
     alertSpy.mockRestore();
   });
 
-  it('keeps full legacy question range visible after adding sub-answer from a row icon', async () => {
+  it('keeps full legacy question range visible after adding a question', async () => {
     function Harness() {
       const [blocks, setBlocks] = useState([
         {
@@ -202,12 +202,16 @@ describe('QuestionBuilderPane', () => {
 
     render(<Harness />);
 
-    expect(screen.getByText('Questions 18-23')).toBeInTheDocument();
-    fireEvent.click(screen.getAllByTitle('Add sub-answer')[0]!);
+    const blockHeader = screen.getByText('Questions 18-23');
+    const blockContainer = blockHeader.closest('.border.border-gray-100');
+    expect(blockContainer).toBeTruthy();
+    const addQuestionButtons = within(blockContainer as HTMLElement).getAllByRole('button', {
+      name: /^add question$/i,
+    });
+    fireEvent.click(addQuestionButtons[0]!);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Sub-answer prompt')).toBeInTheDocument();
-      expect(screen.getByText('Questions 18-23')).toBeInTheDocument();
+      expect(screen.getByText('Questions 18-24')).toBeInTheDocument();
       expect(screen.getByDisplayValue('Q19')).toBeInTheDocument();
       expect(screen.getByDisplayValue('Q23')).toBeInTheDocument();
     });

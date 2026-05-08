@@ -84,7 +84,7 @@ describe('InsertedImagesEditor', () => {
     const preview = screen.getByAltText('Drive preview');
     expect(preview).toHaveAttribute(
       'src',
-      'https://drive.google.com/uc?export=view&id=abc123DEF456',
+      'https://drive.google.com/thumbnail?id=abc123DEF456&sz=w2000',
     );
   });
 });

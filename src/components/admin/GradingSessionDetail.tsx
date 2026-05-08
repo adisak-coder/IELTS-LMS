@@ -667,7 +667,7 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
             exportingSection={exportingSection}
             onExportReading={() => void handleExportSection('reading')}
             onExportListening={() => void handleExportSection('listening')}
-            onExportWriting={() => void handleExportSection('writing')}
+            onPrintWriting={() => void handleExportSection('writing')}
           />
         </div>
       </div>

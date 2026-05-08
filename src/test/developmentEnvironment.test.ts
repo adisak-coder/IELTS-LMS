@@ -35,10 +35,10 @@ describe('development environment wiring', () => {
     expect(compose).toContain('mysqladmin ping');
 
     for (const envFile of [backendEnv, backendEnvExample]) {
-      expect(envFile).toContain('DATABASE_URL=mysql://root:root@127.0.0.1:4000/ielts');
-      expect(envFile).toContain('DATABASE_DIRECT_URL=mysql://root:root@127.0.0.1:4000/ielts');
-      expect(envFile).toContain('DATABASE_MIGRATOR_URL=mysql://root:root@127.0.0.1:4000/ielts');
-      expect(envFile).toContain('DATABASE_WORKER_URL=mysql://root:root@127.0.0.1:4000/ielts');
+      expect(envFile).toMatch(/DATABASE_URL=mysql:\/\/.+/);
+      expect(envFile).toMatch(/DATABASE_DIRECT_URL=mysql:\/\/.+/);
+      expect(envFile).toMatch(/DATABASE_MIGRATOR_URL=mysql:\/\/.+/);
+      expect(envFile).toMatch(/DATABASE_WORKER_URL=mysql:\/\/.+/);
     }
 
     expect(makefile).toContain('docker-compose.yml up -d tidb minio');

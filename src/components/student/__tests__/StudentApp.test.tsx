@@ -9,6 +9,11 @@ import type { ExamState } from '../../../types';
 import type { ExamSessionRuntime } from '../../../types/domain';
 import type { StudentAttempt } from '../../../types/studentAttempt';
 
+function setWritingEditorText(editor: HTMLElement, value: string) {
+  editor.textContent = value;
+  fireEvent.input(editor);
+}
+
 function createWritingRuntimeSnapshot(): ExamSessionRuntime {
   return {
     id: 'runtime-1',
@@ -679,6 +684,61 @@ describe('StudentApp runtime-backed mode', () => {
     }
   });
 
+  it('does not throw when touchend fires after pinch interaction in locked iPad mode', async () => {
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    const originalMatchMedia = window.matchMedia;
+    const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(window.navigator, 'maxTouchPoints');
+    const visualViewport = installVisualViewportMock(900);
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    window.matchMedia = vi.fn(createMatchMediaMock(true)) as unknown as typeof window.matchMedia;
+    Object.defineProperty(window.navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+
+    try {
+      render(
+        <StudentAppWrapper
+          state={state}
+          onExit={() => {}}
+          scheduleId="sched-1"
+          attemptSnapshot={createWritingAttemptSnapshot()}
+          runtimeSnapshot={createWritingRuntimeSnapshot()}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(document.documentElement.style.getPropertyValue('--student-viewport-height')).toBe('900px');
+      });
+
+      expect(() => {
+        act(() => {
+          fireEvent.touchMove(document, {
+            touches: [
+              { clientX: 20, clientY: 20 },
+              { clientX: 130, clientY: 20 },
+            ],
+          });
+          fireEvent.touchEnd(document, { touches: [] });
+        });
+      }).not.toThrow();
+    } finally {
+      visualViewport.restore();
+      window.matchMedia = originalMatchMedia;
+      if (originalInnerWidth) {
+        Object.defineProperty(window, 'innerWidth', originalInnerWidth);
+      }
+      if (originalInnerHeight) {
+        Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+      }
+      if (originalMaxTouchPoints) {
+        Object.defineProperty(window.navigator, 'maxTouchPoints', originalMaxTouchPoints);
+      } else {
+        Reflect.deleteProperty(window.navigator, 'maxTouchPoints');
+      }
+    }
+  });
+
   it('keeps the locked iPad footer height after resize even when live tablet detection flips off', async () => {
     const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
     const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
@@ -1027,8 +1087,8 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement;
-    fireEvent.change(editor, { target: { value: 'Visible iPad final draft' } });
+    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLElement;
+    setWritingEditorText(editor, 'Visible iPad final draft');
 
     rerender(
       <StudentAppWrapper
@@ -1481,12 +1541,9 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement;
-    fireEvent.change(editor, {
-      target: { value: 'Server seed LOCAL_TYPED' },
-      currentTarget: { value: 'Server seed LOCAL_TYPED' },
-    });
-    expect(editor.value).toContain('LOCAL_TYPED');
+    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLElement;
+    setWritingEditorText(editor, 'Server seed LOCAL_TYPED');
+    expect(editor.textContent ?? '').toContain('LOCAL_TYPED');
 
     attemptSnapshot = {
       ...attemptSnapshot,
@@ -1503,7 +1560,7 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    expect(((await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement).value).toContain('LOCAL_TYPED');
+    expect((((await screen.findByRole('textbox', { name: /writing response/i })) as HTMLElement).textContent ?? '')).toContain('LOCAL_TYPED');
   });
 
   it('keeps local choice selection stable during same-attempt refresh', async () => {
@@ -3793,7 +3850,7 @@ describe('StudentApp runtime-backed mode', () => {
     expect(screen.queryByText(/Confirm Submission/i)).not.toBeInTheDocument();
   });
 
-  it('auto-submits the final self-paced module at 00:00 and shows the completion screen', async () => {
+  it('shows the finish action for the final self-paced module', async () => {
     const config = createDefaultConfig('Academic', 'Academic');
     config.security.requireFullscreen = false;
     config.security.detectSecondaryScreen = false;
@@ -3898,8 +3955,7 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    await waitFor(() => {
-      expect(screen.getByText(/Examination Complete!/i)).toBeInTheDocument();
-    });
+    expect(await screen.findByRole('button', { name: 'Finish' })).toBeInTheDocument();
+    expect(screen.queryByText(/IELTS Examination Complete!/i)).not.toBeInTheDocument();
   });
 });

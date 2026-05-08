@@ -15,7 +15,7 @@ import { StudentSpeaking } from './StudentSpeaking';
 import { StudentWriting } from './StudentWriting';
 import { SubmitConfirmation } from './SubmitConfirmation';
 import { WarningOverlay } from './WarningOverlay';
-import { getFullscreenElement, isAppleMobileDevice, requestStudentFullscreen } from './fullscreen';
+import { getFullscreenElement, requestStudentFullscreen } from './fullscreen';
 import {
   canDecreaseStudentPassageReadability,
   canIncreaseStudentPassageReadability,
@@ -31,6 +31,7 @@ import { useStudentRuntime } from './providers/StudentRuntimeProvider';
 import { useStudentUI } from './providers/StudentUIProvider';
 import { isRuntimeStructurallyCompleted, isVerifiedTerminalStudentState } from './providers/verifiedTerminalState';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
+import { shouldLockViewportForExamSession } from './browserParityPolicy';
 import type { StudentAnswerMutationMeta, StudentAnswerValue } from '../../types/studentAttempt';
 
 function getBlockingCopy(reason: ReturnType<typeof useStudentRuntime>['state']['blocking']['reason']) {
@@ -124,7 +125,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const { actions: attemptActions, state: attemptState } = useStudentAttempt();
   const { state: uiState, actions: uiActions } = useStudentUI();
   const tabletMode = useStudentTabletMode();
-  const shouldLockViewportForKeyboard = tabletMode || isAppleMobileDevice();
+  const shouldLockViewportForKeyboard = shouldLockViewportForExamSession(tabletMode);
   const canIncreasePassageReadability = canIncreaseStudentPassageReadability(
     uiState.accessibilitySettings.passageReadabilityLevel,
   );
@@ -578,7 +579,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       }
 
       if (event.touches.length >= 2) {
-        pinchGestureActive = true;
+        updateViewportHeight();
       }
     };
 
@@ -587,7 +588,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
         return;
       }
 
-      pinchGestureActive = event.touches.length >= 2;
+      if (event.touches.length >= 2) {
+        updateViewportHeight();
+        return;
+      }
       updateViewportHeight();
     };
 

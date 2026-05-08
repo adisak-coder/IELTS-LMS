@@ -6,14 +6,14 @@ interface GradingExportButtonsProps {
   exportingSection: GradingExportSection | null;
   onExportReading: () => void;
   onExportListening: () => void;
-  onExportWriting: () => void;
+  onPrintWriting: () => void;
 }
 
 export function GradingExportButtons({
   exportingSection,
   onExportReading,
   onExportListening,
-  onExportWriting,
+  onPrintWriting,
 }: GradingExportButtonsProps) {
   const buttons: Array<{
     key: GradingExportSection;
@@ -22,7 +22,7 @@ export function GradingExportButtons({
   }> = [
     { key: 'reading', label: 'Reading CSV', onClick: onExportReading },
     { key: 'listening', label: 'Listening CSV', onClick: onExportListening },
-    { key: 'writing', label: 'Writing CSV', onClick: onExportWriting },
+    { key: 'writing', label: 'Print all writing', onClick: onPrintWriting },
   ];
 
   return (

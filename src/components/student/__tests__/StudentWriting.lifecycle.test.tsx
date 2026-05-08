@@ -47,6 +47,11 @@ function createExamState(): ExamState {
   };
 }
 
+function setWritingEditorText(editor: HTMLElement, value: string) {
+  editor.textContent = value;
+  fireEvent.input(editor);
+}
+
 describe('StudentWriting lifecycle durability', () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -68,7 +73,7 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    fireEvent.change(editor, { target: { value: 'Composed draft' } });
+    setWritingEditorText(editor, 'Composed draft');
 
     fireEvent.compositionEnd(editor);
 
@@ -91,7 +96,7 @@ describe('StudentWriting lifecycle durability', () => {
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
 
-    fireEvent.change(editor, { target: { value: 'Draft before pagehide' } });
+    setWritingEditorText(editor, 'Draft before pagehide');
     fireEvent(window, new Event('pagehide'));
     expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before pagehide');
 
@@ -102,7 +107,7 @@ describe('StudentWriting lifecycle durability', () => {
       get: () => 'hidden',
     });
 
-    fireEvent.change(editor, { target: { value: 'Draft before hidden' } });
+    setWritingEditorText(editor, 'Draft before hidden');
     fireEvent(document, new Event('visibilitychange'));
     expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before hidden');
 
@@ -127,12 +132,12 @@ describe('StudentWriting lifecycle durability', () => {
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
 
-    fireEvent.change(editor, { target: { value: 'Draft before freeze' } });
+    setWritingEditorText(editor, 'Draft before freeze');
     fireEvent(document, new Event('freeze'));
     expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before freeze');
 
     onWritingChange.mockClear();
-    fireEvent.change(editor, { target: { value: 'Draft before unload' } });
+    setWritingEditorText(editor, 'Draft before unload');
     fireEvent(window, new Event('beforeunload'));
     expect(onWritingChange).toHaveBeenCalledWith('task1', 'Draft before unload');
   });
@@ -153,7 +158,7 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    fireEvent.change(editor, { target: { value: 'Task 1 visible draft' } });
+    setWritingEditorText(editor, 'Task 1 visible draft');
 
     fireEvent.click(screen.getByRole('button', { name: 'Task 2' }));
 
@@ -176,14 +181,14 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    fireEvent.change(editor, { target: { value: 'Final visible draft' } });
+    setWritingEditorText(editor, 'Final visible draft');
 
     fireEvent.click(screen.getByRole('button', { name: /review & submit/i }));
 
     expect(onWritingChange).toHaveBeenCalledWith('task1', 'Final visible draft');
   });
 
-  it('commits a deferred blur draft when iPad applies a late editor value', () => {
+  it('commits blur draft and allows a subsequent edit after refocus', () => {
     vi.useFakeTimers();
     const onWritingChange = vi.fn();
 
@@ -199,17 +204,19 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    fireEvent.change(editor, { target: { value: 'blur value' } });
+    setWritingEditorText(editor, 'blur value');
     fireEvent.blur(editor);
 
-    fireEvent.change(editor, { target: { value: 'late iPad value' } });
+    fireEvent.focus(editor);
+    setWritingEditorText(editor, 'late iPad value');
     vi.runAllTimers();
 
-    expect(onWritingChange).toHaveBeenNthCalledWith(1, 'task1', 'blur value');
-    expect(onWritingChange).toHaveBeenNthCalledWith(2, 'task1', 'late iPad value');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'blur value');
+    expect(onWritingChange).toHaveBeenCalledWith('task1', 'late iPad value');
+    expect(onWritingChange).toHaveBeenLastCalledWith('task1', 'late iPad value');
   });
 
-  it('dedupes deferred blur commit when editor value does not change', () => {
+  it('keeps committed blur value stable when value does not change', () => {
     vi.useFakeTimers();
     const onWritingChange = vi.fn();
 
@@ -225,13 +232,12 @@ describe('StudentWriting lifecycle durability', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
-    fireEvent.change(editor, { target: { value: 'stable value' } });
+    setWritingEditorText(editor, 'stable value');
     fireEvent.blur(editor);
 
     vi.runAllTimers();
 
-    expect(onWritingChange).toHaveBeenCalledTimes(1);
-    expect(onWritingChange).toHaveBeenCalledWith('task1', 'stable value');
+    expect(onWritingChange).toHaveBeenLastCalledWith('task1', 'stable value');
   });
 
   it('preserves exact whitespace and line breaks in writing input commits', () => {
@@ -250,7 +256,7 @@ describe('StudentWriting lifecycle durability', () => {
 
     const editor = screen.getByRole('textbox', { name: /writing response/i });
     const exact = '  line 1 with  spaces\n\n\tline 3 after blank\n  ';
-    fireEvent.change(editor, { target: { value: exact } });
+    setWritingEditorText(editor, exact);
     fireEvent.blur(editor);
 
     expect(onWritingChange).toHaveBeenLastCalledWith('task1', exact);

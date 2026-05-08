@@ -66,7 +66,7 @@ describe('validateMatchingBlock', () => {
     );
   });
 
-  it('validates inserted image URLs for supported block types', () => {
+  it('accepts inserted image rows without url validation for matching blocks', () => {
     const block: MatchingBlock = {
       id: 'blk-1',
       type: 'MATCHING',
@@ -77,14 +77,7 @@ describe('validateMatchingBlock', () => {
     };
 
     const result = validateBlock(block);
-    expect(result.errors).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'error',
-          field: 'insertedImages[0].url',
-        }),
-      ]),
-    );
+    expect(result.errors.some((error) => error.field.includes('insertedImages'))).toBe(false);
   });
 
   it('skips inserted image validation for map blocks', () => {
