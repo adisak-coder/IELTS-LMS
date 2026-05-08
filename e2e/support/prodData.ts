@@ -2,9 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 
-const wcodeSchema = z
-  .string()
-  .regex(/^W\d{6}$/, 'wcode must be format W followed by 6 digits');
+const wcodeSchema = z.string().min(1);
 
 const studentSchema = z.object({
   wcode: wcodeSchema,

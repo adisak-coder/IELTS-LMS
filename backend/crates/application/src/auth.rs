@@ -408,7 +408,7 @@ impl AuthService {
         user_agent: Option<&str>,
         ip_address: Option<&str>,
     ) -> Result<SessionIssue, AuthError> {
-        let normalized_wcode = wcode.trim().to_ascii_uppercase();
+        let normalized_wcode = ielts_backend_domain::schedule::normalize_access_code(&wcode);
         if normalized_wcode.is_empty() {
             return Err(AuthError::Validation("Wcode is required.".to_owned()));
         }
@@ -894,7 +894,18 @@ fn session_idle(role: &UserRole, config: &AppConfig) -> Duration {
 }
 
 fn build_student_entry_email(schedule_id: Uuid, wcode: &str) -> String {
-    format!("student+{}+{}@wcode.invalid", schedule_id, wcode)
+    let normalized_wcode = ielts_backend_domain::schedule::normalize_access_code(wcode);
+
+    // Backward compatibility: legacy W-codes used to be embedded in the internal email.
+    if normalized_wcode.len() == 7
+        && normalized_wcode.starts_with('W')
+        && normalized_wcode[1..].chars().all(|ch| ch.is_ascii_digit())
+    {
+        return format!("student+{}+{}@wcode.invalid", schedule_id, normalized_wcode);
+    }
+
+    let identity = sha256_hex(&format!("{schedule_id}:{normalized_wcode}"));
+    format!("student+{}+{}@wcode.invalid", schedule_id, identity)
 }
 
 #[derive(FromRow)]
@@ -1010,8 +1021,9 @@ impl UserStateSqlExt for User {
 
 #[cfg(test)]
 mod tests {
-    use super::should_refresh_attempt_token;
+    use super::{build_student_entry_email, should_refresh_attempt_token};
     use chrono::{Duration, Utc};
+    use uuid::Uuid;
 
     #[test]
     fn does_not_refresh_when_more_than_five_minutes_remaining() {
@@ -1033,5 +1045,28 @@ mod tests {
             now + Duration::minutes(4) + Duration::seconds(59),
             now
         ));
+    }
+
+    #[test]
+    fn student_entry_email_escapes_free_form_access_codes() {
+        let schedule_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let email = build_student_entry_email(schedule_id, "guest/a?x#y");
+
+        assert!(email.ends_with("@wcode.invalid"));
+        assert!(!email.contains('/'));
+        assert!(!email.contains('?'));
+        assert!(!email.contains('#'));
+        assert!(!email.contains("guest/a?x#y"));
+    }
+
+    #[test]
+    fn student_entry_email_preserves_legacy_wcode_mapping() {
+        let schedule_id = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap();
+        let email = build_student_entry_email(schedule_id, "w250334");
+
+        assert_eq!(
+            email,
+            "student+550e8400-e29b-41d4-a716-446655440000+W250334@wcode.invalid"
+        );
     }
 }

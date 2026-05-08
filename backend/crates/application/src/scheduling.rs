@@ -985,14 +985,18 @@ impl SchedulingService {
         student_name: String,
         user_id: Uuid,
     ) -> Result<ScheduleRegistration, SchedulingError> {
-        validate_wcode(&wcode).map_err(|e| SchedulingError::Validation(e))?;
+        let normalized_wcode = ielts_backend_domain::schedule::normalize_access_code(&wcode);
+        validate_wcode(&normalized_wcode).map_err(|e| SchedulingError::Validation(e))?;
         validate_email(&email).map_err(|e| SchedulingError::Validation(e))?;
 
         self.get_schedule(ctx, schedule_id).await?;
 
         let user_id_str = user_id.to_string();
 
-        if let Some(row) = self.load_registration_by_wcode(schedule_id, &wcode).await? {
+        if let Some(row) = self
+            .load_registration_by_wcode(schedule_id, &normalized_wcode)
+            .await?
+        {
             let same_user = row
                 .user_id
                 .map(|id| id.into_uuid())
@@ -1024,7 +1028,7 @@ impl SchedulingService {
                 let updated = self
                     .update_registration_contact(
                         schedule_id,
-                        &wcode,
+                        &normalized_wcode,
                         &email,
                         &student_name,
                         user_id,
@@ -1035,11 +1039,11 @@ impl SchedulingService {
 
             return Err(SchedulingError::Conflict(format!(
                 "Wcode {} is already registered for this schedule",
-                wcode
+                normalized_wcode
             )));
         }
 
-        let student_key = format!("student-{}-{}", schedule_id, wcode);
+        let student_key = format!("student-{}-{}", schedule_id, normalized_wcode);
         let registration_id = Uuid::new_v4();
 
         let inserted = sqlx::query(
@@ -1055,9 +1059,9 @@ impl SchedulingService {
         .bind(schedule_id.to_string())
         .bind(user_id.to_string())
         .bind(user_id.to_string())
-        .bind(&wcode)
+        .bind(&normalized_wcode)
         .bind(&student_key)
-        .bind(&wcode)
+        .bind(&normalized_wcode)
         .bind(&student_name)
         .bind(&email)
         .execute(&self.pool)
@@ -1066,14 +1070,17 @@ impl SchedulingService {
         match inserted {
             Ok(_) => {
                 let row = self
-                    .load_registration_by_wcode(schedule_id, &wcode)
+                    .load_registration_by_wcode(schedule_id, &normalized_wcode)
                     .await?
                     .ok_or(SchedulingError::NotFound)?;
                 Ok(row.into_domain())
             }
             Err(err) if is_mysql_duplicate_key(&err) => {
                 // Raced with another request. If it's ours, treat as idempotent.
-                let Some(row) = self.load_registration_by_wcode(schedule_id, &wcode).await? else {
+                let Some(row) = self
+                    .load_registration_by_wcode(schedule_id, &normalized_wcode)
+                    .await?
+                else {
                     return Err(SchedulingError::Database(err));
                 };
 
@@ -1108,7 +1115,7 @@ impl SchedulingService {
                     let updated = self
                         .update_registration_contact(
                             schedule_id,
-                            &wcode,
+                            &normalized_wcode,
                             &email,
                             &student_name,
                             user_id,
@@ -1118,7 +1125,7 @@ impl SchedulingService {
                 } else {
                     Err(SchedulingError::Conflict(format!(
                         "Wcode {} is already registered for this schedule",
-                        wcode
+                        normalized_wcode
                     )))
                 }
             }

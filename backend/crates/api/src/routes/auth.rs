@@ -355,7 +355,7 @@ pub async fn student_entry(
         )
     })?;
 
-    let normalized_wcode = req.wcode.trim().to_ascii_uppercase();
+    let normalized_wcode = ielts_backend_domain::schedule::normalize_access_code(&req.wcode);
     if normalized_wcode.is_empty() {
         return Err(ApiError::new(
             StatusCode::UNPROCESSABLE_ENTITY,

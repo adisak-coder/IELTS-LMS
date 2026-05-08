@@ -1017,10 +1017,21 @@ describe('useStudentSessionRouteData backend mode', () => {
     expect(liveCalls.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('rejects non-wcode student ids and never calls the backend session API', async () => {
+  it('accepts non-wcode student ids and loads backend session API', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_DELIVERY', 'true');
     vi.spyOn(authService, 'getSession').mockResolvedValue(buildAuthSession());
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/static?candidateId=alice')) {
+        return Promise.resolve(jsonResponse(buildStaticSessionContext()));
+      }
+      if (url.includes('/live?candidateId=alice')) {
+        return Promise.resolve(jsonResponse(buildLiveSessionContext(buildAttempt())));
+      }
+      if (url === '/api/v1/student/sessions/sched-1/bootstrap') {
+        return Promise.resolve(jsonResponse(buildBootstrapContext(buildAttempt())));
+      }
+      return Promise.resolve(jsonResponse(buildSessionContext(buildAttempt())));
+    });
     global.fetch = fetchMock as typeof fetch;
 
     const { result } = renderHook(() => useStudentSessionRouteData('sched-1', 'alice'), {
@@ -1031,8 +1042,15 @@ describe('useStudentSessionRouteData backend mode', () => {
       expect(result.current.isLoading).toBe(false);
     });
 
-    expect(result.current.error).toMatch(/invalid access code/i);
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.error).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/student/sessions/sched-1/static?candidateId=alice',
+      expect.any(Object),
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/student/sessions/sched-1/live?candidateId=alice',
+      expect.any(Object),
+    );
   });
 
   it('logs published snapshot diagnostics when diagram blocks are missing imageUrl', async () => {

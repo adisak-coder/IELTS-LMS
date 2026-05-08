@@ -1308,15 +1308,12 @@ fn normalize_candidate_id(candidate_id: Option<&str>) -> String {
         return fallback.to_owned();
     };
 
-    let trimmed = raw.trim().to_ascii_uppercase();
-    if trimmed.len() == 7
-        && trimmed.starts_with('W')
-        && trimmed[1..].chars().all(|ch| ch.is_ascii_digit())
-    {
-        return trimmed;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return fallback.to_owned();
     }
 
-    fallback.to_owned()
+    trimmed.to_owned()
 }
 
 fn build_student_key(schedule_id: Uuid, candidate_id: &str) -> String {
@@ -1444,7 +1441,6 @@ fn violation_business_id_from_payload(payload: &Value) -> Result<String, ApiErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ielts_backend_domain::attempt::MutationType;
 
     #[test]
     fn mutation_batch_rejects_unknown_top_level_fields() {
@@ -1511,16 +1507,18 @@ mod tests {
         assert_eq!(parsed.mutations.len(), 1);
         let command = &parsed.mutations[0];
         assert_eq!(command.base_revision, 7);
-        assert_eq!(command.command.mutation_type(), MutationType::SetSlot);
-        assert_eq!(
-            command.command.payload(command.base_revision),
-            json!({
-                "baseRevision": 7,
-                "questionId": "q1",
-                "slotIndex": 2,
-                "value": "wolf"
-            })
-        );
+        match &command.command {
+            ApiMutationCommandPayload::SetSlot {
+                question_id,
+                slot_index,
+                value,
+            } => {
+                assert_eq!(question_id, "q1");
+                assert_eq!(*slot_index, 2);
+                assert_eq!(value, "wolf");
+            }
+            other => panic!("Expected SetSlot command, got {other:?}"),
+        }
     }
 
     #[test]

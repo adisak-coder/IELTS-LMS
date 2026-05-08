@@ -14,8 +14,16 @@ interface EntryFormData {
 const LAST_WCODE_STORAGE_PREFIX = 'ielts-student-last-wcode:';
 const PROFILE_STORAGE_PREFIX = 'ielts-student-profile:';
 
-function validateWcode(wcode: string): boolean {
-  return /^W[0-9]{6}$/.test(wcode);
+function normalizeAccessCode(value: string): string {
+  const trimmed = value.trim();
+  if (/^w\d{6}$/i.test(trimmed)) {
+    return trimmed.toUpperCase();
+  }
+  return trimmed;
+}
+
+function buildStudentRoute(scheduleId: string, accessCode: string): string {
+  return `/student/${scheduleId}/${encodeURIComponent(accessCode)}`;
 }
 
 function validateEmail(email: string): boolean {
@@ -94,20 +102,21 @@ export function StudentEntryRoute() {
 
     const queryWcode = searchParams.get('wcode');
     if (queryWcode) {
-      return queryWcode.trim().toUpperCase();
+      return normalizeAccessCode(queryWcode);
     }
 
-    return loadLastWcode(scheduleId) ?? '';
+    const stored = loadLastWcode(scheduleId);
+    return stored ? normalizeAccessCode(stored) : '';
   }, [scheduleId, searchParams]);
 
   const [formData, setFormData] = useState<EntryFormData>({
     wcode: initialWcode,
     email:
-      scheduleId && validateWcode(initialWcode)
+      scheduleId && initialWcode
         ? loadCandidateProfile(scheduleId, initialWcode)?.email ?? ''
         : '',
     studentName:
-      scheduleId && validateWcode(initialWcode)
+      scheduleId && initialWcode
         ? loadCandidateProfile(scheduleId, initialWcode)?.studentName ?? ''
         : '',
   });
@@ -122,8 +131,8 @@ export function StudentEntryRoute() {
       return;
     }
 
-    const normalizedWcode = initialWcode.trim().toUpperCase();
-    if (!normalizedWcode || !validateWcode(normalizedWcode)) {
+    const normalizedWcode = normalizeAccessCode(initialWcode);
+    if (!normalizedWcode) {
       return;
     }
 
@@ -134,11 +143,11 @@ export function StudentEntryRoute() {
         const activeAttempt = attempts.find(
           (candidate) =>
             candidate.phase !== 'post-exam' &&
-            candidate.candidateId.trim().toUpperCase() === normalizedWcode,
+            normalizeAccessCode(candidate.candidateId) === normalizedWcode,
         );
 
         if (activeAttempt && !cancelled) {
-          navigate(`/student/${scheduleId}/${normalizedWcode}`, { replace: true });
+          navigate(buildStudentRoute(scheduleId, normalizedWcode), { replace: true });
         }
       } catch {
         // Fall back to manual check-in.
@@ -154,13 +163,6 @@ export function StudentEntryRoute() {
     setFormData((prev) => ({ ...prev, [field]: value }));
     setErrors((prev) => ({ ...prev, [field]: '' }));
 
-    if (field === 'wcode' && value && !validateWcode(value)) {
-      setErrors((prev) => ({
-        ...prev,
-        wcode: 'Wcode must be in format W followed by 6 digits (e.g., W250334)',
-      }));
-    }
-
     if (field === 'email' && value && !validateEmail(value)) {
       setErrors((prev) => ({
         ...prev,
@@ -172,14 +174,14 @@ export function StudentEntryRoute() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const normalizedWcode = formData.wcode.trim().toUpperCase();
+    const normalizedWcode = normalizeAccessCode(formData.wcode);
     const normalizedEmail = formData.email.trim();
     const normalizedName = formData.studentName.trim();
 
     const newErrors: Partial<Record<keyof EntryFormData, string>> = {};
 
-    if (!normalizedWcode || !validateWcode(normalizedWcode)) {
-      newErrors.wcode = 'Wcode is required and must be in format W followed by 6 digits';
+    if (!normalizedWcode) {
+      newErrors.wcode = 'Access code is required';
     }
 
     if (!normalizedEmail || !validateEmail(normalizedEmail)) {
@@ -227,7 +229,7 @@ export function StudentEntryRoute() {
         studentName: normalizedName,
         email: normalizedEmail,
       });
-      navigate(`/student/${scheduleId}/${normalizedWcode}`);
+      navigate(buildStudentRoute(scheduleId, normalizedWcode));
     } catch (error) {
       setSubmitError(
         error instanceof Error ? error.message : 'Check-in failed. Please try again.',
@@ -265,7 +267,7 @@ export function StudentEntryRoute() {
           studentName: queuedPayload.studentName,
           email: queuedPayload.email,
         });
-        navigate(`/student/${scheduleId}/${queuedPayload.wcode}`);
+        navigate(buildStudentRoute(scheduleId, queuedPayload.wcode));
       } catch (error) {
         if (!cancelled) {
           setSubmitError(
@@ -303,23 +305,21 @@ export function StudentEntryRoute() {
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
             <label htmlFor="wcode" className="block text-sm font-medium text-gray-700 mb-2">
-              Wcode
+              Access code
             </label>
             <input
               id="wcode"
               type="text"
               value={formData.wcode}
-              onChange={(e) => handleInputChange('wcode', e.target.value.toUpperCase())}
-              placeholder="W250334"
+              onChange={(e) => handleInputChange('wcode', e.target.value)}
+              placeholder="Enter your access code"
               disabled={isLoading || Boolean(queuedAdmission)}
               className={`w-full px-3 py-2 border rounded-md ${
                 errors.wcode ? 'border-red-300' : 'border-gray-300'
               } focus:outline-none focus:ring-2 focus:ring-blue-500`}
             />
             {errors.wcode && <p className="mt-1 text-sm text-red-600">{errors.wcode}</p>}
-            <p className="mt-1 text-xs text-gray-500">
-              Format: W followed by 6 digits (e.g., W250334)
-            </p>
+            <p className="mt-1 text-xs text-gray-500">Enter the access code provided to you.</p>
           </div>
 
           <div>

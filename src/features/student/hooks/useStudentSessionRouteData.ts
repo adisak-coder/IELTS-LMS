@@ -110,17 +110,19 @@ function parseNullableString(value: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
-function normalizeWcodeCandidateId(studentId?: string) {
+function normalizeCandidateId(studentId?: string) {
   if (!studentId) {
     return null;
   }
 
-  const normalized = studentId.trim().toUpperCase();
-  return normalized || null;
-}
-
-function isWcodeCandidateId(candidateId: string) {
-  return /^W[0-9]{6}$/.test(candidateId);
+  const normalized = studentId.trim();
+  if (!normalized) {
+    return null;
+  }
+  if (/^w\d{6}$/i.test(normalized)) {
+    return normalized.toUpperCase();
+  }
+  return normalized;
 }
 
 function buildStudentKey(scheduleId: string, candidateId: string) {
@@ -364,7 +366,7 @@ export function useStudentSessionRouteData(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const loadTransitionRollout = useMemo(buildDefaultAnswerInvariantRollout, []);
-  const candidateId = useMemo(() => normalizeWcodeCandidateId(studentId), [studentId]);
+  const candidateId = useMemo(() => normalizeCandidateId(studentId), [studentId]);
   const staticVersionIdRef = useRef<string | null>(null);
   const refreshEpochRef = useRef(0);
   const appliedFreshnessRef = useRef<LiveSnapshotFreshness | null>(null);
@@ -383,7 +385,7 @@ export function useStudentSessionRouteData(
   }, [runtimeSnapshot]);
 
   const loadStaticSessionSnapshot = useCallback(async (): Promise<LoadedStaticSnapshot | null> => {
-    if (!scheduleId || !candidateId || !isWcodeCandidateId(candidateId)) {
+    if (!scheduleId || !candidateId) {
       return null;
     }
 
@@ -444,13 +446,13 @@ export function useStudentSessionRouteData(
       return null;
     }
 
-    const normalizedCandidateId = normalizeWcodeCandidateId(candidateId);
+    const normalizedCandidateId = normalizeCandidateId(candidateId);
     if (!normalizedCandidateId) {
       return null;
     }
     const cachedAttempts = await studentAttemptRepository.getAttemptsByScheduleId(scheduleId);
     const candidates = cachedAttempts.filter(
-      (attempt) => normalizeWcodeCandidateId(attempt.candidateId) === normalizedCandidateId,
+      (attempt) => normalizeCandidateId(attempt.candidateId) === normalizedCandidateId,
     );
 
     if (candidates.length === 0) {
@@ -513,7 +515,7 @@ export function useStudentSessionRouteData(
   );
 
   const refreshBackendSessionSnapshot = useCallback(async () => {
-    if (!scheduleId || !candidateId || !isWcodeCandidateId(candidateId)) {
+    if (!scheduleId || !candidateId) {
       return;
     }
 
@@ -674,7 +676,6 @@ export function useStudentSessionRouteData(
     enabled: Boolean(
       scheduleId &&
         candidateId &&
-        isWcodeCandidateId(candidateId) &&
         authStatus === 'authenticated' &&
         !error,
     ),
@@ -696,7 +697,6 @@ export function useStudentSessionRouteData(
     if (
       !scheduleId ||
       !candidateId ||
-      !isWcodeCandidateId(candidateId) ||
       authStatus !== 'authenticated' ||
       Boolean(error)
     ) {
@@ -717,7 +717,7 @@ export function useStudentSessionRouteData(
     applyLoadTransition(source, { type: 'requested' });
 
     try {
-      if (!candidateId || !isWcodeCandidateId(candidateId)) {
+      if (!candidateId) {
         throw new Error('Invalid access code. Please check in again.');
       }
 

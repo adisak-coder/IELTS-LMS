@@ -779,12 +779,27 @@ pub struct ScheduleRegistration {
 }
 
 // Validation functions
+/// Trim an access code and preserve legacy behaviour for classic "W123456" codes by
+/// canonicalizing them to uppercase. All other non-empty access codes are left as-is (trimmed).
+pub fn normalize_access_code(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.len() == 7 {
+        let mut chars = trimmed.chars();
+        if let Some(first) = chars.next() {
+            if (first == 'W' || first == 'w') && chars.all(|ch| ch.is_ascii_digit()) {
+                return trimmed.to_ascii_uppercase();
+            }
+        }
+    }
+
+    trimmed.to_owned()
+}
+
 pub fn validate_wcode(wcode: &str) -> Result<(), String> {
-    let regex = regex::Regex::new(r"^W[0-9]{6}$").unwrap();
-    if regex.is_match(wcode) {
+    if !normalize_access_code(wcode).is_empty() {
         Ok(())
     } else {
-        Err("Wcode must be in format W followed by 6 digits (e.g., W250334)".to_string())
+        Err("Wcode is required.".to_string())
     }
 }
 
@@ -802,11 +817,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validate_wcode_accepts_expected_format() {
+    fn validate_wcode_accepts_non_empty_values() {
         assert!(validate_wcode("W123456").is_ok());
-        assert!(validate_wcode("w123456").is_err());
-        assert!(validate_wcode("W12345").is_err());
-        assert!(validate_wcode("W1234567").is_err());
-        assert!(validate_wcode("X123456").is_err());
+        assert!(validate_wcode("w123456").is_ok());
+        assert!(validate_wcode("guest-alpha_01").is_ok());
+        assert!(validate_wcode("  ").is_err());
+        assert!(validate_wcode("").is_err());
     }
 }

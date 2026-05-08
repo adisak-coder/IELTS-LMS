@@ -22,7 +22,7 @@ test.describe('Student LRW workflow', () => {
     await page.getByRole('button', { name: 'Continue' }).click();
 
     await expect(
-      page.getByText('Wcode is required and must be in format W followed by 6 digits'),
+      page.getByText(/access code is required/i),
     ).toBeVisible();
     await expect(
       page.getByText('Email is required and must be valid'),
