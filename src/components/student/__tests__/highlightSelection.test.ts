@@ -266,8 +266,45 @@ describe('applySelectionHighlight', () => {
       removeAllRanges: vi.fn(),
     } as unknown as Selection;
 
-    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
-    expect(html).toBeNull();
+    const snapshot = createHighlightSelectionSnapshot(container, selection);
+    expect(snapshot).not.toBeNull();
+    const mismatchedSnapshot = {
+      ...snapshot!,
+      selectedText: 'wrong selected text',
+    };
+
+    const result = applyHighlightFromSnapshotWithPolicy(
+      container,
+      mismatchedSnapshot,
+      'bg-blue-200',
+    );
+    expect(result.reason).toBe('text_mismatch_guard');
+    expect(result.html).toBeNull();
+  });
+
+  it('highlights when selection.toString is stale but the captured range is correct', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta gamma</p>';
+    const textNode = container.querySelector('p')?.firstChild;
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      throw new Error('Expected a text node');
+    }
+
+    const range = document.createRange();
+    range.setStart(textNode, 6);
+    range.setEnd(textNode, 10);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => 'stale selection text',
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.reason).toBeNull();
+    expect(result.html).toContain('data-highlighted="true"');
+    expect(result.html).toContain('beta');
   });
 
   it('highlights nested-inline cross-paragraph selection via split fallback', () => {

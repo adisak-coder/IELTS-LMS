@@ -168,7 +168,9 @@ export function createHighlightSelectionSnapshot(
     debugHighlight('createSnapshot:get_range_failed');
     return null;
   }
-  const selectedText = selection.toString().trim();
+  // Use the exact captured range text, not selection.toString(), because some
+  // browsers can report stale selection text at mouseup/touchend.
+  const selectedText = range.toString().trim();
   if (!selectedText) {
     debugHighlight('createSnapshot:collapsed_or_empty');
     return null;
