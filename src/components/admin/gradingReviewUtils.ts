@@ -365,6 +365,58 @@ function countCorrectAnswers(groups: ObjectiveTracebackGroup[]): number {
   );
 }
 
+function calculateBandScore(rawScore: number, table: Record<number, number>): number {
+  const sortedThresholds = Object.keys(table)
+    .map(Number)
+    .filter((value) => Number.isFinite(value))
+    .sort((left, right) => right - left);
+  for (const threshold of sortedThresholds) {
+    if (rawScore >= threshold) {
+      return table[threshold] ?? 0;
+    }
+  }
+  return 0;
+}
+
+function getObjectiveBandTable(
+  examState: ExamState | null,
+  moduleType: 'reading' | 'listening',
+): Record<number, number> | null {
+  if (!examState) return null;
+
+  if (moduleType === 'listening') {
+    return examState.config.standards.bandScoreTables.listening
+      ?? examState.config.sections.listening.bandScoreTable
+      ?? null;
+  }
+
+  if (examState.type === 'General Training') {
+    return examState.config.standards.bandScoreTables.readingGeneralTraining
+      ?? examState.config.sections.reading.bandScoreTable
+      ?? null;
+  }
+
+  return examState.config.standards.bandScoreTables.readingAcademic
+    ?? examState.config.sections.reading.bandScoreTable
+    ?? null;
+}
+
+function deriveIeltsBandScore(
+  examState: ExamState | null,
+  moduleType: 'reading' | 'listening',
+  totalScore: number | null | undefined,
+): number | '' {
+  if (typeof totalScore !== 'number' || !Number.isFinite(totalScore)) {
+    return '';
+  }
+  const table = getObjectiveBandTable(examState, moduleType);
+  if (!table) {
+    return '';
+  }
+
+  return calculateBandScore(totalScore, table);
+}
+
 export function buildWideObjectiveExport({
   session,
   submissions,
@@ -376,6 +428,10 @@ export function buildWideObjectiveExport({
   const answerColumns = descriptors.map((descriptor) => {
     const label = getQuestionColumnLabel(descriptor, descriptors);
     return { key: `answer:${descriptor.id}`, label: `${label} Answer` };
+  });
+  const rightAnswerColumns = descriptors.map((descriptor) => {
+    const label = getQuestionColumnLabel(descriptor, descriptors);
+    return { key: `rightAnswer:${descriptor.id}`, label: `${label} Right Answer` };
   });
   const scoreColumns = descriptors.map((descriptor) => {
     const label = getQuestionColumnLabel(descriptor, descriptors);
@@ -408,12 +464,14 @@ export function buildWideObjectiveExport({
       correctCount: autoGradingResults?.questionResults
         ? autoGradingResults.questionResults.filter((result) => result.isCorrect).length
         : countCorrectAnswers(groups),
+      ieltsBandScore: deriveIeltsBandScore(examState, moduleType, autoGradingResults?.totalScore),
     };
 
     for (const descriptor of descriptors) {
       const item = items.get(descriptor.id);
       const scoredResult = scoredResults.get(descriptor.id);
       row[`answer:${descriptor.id}`] = item?.studentAnswer ?? '';
+      row[`rightAnswer:${descriptor.id}`] = item?.correctAnswer ?? '';
       row[`score:${descriptor.id}`] = toOptionalNumber(scoredResult?.awardedScore);
     }
 
@@ -421,7 +479,13 @@ export function buildWideObjectiveExport({
   });
 
   return {
-    columns: [...OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS, ...answerColumns, ...scoreColumns],
+    columns: [
+      ...OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS,
+      ...answerColumns,
+      ...rightAnswerColumns,
+      ...scoreColumns,
+      { key: 'ieltsBandScore', label: 'IELTS Band Score' },
+    ],
     rows,
   };
 }

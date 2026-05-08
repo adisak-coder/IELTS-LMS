@@ -373,6 +373,7 @@ describe('gradingReviewUtils', () => {
 
   test('builds one reading export row per student with answers before scores', () => {
     const examState = createInitialExamState('Exam', 'Academic');
+    examState.config.standards.bandScoreTables.readingAcademic = { 1: 4 };
     examState.reading.passages = [
       {
         id: 'passage-1',
@@ -439,20 +440,28 @@ describe('gradingReviewUtils', () => {
       'Correct Count',
       'Q1 Answer',
       'Q2 Answer',
+      'Q1 Right Answer',
+      'Q2 Right Answer',
       'Q1 Score',
       'Q2 Score',
+      'IELTS Band Score',
     ]);
     expect(exportData.rows[0]?.['answer:q-1']).toBe('Alpha');
     expect(exportData.rows[0]?.['answer:q-2']).toBe('Wrong');
+    expect(exportData.rows[0]?.['rightAnswer:q-1']).toBe('Alpha');
+    expect(exportData.rows[0]?.['rightAnswer:q-2']).toBe('Beta');
     expect(exportData.rows[0]?.['score:q-1']).toBe(1);
     expect(exportData.rows[0]?.['score:q-2']).toBe(0);
+    expect(exportData.rows[0]?.ieltsBandScore).toBe(4);
     expect(exportData.rows[1]?.['answer:q-1']).toBe('Other');
     expect(exportData.rows[1]?.['answer:q-2']).toBe('Beta');
     expect(exportData.rows[1]?.correctCount).toBe(1);
+    expect(exportData.rows[1]?.ieltsBandScore).toBe(4);
   });
 
   test('builds listening export with the same wide format', () => {
     const examState = createInitialExamState('Exam', 'Academic');
+    examState.config.standards.bandScoreTables.listening = { 1: 2.5 };
     examState.listening.parts = [
       {
         id: 'part-1',
@@ -488,10 +497,14 @@ describe('gradingReviewUtils', () => {
     });
 
     expect(exportData.rows).toHaveLength(1);
-    expect(exportData.columns.at(-2)?.label).toBe('Q1 Answer');
-    expect(exportData.columns.at(-1)?.label).toBe('Q1 Score');
+    expect(exportData.columns.at(-4)?.label).toBe('Q1 Answer');
+    expect(exportData.columns.at(-3)?.label).toBe('Q1 Right Answer');
+    expect(exportData.columns.at(-2)?.label).toBe('Q1 Score');
+    expect(exportData.columns.at(-1)?.label).toBe('IELTS Band Score');
     expect(exportData.rows[0]?.section).toBe('listening');
     expect(exportData.rows[0]?.['answer:lq-1']).toBe('Train');
+    expect(exportData.rows[0]?.['rightAnswer:lq-1']).toBe('Train');
+    expect(exportData.rows[0]?.ieltsBandScore).toBe(2.5);
   });
 
   test('leaves missing objective answers and unscored questions blank', () => {
@@ -533,7 +546,52 @@ describe('gradingReviewUtils', () => {
     });
 
     expect(exportData.rows[0]?.['answer:q-2']).toBe('');
+    expect(exportData.rows[0]?.['rightAnswer:q-2']).toBe('Beta');
     expect(exportData.rows[0]?.['score:q-2']).toBe('');
+  });
+
+  test('falls back to the nearest lower threshold when deriving IELTS band score', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'block-1',
+            type: 'SHORT_ANSWER',
+            instruction: 'Answer the question.',
+            questions: [
+              { id: 'q-1', prompt: 'First?', correctAnswer: 'Alpha', answerRule: 'ONE_WORD' },
+            ],
+          },
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ];
+    examState.config.standards.bandScoreTables.readingAcademic = {
+      3: 6,
+      1: 4.5,
+    };
+
+    const exportData = buildWideObjectiveExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      sectionSubmissions: [
+        {
+          submissionId: 'sub-1',
+          sectionSubmission: createSectionSubmission('sub-1', 'reading', { 'q-1': 'Alpha' }, [
+            createQuestionResult('q-1', true, 2),
+          ]),
+        },
+      ],
+      examState,
+      moduleType: 'reading',
+    });
+
+    expect(exportData.rows[0]?.ieltsBandScore).toBe(4.5);
   });
 
   test('writing export columns remain stable', () => {
