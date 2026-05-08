@@ -850,10 +850,10 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       Number.isInteger(meta.slotIndex) &&
       meta.slotIndex >= 0;
     let resolvedAnswer = answer;
+    const currentValue = latestAnswersRef.current[questionId];
 
     if (hasSlotIntent) {
       const slotIndex = meta!.slotIndex as number;
-      const currentValue = latestAnswersRef.current[questionId];
       const currentSlots = Array.isArray(currentValue) ? currentValue : [];
       const requestedSlotCount =
         typeof meta?.slotCount === 'number' &&
@@ -879,6 +879,12 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
       }
       nextSlots[slotIndex] = nextSlotValue;
       resolvedAnswer = nextSlots;
+    } else if (Array.isArray(answer) && Array.isArray(currentValue) && currentValue.length > answer.length) {
+      // Defensive merge: preserve existing sibling slots when a partial array payload is emitted.
+      const nextSlotCount = Math.max(currentValue.length, answer.length);
+      resolvedAnswer = Array.from({ length: nextSlotCount }, (_, index) =>
+        index < answer.length ? (answer[index] ?? '') : (currentValue[index] ?? ''),
+      );
     }
 
     latestAnswersRef.current = {

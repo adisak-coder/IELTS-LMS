@@ -10,8 +10,8 @@ function withCandidateId(endpoint: string, candidateId: string): string {
 }
 
 function resolveCandidateIdFromStudentKey(scheduleId: string, studentKey: string): string | null {
-  const normalizedScheduleId = scheduleId.trim();
-  const normalizedKey = studentKey.trim();
+  const normalizedScheduleId = typeof scheduleId === 'string' ? scheduleId.trim() : '';
+  const normalizedKey = typeof studentKey === 'string' ? studentKey.trim() : '';
   if (!normalizedScheduleId || !normalizedKey) {
     return null;
   }

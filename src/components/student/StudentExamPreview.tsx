@@ -187,12 +187,22 @@ function StudentExamPreviewInner({
     meta?: StudentAnswerMutationMeta,
   ) => {
     setAnswers((current) => {
+      const currentValue = current[answerKey];
       const hasSlotIntent =
         typeof meta?.slotIndex === 'number' &&
         Number.isInteger(meta.slotIndex) &&
         meta.slotIndex >= 0;
 
       if (!hasSlotIntent) {
+        if (Array.isArray(answer) && Array.isArray(currentValue) && currentValue.length > answer.length) {
+          const nextSlotCount = Math.max(currentValue.length, answer.length);
+          return {
+            ...current,
+            [answerKey]: Array.from({ length: nextSlotCount }, (_, index) =>
+              index < answer.length ? (answer[index] ?? '') : (currentValue[index] ?? ''),
+            ),
+          };
+        }
         return {
           ...current,
           [answerKey]: answer,
@@ -200,7 +210,6 @@ function StudentExamPreviewInner({
       }
 
       const slotIndex = meta.slotIndex as number;
-      const currentValue = current[answerKey];
       const currentSlots = Array.isArray(currentValue) ? currentValue : [];
       const requestedSlotCount =
         typeof meta?.slotCount === 'number' &&

@@ -43,4 +43,19 @@ describe('studentSessionTransport', () => {
     );
     expect(studentSessionTransport.resolveCandidateIdFromStudentKey('schedule-1', '')).toBeNull();
   });
+
+  it('returns null instead of throwing when runtime inputs are nullish', () => {
+    expect(
+      studentSessionTransport.resolveCandidateIdFromStudentKey(
+        null as unknown as string,
+        'student-schedule-1-W001',
+      ),
+    ).toBeNull();
+    expect(
+      studentSessionTransport.resolveCandidateIdFromStudentKey(
+        'schedule-1',
+        null as unknown as string,
+      ),
+    ).toBeNull();
+  });
 });
