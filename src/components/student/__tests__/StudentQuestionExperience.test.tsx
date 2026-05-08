@@ -736,6 +736,8 @@ describe('student question experience', () => {
     const readingHighlighter = container.querySelector('[data-student-highlightable="true"]');
     expect(readingHighlighter).not.toBeNull();
     expect(readingHighlighter).toHaveClass('whitespace-pre-wrap');
+    expect(readingHighlighter?.className).not.toContain('break-words');
+    expect(readingHighlighter?.className).not.toContain('[overflow-wrap:anywhere]');
   });
 
   it('routes table completion changes through student reading with shared answer key slot metadata', () => {
