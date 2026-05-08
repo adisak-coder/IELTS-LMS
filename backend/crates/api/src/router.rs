@@ -40,6 +40,10 @@ pub fn build_router(state: AppState) -> Router {
                 .route(
                     "/attempts/:attempt_id/overview",
                     get(answer_history::get_overview_by_attempt),
+                )
+                .route(
+                    "/attempts/:attempt_id/targets/:target_id",
+                    get(answer_history::get_target_detail_by_attempt),
                 ),
         )
         .nest(

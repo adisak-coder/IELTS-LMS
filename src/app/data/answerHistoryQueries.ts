@@ -4,6 +4,7 @@ import {
   fetchAnswerHistoryOverviewByAttempt,
   fetchAnswerHistoryOverviewBySubmission,
   fetchAnswerHistoryTargetDetail,
+  fetchAnswerHistoryTargetDetailByAttempt,
 } from '@services/answerHistoryService';
 import { liveQueryPolicy, queryKeys } from './queryClient';
 
@@ -44,6 +45,33 @@ export function useAnswerHistoryTargetDetail(args: {
     queryFn: () =>
       fetchAnswerHistoryTargetDetail({
         submissionId: args.submissionId as string,
+        targetId: args.targetId as string,
+        targetType: args.targetType,
+      }),
+    enabled,
+    ...liveQueryPolicy,
+  });
+}
+
+export function useAnswerHistoryTargetDetailByAttempt(args: {
+  attemptId: string | null;
+  targetId: string | null;
+  targetType: AnswerHistoryTargetType;
+}) {
+  const enabled = Boolean(args.attemptId && args.targetId);
+
+  return useQuery({
+    queryKey:
+      args.attemptId && args.targetId
+        ? queryKeys.answerHistory.targetDetailByAttempt(
+            args.attemptId,
+            args.targetType,
+            args.targetId,
+          )
+        : ['answer-history', 'detail-attempt', 'none'],
+    queryFn: () =>
+      fetchAnswerHistoryTargetDetailByAttempt({
+        attemptId: args.attemptId as string,
         targetId: args.targetId as string,
         targetType: args.targetType,
       }),

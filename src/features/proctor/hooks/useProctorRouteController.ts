@@ -246,26 +246,24 @@ export function useProctorRouteController(): ProctorRouteController {
   const [summaryPollIntervalMs, setSummaryPollIntervalMs] = useState(4_000);
   const [detailPollIntervalMs, setDetailPollIntervalMs] = useState(6_000);
   const scheduleStudentIdsRef = useRef<Map<string, Set<string>>>(new Map());
-  const hasAutoSelectedInitialScheduleRef = useRef(false);
 
   const summariesQuery = useProctorSessionSummaries(summaryPollIntervalMs);
   const summaries = summariesQuery.data ?? [];
   useEffect(() => {
-    if (hasAutoSelectedInitialScheduleRef.current) {
+    if (!selectedScheduleId) {
       return;
     }
 
-    const firstSummary = summaries[0];
-    if (!selectedScheduleId && firstSummary) {
-      hasAutoSelectedInitialScheduleRef.current = true;
-      setSelectedScheduleId(firstSummary.schedule.id);
+    if (!summariesQuery.data) {
       return;
     }
 
-    if (selectedScheduleId) {
-      hasAutoSelectedInitialScheduleRef.current = true;
+    const scheduleStillExists = summaries.some((summary) => summary.schedule.id === selectedScheduleId);
+    if (!scheduleStillExists) {
+      setSelectedScheduleId(null);
+      return;
     }
-  }, [selectedScheduleId, summaries]);
+  }, [selectedScheduleId, summaries, summariesQuery.data]);
 
   const detailScheduleIds = useMemo(() => {
     if (!selectedScheduleId) {

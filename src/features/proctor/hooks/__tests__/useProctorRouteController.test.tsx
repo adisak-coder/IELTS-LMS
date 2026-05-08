@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ReactNode } from 'react';
@@ -240,6 +240,10 @@ describe('useProctorRouteController', () => {
     try {
       const { result } = renderHook(() => useProctorRouteController(), {
         wrapper: createWrapper(),
+      });
+
+      await act(async () => {
+        result.current.setSelectedScheduleId('sched-1');
       });
 
       await waitFor(() => {

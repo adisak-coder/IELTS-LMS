@@ -30,3 +30,11 @@
 - Hard block retained: `storage_unavailable` remains a visible stop condition.
 - Submit behavior: student submit path is completion-first; immediate local completion is allowed if submit sync fails, with best-effort background submit retry.
 - Proctor/Admin visibility: reconciliation events include affected answer/task identifiers in audit payloads; answer history can render target-level reconciliation badges from signals.
+
+## Live In-Progress Answer Visibility Policy (Resolved, 2026-05-09)
+
+- During an active exam, only proctors can view in-progress answer snapshots.
+- Graders must not access in-progress answers; grader visibility starts after submission/finalization.
+- In-exam proctor visibility is intentionally delayed (target window to be defined in implementation, e.g. 15-30 seconds).
+- Every in-progress answer read must be auditable (actor, role, schedule, attempt, timestamp, reason/context).
+- Proctor in-progress reads must come from a dedicated delayed projection/read model, not the live student session endpoint.

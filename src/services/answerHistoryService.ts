@@ -1,3 +1,4 @@
+import { ApiClientError } from '../app/api/apiClient';
 import { backendGet } from './backendBridge';
 import type {
   AnswerHistoryExport,
@@ -16,7 +17,14 @@ export async function fetchAnswerHistoryOverviewBySubmission(submissionId: strin
 }
 
 export async function fetchAnswerHistoryOverviewByAttempt(attemptId: string) {
-  return backendGet<AnswerHistoryOverview>(`/v1/answer-history/attempts/${encode(attemptId)}/overview`);
+  try {
+    return await backendGet<AnswerHistoryOverview>(`/v1/answer-history/attempts/${encode(attemptId)}/overview`);
+  } catch (error) {
+    if (error instanceof ApiClientError && error.statusCode === 404) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 export async function fetchAnswerHistoryTargetDetail(args: {
@@ -34,6 +42,24 @@ export async function fetchAnswerHistoryTargetDetail(args: {
 
   return backendGet<AnswerHistoryTargetDetail>(
     `/v1/answer-history/submissions/${encode(args.submissionId)}/targets/${encode(args.targetId)}?${query.toString()}`,
+  );
+}
+
+export async function fetchAnswerHistoryTargetDetailByAttempt(args: {
+  attemptId: string;
+  targetId: string;
+  targetType: AnswerHistoryTargetType;
+  cursor?: number | undefined;
+  limit?: number | undefined;
+}) {
+  const query = new URLSearchParams({
+    targetType: args.targetType,
+    ...(typeof args.cursor === 'number' ? { cursor: String(args.cursor) } : {}),
+    ...(typeof args.limit === 'number' ? { limit: String(args.limit) } : {}),
+  });
+
+  return backendGet<AnswerHistoryTargetDetail>(
+    `/v1/answer-history/attempts/${encode(args.attemptId)}/targets/${encode(args.targetId)}?${query.toString()}`,
   );
 }
 

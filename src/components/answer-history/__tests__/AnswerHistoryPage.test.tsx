@@ -6,12 +6,14 @@ import { AnswerHistoryPage } from '../AnswerHistoryPage';
 const mockOverviewHook = vi.fn();
 const mockAttemptOverviewHook = vi.fn();
 const mockDetailHook = vi.fn();
+const mockAttemptDetailHook = vi.fn();
 const mockExport = vi.fn();
 
 vi.mock('@app/data/answerHistoryQueries', () => ({
   useAnswerHistoryOverviewBySubmission: (...args: unknown[]) => mockOverviewHook(...args),
   useAnswerHistoryOverviewByAttempt: (...args: unknown[]) => mockAttemptOverviewHook(...args),
   useAnswerHistoryTargetDetail: (...args: unknown[]) => mockDetailHook(...args),
+  useAnswerHistoryTargetDetailByAttempt: (...args: unknown[]) => mockAttemptDetailHook(...args),
 }));
 
 vi.mock('@services/answerHistoryService', () => ({
@@ -132,6 +134,11 @@ describe('AnswerHistoryPage', () => {
       isLoading: false,
       isError: false,
     });
+    mockAttemptDetailHook.mockReturnValue({
+      data: detailFixture,
+      isLoading: false,
+      isError: false,
+    });
     mockExport.mockResolvedValue({
       format: 'csv',
       filename: 'answer-history.csv',
@@ -146,6 +153,7 @@ describe('AnswerHistoryPage', () => {
     mockOverviewHook.mockReset();
     mockAttemptOverviewHook.mockReset();
     mockDetailHook.mockReset();
+    mockAttemptDetailHook.mockReset();
     mockExport.mockReset();
   });
 
@@ -388,5 +396,72 @@ describe('AnswerHistoryPage', () => {
     );
 
     expect(screen.getAllByText('Auto reconciled').length).toBeGreaterThan(0);
+  });
+
+  it('shows in-progress empty state when attempt overview is not yet available', () => {
+    mockAttemptOverviewHook.mockReturnValue({
+      data: null,
+      isLoading: false,
+      isError: false,
+    });
+    mockDetailHook.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    });
+    mockAttemptDetailHook.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <AnswerHistoryPage
+        attemptId="attempt-1"
+        headingPrefix="Proctor"
+        backLabel="Back"
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(
+      screen.getByText('No answer history is available yet for this in-progress attempt.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Failed to load answer history data.')).not.toBeInTheDocument();
+  });
+
+  it('renders checkpoints from attempt-scoped detail when submission is not created yet', () => {
+    mockOverviewHook.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+    });
+    mockAttemptOverviewHook.mockReturnValue({
+      data: {
+        ...overviewFixture,
+        submissionId: null,
+      },
+      isLoading: false,
+      isError: false,
+    });
+    mockAttemptDetailHook.mockReturnValue({
+      data: detailFixture,
+      isLoading: false,
+      isError: false,
+    });
+
+    render(
+      <AnswerHistoryPage
+        attemptId="attempt-1"
+        headingPrefix="Proctor"
+        backLabel="Back"
+        onBack={() => undefined}
+      />,
+    );
+
+    expect(screen.getByText('Checkpoint 3 of 3')).toBeInTheDocument();
+    expect(
+      screen.queryByText('No answer history is available yet for this in-progress attempt.'),
+    ).not.toBeInTheDocument();
   });
 });

@@ -302,7 +302,7 @@ describe('useProctorRouteController backend mode', () => {
       ([url]) => url === '/api/v1/proctor/sessions/sched-2?mode=dashboard&auditLimit=200&alertLimit=100',
     );
 
-    expect(sched1DetailCalls.length).toBeGreaterThanOrEqual(1);
+    expect(sched1DetailCalls).toHaveLength(0);
     expect(sched2DetailCalls).toHaveLength(0);
 
     await act(async () => {
@@ -318,7 +318,7 @@ describe('useProctorRouteController backend mode', () => {
     });
   });
 
-  it('keeps all-cohorts view when selection is cleared manually', async () => {
+  it('defaults to all-cohorts view and keeps it when selection is cleared manually', async () => {
     vi.stubEnv('VITE_FEATURE_USE_BACKEND_PROCTORING', 'true');
     const fetchMock = vi
       .fn()
@@ -362,11 +362,16 @@ describe('useProctorRouteController backend mode', () => {
     const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
 
     await waitFor(() => {
-      expect(result.current.selectedScheduleId).toBe('sched-1');
+      expect(result.current.selectedScheduleId).toBeNull();
     });
 
+    const sched1DetailCallsBeforeSelection = fetchMock.mock.calls.filter(
+      ([url]) => url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100',
+    );
+    expect(sched1DetailCallsBeforeSelection).toHaveLength(0);
+
     await act(async () => {
-      result.current.setSelectedScheduleId(null);
+      await result.current.reload();
     });
 
     await waitFor(() => {
@@ -374,7 +379,19 @@ describe('useProctorRouteController backend mode', () => {
     });
 
     await act(async () => {
-      await result.current.reload();
+      result.current.setSelectedScheduleId('sched-2');
+    });
+
+    await waitFor(() => {
+      const sched2DetailCalls = fetchMock.mock.calls.filter(
+        ([url]) =>
+          url === '/api/v1/proctor/sessions/sched-2?mode=dashboard&auditLimit=200&alertLimit=100',
+      );
+      expect(sched2DetailCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    await act(async () => {
+      result.current.setSelectedScheduleId(null);
     });
 
     await waitFor(() => {
@@ -402,6 +419,9 @@ describe('useProctorRouteController backend mode', () => {
     global.fetch = fetchMock as typeof fetch;
 
     const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
+    await act(async () => {
+      result.current.setSelectedScheduleId('sched-1');
+    });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -569,6 +589,9 @@ describe('useProctorRouteController backend mode', () => {
       .mockResolvedValue({ success: true });
 
     const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
+    await act(async () => {
+      result.current.setSelectedScheduleId('sched-1');
+    });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -654,6 +677,9 @@ describe('useProctorRouteController backend mode', () => {
       .mockResolvedValue({ success: true });
 
     const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
+    await act(async () => {
+      result.current.setSelectedScheduleId('sched-1');
+    });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);
@@ -713,6 +739,9 @@ describe('useProctorRouteController backend mode', () => {
       .mockResolvedValue({ success: true });
 
     const { result } = renderHook(() => useProctorRouteController(), { wrapper: createWrapper() });
+    await act(async () => {
+      result.current.setSelectedScheduleId('sched-1');
+    });
 
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false);

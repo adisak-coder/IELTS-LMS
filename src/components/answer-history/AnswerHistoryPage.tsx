@@ -14,6 +14,7 @@ import {
   useAnswerHistoryOverviewByAttempt,
   useAnswerHistoryOverviewBySubmission,
   useAnswerHistoryTargetDetail,
+  useAnswerHistoryTargetDetailByAttempt,
 } from '@app/data/answerHistoryQueries';
 import { fetchAnswerHistoryExport } from '@services/answerHistoryService';
 import { WritingChartPreview } from '@components/writing/WritingChartPreview';
@@ -259,11 +260,17 @@ export function AnswerHistoryPage({
     );
   }, [overview, selectedTargetId, selectedTargetType]);
 
-  const detailQuery = useAnswerHistoryTargetDetail({
+  const detailBySubmissionQuery = useAnswerHistoryTargetDetail({
     submissionId: overview?.submissionId ?? null,
     targetId: selectedTargetId,
     targetType: selectedTargetType,
   });
+  const detailByAttemptQuery = useAnswerHistoryTargetDetailByAttempt({
+    attemptId: overview?.submissionId ? null : (overview?.attemptId ?? attemptId ?? null),
+    targetId: selectedTargetId,
+    targetType: selectedTargetType,
+  });
+  const detailQuery = overview?.submissionId ? detailBySubmissionQuery : detailByAttemptQuery;
 
   const checkpoints = detailQuery.data?.checkpoints ?? [];
   const technicalLogs = detailQuery.data?.technicalLogs ?? [];
@@ -379,6 +386,8 @@ export function AnswerHistoryPage({
 
   const isLoading = overviewQuery.isLoading || detailQuery.isLoading;
   const isError = overviewQuery.isError || detailQuery.isError;
+  const hasNoAttemptHistoryYet =
+    Boolean(attemptId) && !submissionId && !isLoading && !isError && !overview;
 
   const handleCopyPayload = async (mutationId: string, payload: Record<string, unknown>) => {
     const copied = await copyTextToClipboard(JSON.stringify(payload, null, 2));
@@ -412,6 +421,12 @@ export function AnswerHistoryPage({
       {isError ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
           Failed to load answer history data.
+        </div>
+      ) : null}
+
+      {hasNoAttemptHistoryYet ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          No answer history is available yet for this in-progress attempt.
         </div>
       ) : null}
 

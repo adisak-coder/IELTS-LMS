@@ -26,13 +26,15 @@ pub struct AnswerHistoryService {
 
 #[derive(Debug, Clone, FromRow)]
 struct SubmissionAttemptContextRow {
-    submission_id: String,
+    submission_id: Option<String>,
     attempt_id: String,
     schedule_id: String,
     exam_id: String,
     exam_title: String,
     content_snapshot: Value,
     config_snapshot: Value,
+    answers: Value,
+    writing_answers: Value,
     final_submission: Option<Value>,
     candidate_id: String,
     candidate_name: String,
@@ -105,11 +107,29 @@ impl AnswerHistoryService {
         submission_id: Uuid,
     ) -> Result<AnswerHistoryOverview, AnswerHistoryError> {
         let context = self.load_context(submission_id).await?;
+        self.build_overview_from_context(context).await
+    }
+
+    pub async fn get_overview_by_attempt(
+        &self,
+        attempt_id: Uuid,
+    ) -> Result<AnswerHistoryOverview, AnswerHistoryError> {
+        let context = self.load_context_by_attempt(attempt_id).await?;
+        self.build_overview_from_context(context).await
+    }
+
+    async fn build_overview_from_context(
+        &self,
+        context: SubmissionAttemptContextRow,
+    ) -> Result<AnswerHistoryOverview, AnswerHistoryError> {
         let history_attempt_id = self.resolve_history_attempt_id(&context).await?;
-        let target_catalog =
-            build_target_catalog(&context.content_snapshot, &context.config_snapshot);
+        let target_catalog = build_target_catalog(&context.content_snapshot, &context.config_snapshot);
         let catalog_index = build_target_catalog_index(&target_catalog);
-        let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
+        let submitted_states = build_submitted_target_states(
+            context.final_submission.as_ref(),
+            &context.answers,
+            &context.writing_answers,
+        );
         let mutations = self.load_mutations(&history_attempt_id).await?;
         let target_mutations = mutations
             .iter()
@@ -299,11 +319,40 @@ impl AnswerHistoryService {
         limit: usize,
     ) -> Result<AnswerHistoryTargetDetail, AnswerHistoryError> {
         let context = self.load_context(submission_id).await?;
+        self.build_target_detail_from_context(context, target_type, target_id, cursor, limit)
+            .await
+    }
+
+    pub async fn get_target_detail_by_attempt(
+        &self,
+        attempt_id: Uuid,
+        target_type: AnswerHistoryTargetType,
+        target_id: &str,
+        cursor: Option<i64>,
+        limit: usize,
+    ) -> Result<AnswerHistoryTargetDetail, AnswerHistoryError> {
+        let context = self.load_context_by_attempt(attempt_id).await?;
+        self.build_target_detail_from_context(context, target_type, target_id, cursor, limit)
+            .await
+    }
+
+    async fn build_target_detail_from_context(
+        &self,
+        context: SubmissionAttemptContextRow,
+        target_type: AnswerHistoryTargetType,
+        target_id: &str,
+        cursor: Option<i64>,
+        limit: usize,
+    ) -> Result<AnswerHistoryTargetDetail, AnswerHistoryError> {
         let history_attempt_id = self.resolve_history_attempt_id(&context).await?;
         let target_catalog =
             build_target_catalog(&context.content_snapshot, &context.config_snapshot);
         let catalog_index = build_target_catalog_index(&target_catalog);
-        let submitted_states = build_submitted_target_states(context.final_submission.as_ref());
+        let submitted_states = build_submitted_target_states(
+            context.final_submission.as_ref(),
+            &context.answers,
+            &context.writing_answers,
+        );
         let rows = self.load_mutations(&history_attempt_id).await?;
         let mut matching = rows
             .into_iter()
@@ -506,6 +555,8 @@ impl AnswerHistoryService {
                 submissions.cohort_name AS exam_title,
                 versions.content_snapshot AS content_snapshot,
                 versions.config_snapshot AS config_snapshot,
+                attempts.answers AS answers,
+                attempts.writing_answers AS writing_answers,
                 attempts.final_submission AS final_submission,
                 attempts.candidate_id AS candidate_id,
                 attempts.candidate_name AS candidate_name,
@@ -520,6 +571,40 @@ impl AnswerHistoryService {
             "#,
         )
         .bind(submission_id.to_string())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or(AnswerHistoryError::NotFound)
+    }
+
+    async fn load_context_by_attempt(
+        &self,
+        attempt_id: Uuid,
+    ) -> Result<SubmissionAttemptContextRow, AnswerHistoryError> {
+        sqlx::query_as::<_, SubmissionAttemptContextRow>(
+            r#"
+            SELECT
+                NULL AS submission_id,
+                attempts.id AS attempt_id,
+                attempts.schedule_id AS schedule_id,
+                attempts.exam_id AS exam_id,
+                attempts.exam_title AS exam_title,
+                versions.content_snapshot AS content_snapshot,
+                versions.config_snapshot AS config_snapshot,
+                attempts.answers AS answers,
+                attempts.writing_answers AS writing_answers,
+                attempts.final_submission AS final_submission,
+                attempts.candidate_id AS candidate_id,
+                attempts.candidate_name AS candidate_name,
+                attempts.candidate_email AS candidate_email,
+                attempts.created_at AS started_at,
+                attempts.submitted_at AS submitted_at
+            FROM student_attempts attempts
+            JOIN exam_versions versions ON versions.id = attempts.published_version_id
+            WHERE attempts.id = ?
+            LIMIT 1
+            "#,
+        )
+        .bind(attempt_id.to_string())
         .fetch_optional(&self.pool)
         .await?
         .ok_or(AnswerHistoryError::NotFound)
@@ -911,33 +996,75 @@ fn is_answered_value(value: &Value) -> bool {
 
 fn build_submitted_target_states(
     final_submission: Option<&Value>,
+    answers_snapshot: &Value,
+    writing_answers_snapshot: &Value,
 ) -> HashMap<(AnswerHistoryTargetType, String), Value> {
     let mut states = HashMap::new();
-    let Some(final_submission) = final_submission else {
-        return states;
-    };
-    let Some(submission_obj) = final_submission.as_object() else {
-        return states;
-    };
+    if let Some(final_submission) = final_submission.and_then(Value::as_object) {
+        if let Some(answers) = final_submission.get("answers").and_then(Value::as_object) {
+            for (question_id, value) in answers {
+                states.insert(
+                    (AnswerHistoryTargetType::Objective, question_id.to_owned()),
+                    value.clone(),
+                );
+            }
+        }
 
-    if let Some(answers) = submission_obj.get("answers").and_then(Value::as_object) {
-        for (question_id, value) in answers {
-            states.insert(
-                (AnswerHistoryTargetType::Objective, question_id.to_owned()),
-                value.clone(),
-            );
+        if let Some(writing_answers) = final_submission
+            .get("writingAnswers")
+            .and_then(Value::as_object)
+        {
+            for (task_id, value) in writing_answers {
+                states.insert(
+                    (AnswerHistoryTargetType::Writing, task_id.to_owned()),
+                    value.clone(),
+                );
+            }
         }
     }
 
-    if let Some(writing_answers) = submission_obj
-        .get("writingAnswers")
-        .and_then(Value::as_object)
+    if states.is_empty() {
+        if let Some(answers) = answers_snapshot.as_object() {
+            for (question_id, value) in answers {
+                states.insert(
+                    (AnswerHistoryTargetType::Objective, question_id.to_owned()),
+                    value.clone(),
+                );
+            }
+        }
+    }
+
+    if states
+        .keys()
+        .all(|(target_type, _)| *target_type == AnswerHistoryTargetType::Objective)
     {
+        if let Some(writing_answers) = writing_answers_snapshot.as_object() {
+            for (task_id, value) in writing_answers {
+                states.insert(
+                    (AnswerHistoryTargetType::Writing, task_id.to_owned()),
+                    value.clone(),
+                );
+            }
+        }
+    }
+
+    if states.is_empty() {
+        return states;
+    }
+
+    if let Some(answers) = answers_snapshot.as_object() {
+        for (question_id, value) in answers {
+            states
+                .entry((AnswerHistoryTargetType::Objective, question_id.to_owned()))
+                .or_insert_with(|| value.clone());
+        }
+    }
+
+    if let Some(writing_answers) = writing_answers_snapshot.as_object() {
         for (task_id, value) in writing_answers {
-            states.insert(
-                (AnswerHistoryTargetType::Writing, task_id.to_owned()),
-                value.clone(),
-            );
+            states
+                .entry((AnswerHistoryTargetType::Writing, task_id.to_owned()))
+                .or_insert_with(|| value.clone());
         }
     }
 

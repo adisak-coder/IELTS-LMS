@@ -26,7 +26,7 @@ export interface AnswerHistorySectionStat {
 }
 
 export interface AnswerHistoryOverview {
-  submissionId: string;
+  submissionId?: string | null | undefined;
   attemptId: string;
   scheduleId: string;
   examId: string;
@@ -69,7 +69,7 @@ export interface AnswerHistoryTechnicalLogRow {
 }
 
 export interface AnswerHistoryTargetDetail {
-  submissionId: string;
+  submissionId?: string | null | undefined;
   attemptId: string;
   scheduleId: string;
   targetId: string;

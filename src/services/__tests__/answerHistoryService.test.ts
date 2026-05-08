@@ -4,6 +4,7 @@ import {
   fetchAnswerHistoryOverviewByAttempt,
   fetchAnswerHistoryOverviewBySubmission,
   fetchAnswerHistoryTargetDetail,
+  fetchAnswerHistoryTargetDetailByAttempt,
 } from '../answerHistoryService';
 
 describe('answerHistoryService', () => {
@@ -48,6 +49,24 @@ describe('answerHistoryService', () => {
     );
   });
 
+  it('returns null for missing in-progress attempt overview', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'NOT_FOUND', message: 'Resource not found' },
+        }),
+        {
+          status: 404,
+          headers: { 'content-type': 'application/json' },
+        },
+      ),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await expect(fetchAnswerHistoryOverviewByAttempt('attempt-missing')).resolves.toBeNull();
+  });
+
   it('encodes target detail query parameters', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ success: true, data: { targetId: 'q1' } }), {
@@ -67,6 +86,29 @@ describe('answerHistoryService', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/v1/answer-history/submissions/sub-1/targets/q%201?targetType=objective&cursor=10&limit=50',
+      expect.objectContaining({ method: 'GET' }),
+    );
+  });
+
+  it('encodes attempt target detail query parameters', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, data: { targetId: 'q1' } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    global.fetch = fetchMock as typeof fetch;
+
+    await fetchAnswerHistoryTargetDetailByAttempt({
+      attemptId: 'attempt-1',
+      targetId: 'q 1',
+      targetType: 'objective',
+      cursor: 10,
+      limit: 50,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/answer-history/attempts/attempt-1/targets/q%201?targetType=objective&cursor=10&limit=50',
       expect.objectContaining({ method: 'GET' }),
     );
   });

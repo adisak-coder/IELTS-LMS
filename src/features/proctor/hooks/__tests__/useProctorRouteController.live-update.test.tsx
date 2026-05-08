@@ -209,7 +209,18 @@ describe('useProctorRouteController live updates', () => {
         url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100'
       );
       expect(initialListCalls).toHaveLength(1);
-      expect(initialDetailCalls).toHaveLength(1);
+      expect(initialDetailCalls).toHaveLength(0);
+
+      await act(async () => {
+        result.current.setSelectedScheduleId('sched-1');
+      });
+
+      await waitFor(() => {
+        const detailCalls = fetchUrls.filter((url) =>
+          url === '/api/v1/proctor/sessions/sched-1?mode=dashboard&auditLimit=200&alertLimit=100'
+        );
+        expect(detailCalls).toHaveLength(1);
+      });
 
       await act(async () => {
         liveUpdateHandler?.({

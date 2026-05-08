@@ -516,6 +516,124 @@ async fn assigned_proctor_can_read_attempt_overview() {
 }
 
 #[tokio::test]
+async fn assigned_proctor_can_read_in_progress_attempt_overview_without_submission() {
+    let database = mysql::TestDatabase::new(ANSWER_HISTORY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let attempt_id = bootstrap_attempt_only(database.pool(), schedule_id, "charlie-live").await;
+
+    insert_mutation(
+        database.pool(),
+        schedule_id,
+        attempt_id,
+        "SetScalar",
+        1,
+        json!({ "questionId": "q1", "value": "live-answer", "module": "reading" }),
+        Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
+    )
+    .await;
+
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Proctor,
+        "proctor-live@example.com",
+        "Proctor Live",
+    )
+    .await;
+    assign_staff_to_schedule(database.pool(), schedule_id, auth.user_id, "proctor").await;
+
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let response = app
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/attempts/{}/overview",
+                attempt_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let overview = json_body(response).await;
+    assert_eq!(overview["data"]["attemptId"], attempt_id.to_string());
+    assert!(overview["data"]["submissionId"].is_null());
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
+async fn assigned_proctor_can_read_in_progress_attempt_target_detail_without_submission() {
+    let database = mysql::TestDatabase::new(ANSWER_HISTORY_MIGRATIONS).await;
+    let schedule = seed_schedule(database.pool()).await;
+    let schedule_id = Uuid::parse_str(&schedule.id).unwrap();
+    let attempt_id = bootstrap_attempt_only(database.pool(), schedule_id, "charlie-live-detail").await;
+
+    insert_mutation(
+        database.pool(),
+        schedule_id,
+        attempt_id,
+        "SetScalar",
+        1,
+        json!({ "questionId": "q1", "value": "first", "module": "reading" }),
+        Utc.with_ymd_and_hms(2026, 1, 10, 9, 10, 0).unwrap(),
+    )
+    .await;
+    insert_mutation(
+        database.pool(),
+        schedule_id,
+        attempt_id,
+        "SetScalar",
+        2,
+        json!({ "questionId": "q1", "value": "second", "module": "reading" }),
+        Utc.with_ymd_and_hms(2026, 1, 10, 9, 12, 0).unwrap(),
+    )
+    .await;
+
+    let auth = create_authenticated_user(
+        database.pool(),
+        UserRole::Proctor,
+        "proctor-live-detail@example.com",
+        "Proctor Live Detail",
+    )
+    .await;
+    assign_staff_to_schedule(database.pool(), schedule_id, auth.user_id, "proctor").await;
+
+    let app = build_router(AppState::with_pool(
+        AppConfig::default(),
+        database.pool().clone(),
+    ));
+
+    let response = app
+        .oneshot(
+            auth.with_auth(Request::builder().uri(format!(
+                "/api/v1/answer-history/attempts/{}/targets/q1?targetType=objective",
+                attempt_id
+            )))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let detail = json_body(response).await;
+    assert_eq!(detail["data"]["attemptId"], attempt_id.to_string());
+    assert!(detail["data"]["submissionId"].is_null());
+    assert_eq!(
+        detail["data"]["checkpoints"].as_array().map(|items| items.len()),
+        Some(2)
+    );
+
+    database.shutdown().await;
+}
+
+#[tokio::test]
 async fn assigned_grader_can_read_submission_overview() {
     let database = mysql::TestDatabase::new(ANSWER_HISTORY_MIGRATIONS).await;
     let schedule = seed_schedule(database.pool()).await;
@@ -799,6 +917,32 @@ async fn submission_id_for_attempt(pool: &sqlx::MySqlPool, attempt_id: Uuid) -> 
         .await
         .unwrap();
     Uuid::parse_str(&id).unwrap()
+}
+
+async fn bootstrap_attempt_only(
+    pool: &sqlx::MySqlPool,
+    schedule_id: Uuid,
+    candidate_id: &str,
+) -> Uuid {
+    let service = DeliveryService::new(pool.clone());
+    let context = service
+        .bootstrap(
+            schedule_id,
+            StudentBootstrapRequest {
+                student_key: student_key(schedule_id, candidate_id),
+                candidate_id: candidate_id.to_owned(),
+                candidate_name: format!("Candidate {candidate_id}"),
+                candidate_email: format!("{candidate_id}@example.com"),
+                email: Some(format!("{candidate_id}@example.com")),
+                wcode: Some("W123456".to_owned()),
+                client_session_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .await
+        .expect("bootstrap attempt");
+
+    let attempt_id = context.attempt.expect("attempt").id;
+    Uuid::parse_str(&attempt_id).unwrap()
 }
 
 async fn bootstrap_and_submit(

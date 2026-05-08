@@ -41,7 +41,7 @@ pub struct AnswerHistorySignal {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnswerHistoryOverview {
-    pub submission_id: String,
+    pub submission_id: Option<String>,
     pub attempt_id: String,
     pub schedule_id: String,
     pub exam_id: String,
@@ -90,7 +90,7 @@ pub struct AnswerHistoryTechnicalLogRow {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnswerHistoryTargetDetail {
-    pub submission_id: String,
+    pub submission_id: Option<String>,
     pub attempt_id: String,
     pub schedule_id: String,
     pub target_id: String,

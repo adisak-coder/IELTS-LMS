@@ -118,6 +118,14 @@ export const queryKeys = {
         targetType,
         targetId,
       ] as const,
+    targetDetailByAttempt: (attemptId: string, targetType: string, targetId: string) =>
+      [
+        ...queryKeys.answerHistory.all,
+        'detail-attempt',
+        attemptId,
+        targetType,
+        targetId,
+      ] as const,
   },
 };
 

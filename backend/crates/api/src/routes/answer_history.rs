@@ -58,18 +58,35 @@ pub async fn get_overview_by_attempt(
     authorize_schedule(&state, &principal, schedule_id).await?;
 
     let service = AnswerHistoryService::new(state.db_pool());
-    let submission_id = service
-        .resolve_submission_id_from_attempt(attempt_id)
-        .await?;
-    let submission_uuid = Uuid::parse_str(&submission_id).map_err(|err| {
-        ApiError::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "DATA_INTEGRITY_ERROR",
-            &format!("Invalid submission id for attempt: {err}"),
-        )
-    })?;
-    let overview = service.get_overview(submission_uuid).await?;
+    let overview = service.get_overview_by_attempt(attempt_id).await?;
     Ok(ApiResponse::success_with_request_id(overview, request_id.0))
+}
+
+pub async fn get_target_detail_by_attempt(
+    State(state): State<AppState>,
+    Extension(request_id): Extension<RequestId>,
+    principal: AuthenticatedUser,
+    Path((attempt_id, target_id)): Path<(Uuid, String)>,
+    Query(query): Query<DetailQuery>,
+) -> Result<ApiResponse<ielts_backend_domain::answer_history::AnswerHistoryTargetDetail>, ApiError>
+{
+    let schedule_id = schedule_id_for_attempt(&state, attempt_id).await?;
+    authorize_schedule(&state, &principal, schedule_id).await?;
+
+    let service = AnswerHistoryService::new(state.db_pool());
+    let detail = service
+        .get_target_detail_by_attempt(
+            attempt_id,
+            query
+                .target_type
+                .unwrap_or(AnswerHistoryTargetType::Objective),
+            &target_id,
+            query.cursor,
+            query.limit.unwrap_or(200),
+        )
+        .await?;
+
+    Ok(ApiResponse::success_with_request_id(detail, request_id.0))
 }
 
 pub async fn get_target_detail(
