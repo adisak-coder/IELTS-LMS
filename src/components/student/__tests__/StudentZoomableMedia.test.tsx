@@ -20,7 +20,9 @@ describe('StudentZoomableMedia', () => {
     fireEvent.error(thumbnail);
     expect(thumbnail).toHaveAttribute('src', expect.stringContaining('/working-image.png'));
 
-    fireEvent.click(screen.getByRole('button', { name: /reference diagram\. tap to zoom the diagram/i }));
+    expect(screen.queryByText(/tap to zoom/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^zoom$/i)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^reference diagram$/i }));
 
     expect(screen.getByRole('dialog', { name: /reference diagram zoomed view/i })).toBeInTheDocument();
     expect(screen.getByText(/zoom only/i)).toBeInTheDocument();
@@ -40,7 +42,7 @@ describe('StudentZoomableMedia', () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /tall chart\. tap to zoom the chart/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^tall chart$/i }));
 
     const viewport = screen.getByTestId('zoom-media-viewport');
     const viewportRectSpy = vi.spyOn(viewport, 'getBoundingClientRect');

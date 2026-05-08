@@ -2193,7 +2193,7 @@ describe('student question experience', () => {
     expect(screen.getByTestId('diagram-answer-panel')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Answer for question 1' })).toBeInTheDocument();
     expect(screen.getAllByAltText('Diagram reference')).toHaveLength(1);
-    fireEvent.click(within(materialPane).getByRole('button', { name: /diagram reference\. tap to zoom the diagram/i }));
+    fireEvent.click(within(materialPane).getByRole('button', { name: /^diagram reference$/i }));
     expect(screen.getByRole('dialog', { name: /diagram reference zoomed view/i })).toBeInTheDocument();
   });
 

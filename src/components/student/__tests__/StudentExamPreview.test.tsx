@@ -170,7 +170,7 @@ describe('StudentExamPreview', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /preview chart\. tap to zoom the passage image/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^preview chart$/i }));
 
     const modalImage = screen.getByTestId('zoom-media-image') as HTMLImageElement;
     Object.defineProperty(modalImage, 'naturalWidth', { configurable: true, value: 1200 });
