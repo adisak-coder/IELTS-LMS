@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useMemo } from 'react';
 import { ExamState, QuestionAnswer, QuestionBlock } from '../../types';
 import type { StudentAnswerMutationMeta } from '../../types/studentAttempt';
 import { QuestionRenderer } from './QuestionRenderer';
+import { SubAnswerTreeQuestionList } from './SubAnswerTreeQuestionList';
 import { ArrowLeft, ArrowRight, ArrowLeftRight, Flag } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
@@ -349,7 +350,17 @@ export function StudentReading({
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8 md:space-y-10'}>
-                    {('questions' in block) ? (
+                    {treeQuestions.length > 0 ? (
+                      <SubAnswerTreeQuestionList
+                        questions={treeQuestions}
+                        answers={answers}
+                        currentQuestionId={currentQuestionId}
+                        flags={flags}
+                        onToggleFlag={onToggleFlag}
+                        tabletMode={isTabletMode}
+                        onAnswerChange={onAnswerChange}
+                      />
+                    ) : ('questions' in block) ? (
                       block.questions.map((q, qIdx) => {
                         const questionEntries = blockQuestions.filter((entry) => entry.question?.id === q.id);
                         const firstEntry = questionEntries[0];

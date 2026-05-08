@@ -17,6 +17,7 @@ import type {
   QuestionBlock,
   SentenceCompletionQuestion,
   ShortAnswerQuestion,
+  SubAnswerTreeNode,
   SingleMCQQuestion,
   SingleMCQBlock,
   TFNGQuestion,
@@ -32,6 +33,7 @@ import {
   OFFICIAL_WRITING_RUBRIC,
 } from '../utils/builderEnhancements';
 import { replaceWritingTaskContents } from '../utils/writingTaskUtils';
+import { flattenSubAnswerTree, hasSubAnswerTreeMode } from '../utils/subAnswerTree';
 
 const MODULE_ORDER: ModuleType[] = ['listening', 'reading', 'writing', 'speaking'];
 
@@ -171,6 +173,13 @@ export interface StudentQuestionDescriptor {
     | SingleMCQQuestion
     | NoteCompletionQuestion
     | null;
+  rootId?: string;
+  rootNumber?: number;
+  numberLabel?: string;
+  rootLeafQuestionIds?: string[];
+  isSubAnswerTreeLeaf?: boolean;
+  treeRequired?: boolean;
+  treePrompt?: string;
 }
 
 export function getEnabledModules(config: ExamConfig): ModuleType[] {
@@ -481,10 +490,18 @@ export function getStudentQuestionsForModule(
 ): StudentQuestionDescriptor[] {
   if (moduleType === 'reading') {
     const questions: StudentQuestionDescriptor[] = [];
+    let nextRootNumber = 1;
 
     state.reading.passages.forEach((passage) => {
       passage.blocks.forEach((block) => {
-        questions.push(...buildStudentQuestionDescriptors(block, passage.id, passage.title));
+        const { descriptors, nextNumber } = buildStudentQuestionDescriptors(
+          block,
+          passage.id,
+          passage.title,
+          nextRootNumber,
+        );
+        questions.push(...descriptors);
+        nextRootNumber = nextNumber;
       });
     });
 
@@ -493,10 +510,18 @@ export function getStudentQuestionsForModule(
 
   if (moduleType === 'listening') {
     const questions: StudentQuestionDescriptor[] = [];
+    let nextRootNumber = 1;
 
     state.listening.parts.forEach((part) => {
       part.blocks.forEach((block) => {
-        questions.push(...buildStudentQuestionDescriptors(block, part.id, part.title));
+        const { descriptors, nextNumber } = buildStudentQuestionDescriptors(
+          block,
+          part.id,
+          part.title,
+          nextRootNumber,
+        );
+        questions.push(...descriptors);
+        nextRootNumber = nextNumber;
       });
     });
 
@@ -623,7 +648,41 @@ function buildStudentQuestionDescriptors(
   block: QuestionBlock,
   groupId: string,
   groupLabel: string,
-): StudentQuestionDescriptor[] {
+  startRootNumber: number,
+): { descriptors: StudentQuestionDescriptor[]; nextNumber: number } {
+  if (hasSubAnswerTreeMode(block)) {
+    const tree = (block as QuestionBlock & { answerTree?: SubAnswerTreeNode[] }).answerTree;
+    const flattened = flattenSubAnswerTree(block.id, tree, startRootNumber);
+    const rootById = new Map(flattened.roots.map((root) => [root.rootId, root]));
+    const descriptors = flattened.leaves.map((leaf) => {
+      const root = rootById.get(leaf.rootId);
+      return {
+        id: leaf.id,
+        blockId: block.id,
+        groupId,
+        groupLabel,
+        isMulti: false,
+        correctCount: 1,
+        answerKey: leaf.id,
+        block,
+        question: null,
+        rootId: leaf.rootId,
+        rootNumber: leaf.rootNumber,
+        numberLabel: leaf.numberLabel,
+        rootLeafQuestionIds: root?.leafQuestionIds ?? [leaf.id],
+        isSubAnswerTreeLeaf: true,
+        treeRequired: leaf.required,
+        treePrompt: root?.rootLabel ?? '',
+      } satisfies StudentQuestionDescriptor;
+    });
+
+    return {
+      descriptors,
+      nextNumber: flattened.nextRootNumber,
+    };
+  }
+
+  const descriptors: StudentQuestionDescriptor[] = (() => {
   switch (block.type) {
     case 'TFNG':
     case 'CLOZE':
@@ -765,6 +824,12 @@ function buildStudentQuestionDescriptors(
         question: null,
       }));
   }
+  })();
+
+  return {
+    descriptors,
+    nextNumber: startRootNumber + countQuestionSlots(descriptors),
+  };
 }
 
 function buildMultiQuestionDescriptor(

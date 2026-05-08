@@ -6,8 +6,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use ielts_backend_application::{
-    builder::BuilderService, delivery::DeliveryError, delivery::DeliveryService,
-    scheduling::SchedulingService,
+    builder::BuilderService, delivery::DeliveryService, scheduling::SchedulingService,
 };
 use ielts_backend_domain::{
     attempt::{StudentBootstrapRequest, StudentPrecheckRequest, StudentSubmitRequest},
@@ -28,7 +27,7 @@ const DELIVERY_MIGRATIONS: &[&str] = &[
 ];
 
 #[tokio::test]
-async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
+async fn submit_attempt_accepts_unanswered_even_when_runtime_live_or_paused() {
     let database = mysql::TestDatabase::new(DELIVERY_MIGRATIONS).await;
     let schedule = seed_schedule_with_unanswered_block_policy(database.pool()).await;
     let schedule_id = Uuid::parse_str(&schedule.id).expect("schedule id");
@@ -106,7 +105,7 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
         .expect("bootstrap after runtime start");
     let attempt_after_runtime = bootstrap_again.attempt.expect("attempt after runtime");
 
-    let submit_err = service
+    let submitted_while_live = service
         .submit_attempt(
             schedule_id,
             StudentSubmitRequest {
@@ -126,15 +125,8 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
             None,
         )
         .await
-        .expect_err("submit should reject while live");
-
-    let DeliveryError::Validation(message) = submit_err else {
-        panic!("expected validation error, got: {submit_err:?}");
-    };
-    assert!(
-        message.to_lowercase().contains("must be answered"),
-        "unexpected message: {message}"
-    );
+        .expect("submit should allow while live even when unanswered");
+    assert_eq!(submitted_while_live.attempt.phase, "post-exam");
 
     SchedulingService::new(database.pool().clone())
         .apply_runtime_command(
@@ -148,7 +140,7 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
         .await
         .expect("end runtime");
 
-    let submitted = service
+    let submitted_again = service
         .submit_attempt(
             schedule_id,
             StudentSubmitRequest {
@@ -168,9 +160,9 @@ async fn submit_attempt_blocks_unanswered_only_while_runtime_live_or_paused() {
             None,
         )
         .await
-        .expect("submit should allow after completed");
+        .expect("submit should remain idempotent after completed");
 
-    assert_eq!(submitted.attempt.phase, "post-exam");
+    assert_eq!(submitted_again.attempt.phase, "post-exam");
 
     let payload: serde_json::Value = sqlx::query_scalar(
         "SELECT payload FROM session_audit_logs WHERE action_type = 'STUDENT_SUBMIT' AND target_student_id = ? ORDER BY created_at DESC LIMIT 1",

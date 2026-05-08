@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DiagramLabelingBlock, ExamState, QuestionAnswer } from '../../types';
 import { QuestionRenderer } from './QuestionRenderer';
+import { SubAnswerTreeQuestionList } from './SubAnswerTreeQuestionList';
 import { Play, Pause, SkipBack, SkipForward, Volume2, ArrowLeftRight, ArrowLeft, ArrowRight, Flag } from 'lucide-react';
 import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
@@ -501,7 +502,17 @@ export function StudentListening({
                   </div>
                   
                   <div className={answerCompact ? 'space-y-5' : 'space-y-8'}>
-                    {('questions' in block) ? (
+                    {treeQuestions.length > 0 ? (
+                      <SubAnswerTreeQuestionList
+                        questions={treeQuestions}
+                        answers={answers}
+                        currentQuestionId={currentQuestionId}
+                        flags={flags}
+                        onToggleFlag={onToggleFlag}
+                        tabletMode={isTabletMode}
+                        onAnswerChange={onAnswerChange}
+                      />
+                    ) : ('questions' in block) ? (
                       block.questions.map((q, qIdx) => {
                         const questionEntries = blockQuestions.filter((entry) => entry.question?.id === q.id);
                         const firstEntry = questionEntries[0];

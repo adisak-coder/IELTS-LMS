@@ -77,4 +77,47 @@ describe('student question descriptors (student exam core logic)', () => {
     expect(getQuestionNumberLabel(questions, 'single-q1')).toBe('1');
     expect(getQuestionNumberLabel(questions, 'single-q2')).toBe('2');
   });
+
+  it('creates sub-answer tree leaf descriptors when subAnswerModeEnabled is true', () => {
+    const state = createInitialExamState('Exam', 'Academic');
+
+    state.reading.passages[0].blocks = [
+      {
+        id: 'tree-block',
+        type: 'SHORT_ANSWER',
+        instruction: 'Complete the answer tree.',
+        questions: [
+          {
+            id: 'legacy-q1',
+            prompt: 'Legacy prompt',
+            correctAnswer: 'legacy',
+            acceptedAnswers: ['legacy'],
+            answerRule: 'ONE_WORD',
+          },
+        ],
+        subAnswerModeEnabled: true,
+        answerTree: [
+          {
+            id: 'root-a',
+            label: 'Root prompt',
+            children: [
+              { id: 'leaf-a', label: 'Leaf A', acceptedAnswers: ['cat'], required: true },
+              { id: 'leaf-b', label: 'Leaf B', acceptedAnswers: ['dog'], required: true },
+            ],
+          },
+        ],
+      } as any,
+    ];
+
+    const questions = getStudentQuestionsForModule(state, 'reading');
+    expect(questions).toHaveLength(2);
+
+    expect(questions[0]?.id).toBe('tree-block::tree::root-a::leaf-a');
+    expect(questions[0]?.answerKey).toBe('tree-block::tree::root-a::leaf-a');
+    expect(questions[0]?.isSubAnswerTreeLeaf).toBe(true);
+    expect(questions[0]?.rootNumber).toBe(1);
+    expect(questions[0]?.treePrompt).toBe('Root prompt');
+    expect(questions[1]?.id).toBe('tree-block::tree::root-a::leaf-b');
+    expect(questions[1]?.rootNumber).toBe(1);
+  });
 });

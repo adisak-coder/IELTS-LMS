@@ -1241,26 +1241,8 @@ impl DeliveryService {
         let version = self
             .load_version(attempt.published_version_id.clone())
             .await?;
-        let unanswered_submission_policy = version
-            .config_snapshot
-            .get("progression")
-            .and_then(|progression| progression.get("unansweredSubmissionPolicy"))
-            .and_then(Value::as_str)
-            .unwrap_or("confirm");
         let answer_schema = build_answer_schema(&version.content_snapshot)?;
         let completion = compute_answer_completion(&answer_schema, &attempt.answers);
-        let runtime_status = runtime_gate.as_ref().map(|row| row.status.as_str());
-
-        if unanswered_submission_policy == "block"
-            && matches!(runtime_status, Some("live" | "paused"))
-            && completion.total_slots > 0
-            && completion.answered_slots < completion.total_slots
-        {
-            return Err(DeliveryError::Validation(format!(
-                "All questions must be answered before submitting. {}/{} answered.",
-                completion.answered_slots, completion.total_slots
-            )));
-        }
 
         let mut final_answers = req
             .answers
@@ -2372,6 +2354,10 @@ fn index_block(
     constraints: &mut HashMap<String, AnswerConstraint>,
     sections: &mut HashMap<String, String>,
 ) -> Result<(), DeliveryError> {
+    if register_sub_answer_tree_constraints(block, section_key, constraints, sections)? {
+        return Ok(());
+    }
+
     let Some(block_type) = block.get("type").and_then(Value::as_str) else {
         return Ok(());
     };
@@ -2602,6 +2588,59 @@ fn index_block(
     }
 
     Ok(())
+}
+
+fn register_sub_answer_tree_constraints(
+    block: &Value,
+    section_key: &str,
+    constraints: &mut HashMap<String, AnswerConstraint>,
+    sections: &mut HashMap<String, String>,
+) -> Result<bool, DeliveryError> {
+    let enabled = block
+        .get("subAnswerModeEnabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return Ok(false);
+    }
+
+    let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+        return Ok(false);
+    };
+    let Some(roots) = block.get("answerTree").and_then(Value::as_array) else {
+        return Ok(false);
+    };
+    if roots.is_empty() {
+        return Ok(false);
+    }
+
+    for root in roots {
+        let Some(root_id) = root.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let mut stack: Vec<&Value> = vec![root];
+        while let Some(node) = stack.pop() {
+            let children = node.get("children").and_then(Value::as_array);
+            let is_leaf = children.map(|entries| entries.is_empty()).unwrap_or(true);
+            if is_leaf {
+                let Some(node_id) = node.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                let question_id = format!("{block_id}::tree::{root_id}::{node_id}");
+                constraints.insert(question_id.clone(), AnswerConstraint::Text);
+                register_section(sections, &question_id, section_key)?;
+                continue;
+            }
+
+            if let Some(children) = children {
+                for child in children {
+                    stack.push(child);
+                }
+            }
+        }
+    }
+
+    Ok(true)
 }
 
 fn matching_heading_value(index: usize) -> String {
@@ -4138,6 +4177,51 @@ mod tests {
             }
             other => panic!("expected enum constraint, found {other:?}"),
         }
+    }
+
+    #[test]
+    fn build_answer_schema_indexes_sub_answer_tree_leaf_ids() {
+        let schema = build_answer_schema(&json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "tree-block",
+                        "type": "SHORT_ANSWER",
+                        "subAnswerModeEnabled": true,
+                        "answerTree": [{
+                            "id": "root-a",
+                            "children": [{
+                                "id": "leaf-a",
+                                "acceptedAnswers": ["cat"]
+                            }, {
+                                "id": "leaf-b",
+                                "acceptedAnswers": ["dog"]
+                            }]
+                        }],
+                        "questions": [{
+                            "id": "legacy-q1",
+                            "prompt": "Legacy prompt"
+                        }]
+                    }]
+                }]
+            }
+        }))
+        .expect("schema");
+
+        assert!(schema
+            .constraints
+            .contains_key("tree-block::tree::root-a::leaf-a"));
+        assert!(schema
+            .constraints
+            .contains_key("tree-block::tree::root-a::leaf-b"));
+        assert!(!schema.constraints.contains_key("legacy-q1"));
+        assert_eq!(
+            schema
+                .sections
+                .get("tree-block::tree::root-a::leaf-a")
+                .map(String::as_str),
+            Some("reading"),
+        );
     }
 
     #[test]

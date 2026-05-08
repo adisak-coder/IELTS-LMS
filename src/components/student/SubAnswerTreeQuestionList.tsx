@@ -38,6 +38,10 @@ export function SubAnswerTreeQuestionList({
   }> = [];
 
   questions.forEach((question) => {
+    if (!question.rootId || typeof question.rootNumber !== 'number') {
+      return;
+    }
+
     if (!rootOrder.has(question.rootId)) {
       rootOrder.set(question.rootId, groups.length);
       groups.push({
@@ -110,10 +114,6 @@ export function SubAnswerTreeQuestionList({
                         onChange={(event) =>
                           onAnswerChange(slotId, event.target.value, {
                             interactionType: 'typing',
-                            slotId,
-                            slotValue: event.target.value,
-                            slotCount: 1,
-                            slotIndex: 0,
                           })
                         }
                         className="w-full rounded-md border-2 border-gray-300 px-4 py-2 text-base transition-colors focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
