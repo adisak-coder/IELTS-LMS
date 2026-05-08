@@ -296,7 +296,7 @@ function collectIntersectingTextSegments(
       textNode.textContent.length > 0 &&
       range.intersectsNode(textNode)
     ) {
-      const offsets = getTextNodeSelectionOffsets(range, textNode);
+      const offsets = getTextNodeSelectionOffsetsFromOverlap(range, textNode);
       if (offsets) {
         segments.push({
           textNode,
@@ -311,7 +311,7 @@ function collectIntersectingTextSegments(
   return segments;
 }
 
-function getTextNodeSelectionOffsets(
+function getTextNodeSelectionOffsetsFromOverlap(
   range: Range,
   textNode: Text,
 ): { startOffset: number; endOffset: number } | null {
@@ -320,32 +320,18 @@ function getTextNodeSelectionOffsets(
     return null;
   }
 
-  let startOffset = 0;
-  let endOffset = textLength;
-
-  if (range.startContainer === textNode) {
-    startOffset = range.startOffset;
-  } else if (
-    range.startContainer.nodeType === Node.ELEMENT_NODE &&
-    textNode.parentNode === range.startContainer
-  ) {
-    const nodeIndex = Array.from(range.startContainer.childNodes).indexOf(textNode);
-    if (nodeIndex >= 0 && nodeIndex < range.startOffset) {
-      return null;
-    }
+  const nodeRange = document.createRange();
+  nodeRange.selectNodeContents(textNode);
+  const overlapRange = getRangeOverlap(range, nodeRange);
+  if (!overlapRange) {
+    return null;
   }
 
-  if (range.endContainer === textNode) {
-    endOffset = range.endOffset;
-  } else if (
-    range.endContainer.nodeType === Node.ELEMENT_NODE &&
-    textNode.parentNode === range.endContainer
-  ) {
-    const nodeIndex = Array.from(range.endContainer.childNodes).indexOf(textNode);
-    if (nodeIndex >= range.endOffset) {
-      return null;
-    }
-  }
+  const beforeOverlap = document.createRange();
+  beforeOverlap.selectNodeContents(textNode);
+  beforeOverlap.setEnd(overlapRange.startContainer, overlapRange.startOffset);
+  const startOffset = beforeOverlap.toString().length;
+  const endOffset = startOffset + overlapRange.toString().length;
 
   const normalizedStart = Math.max(0, Math.min(startOffset, textLength));
   const normalizedEnd = Math.max(0, Math.min(endOffset, textLength));
@@ -359,6 +345,34 @@ function getTextNodeSelectionOffsets(
   };
 }
 
+function getRangeOverlap(
+  sourceRange: Range,
+  targetRange: Range,
+): Range | null {
+  if (!sourceRange.intersectsNode(targetRange.startContainer)) {
+    return null;
+  }
+
+  const overlap = document.createRange();
+  if (sourceRange.compareBoundaryPoints(Range.START_TO_START, targetRange) <= 0) {
+    overlap.setStart(targetRange.startContainer, targetRange.startOffset);
+  } else {
+    overlap.setStart(sourceRange.startContainer, sourceRange.startOffset);
+  }
+
+  if (sourceRange.compareBoundaryPoints(Range.END_TO_END, targetRange) >= 0) {
+    overlap.setEnd(targetRange.endContainer, targetRange.endOffset);
+  } else {
+    overlap.setEnd(sourceRange.endContainer, sourceRange.endOffset);
+  }
+
+  if (overlap.toString().length === 0) {
+    return null;
+  }
+
+  return overlap;
+}
+
 function wrapTextNodeSegment(
   textNode: Text,
   startOffset: number,
@@ -367,7 +381,7 @@ function wrapTextNodeSegment(
 ): boolean {
   const fullText = textNode.textContent ?? '';
   const selectedText = fullText.slice(startOffset, endOffset);
-  if (!selectedText) {
+  if (!selectedText || selectedText.trim().length === 0) {
     return false;
   }
 

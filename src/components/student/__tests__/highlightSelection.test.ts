@@ -306,4 +306,86 @@ describe('applySelectionHighlight', () => {
     const html = applySelectionHighlight(container, selection, 'bg-blue-200');
     expect(html).toBeNull();
   });
+
+  it('anchors nested-inline cross-paragraph selection at the exact start token', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p><strong>Intro</strong> alpha <em>beta</em> gamma</p><p>delta epsilon</p>';
+
+    const betaTextNode = container.querySelector('em')?.firstChild;
+    const secondParagraphTextNode = container.querySelectorAll('p')[1]?.firstChild;
+    if (
+      !betaTextNode ||
+      betaTextNode.nodeType !== Node.TEXT_NODE ||
+      !secondParagraphTextNode ||
+      secondParagraphTextNode.nodeType !== Node.TEXT_NODE
+    ) {
+      throw new Error('Expected text nodes for nested-inline selection');
+    }
+
+    const range = document.createRange();
+    range.setStart(betaTextNode, 1);
+    range.setEnd(secondParagraphTextNode, 5);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => range.toString(),
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
+    expect(html).not.toBeNull();
+    if (!html) {
+      throw new Error('Expected highlight HTML');
+    }
+
+    const rendered = document.createElement('div');
+    rendered.innerHTML = html;
+    const marks = Array.from(rendered.querySelectorAll('mark[data-highlighted="true"]'));
+    expect(marks.length).toBeGreaterThanOrEqual(2);
+    expect(marks[0]).toHaveTextContent('eta');
+    expect(marks.some((node) => (node.textContent ?? '').includes('delta'))).toBe(true);
+    expect(rendered.textContent).toBe('Intro alpha beta gammadelta epsilon');
+  });
+
+  it('skips whitespace-only fragments in split cross-paragraph highlights', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta</p>\n\n<p>Gamma delta</p>';
+
+    const firstParagraphTextNode = container.querySelectorAll('p')[0]?.firstChild;
+    const secondParagraphTextNode = container.querySelectorAll('p')[1]?.firstChild;
+    if (
+      !firstParagraphTextNode ||
+      firstParagraphTextNode.nodeType !== Node.TEXT_NODE ||
+      !secondParagraphTextNode ||
+      secondParagraphTextNode.nodeType !== Node.TEXT_NODE
+    ) {
+      throw new Error('Expected paragraph text nodes');
+    }
+
+    const range = document.createRange();
+    range.setStart(firstParagraphTextNode, 6);
+    range.setEnd(secondParagraphTextNode, 5);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => range.toString(),
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const html = applySelectionHighlight(container, selection, 'bg-blue-200');
+    expect(html).not.toBeNull();
+    if (!html) {
+      throw new Error('Expected highlight HTML');
+    }
+
+    const rendered = document.createElement('div');
+    rendered.innerHTML = html;
+    const marks = Array.from(rendered.querySelectorAll('mark[data-highlighted="true"]'));
+    expect(marks).toHaveLength(2);
+    expect(marks.every((node) => (node.textContent ?? '').trim().length > 0)).toBe(true);
+    expect(marks[0]).toHaveTextContent('beta');
+    expect(marks[1]).toHaveTextContent('Gamma');
+  });
 });

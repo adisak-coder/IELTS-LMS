@@ -155,8 +155,9 @@ describe('student highlight persistence', () => {
       vi.advanceTimersByTime(500);
     });
 
-    expect(container.querySelector('mark')).not.toBeNull();
-    expect(container.querySelector('mark')).toHaveTextContent('beta gamma delta');
+    const marks = container.querySelectorAll('mark[data-highlighted="true"]');
+    expect(marks).toHaveLength(1);
+    expect(marks[0]).toHaveTextContent('beta gamma delta');
 
     getSelectionSpy.mockRestore();
   });
