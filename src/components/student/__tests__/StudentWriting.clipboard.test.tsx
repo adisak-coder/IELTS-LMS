@@ -80,9 +80,9 @@ describe('StudentWriting clipboard', () => {
       'sched-1',
       'PASTE_BLOCKED',
       {
-        targetName: 'DIV',
+        targetName: 'TEXTAREA',
         targetType: 'writing-editor',
-        isContentEditable: true,
+        isContentEditable: false,
       },
       'attempt-1',
     );

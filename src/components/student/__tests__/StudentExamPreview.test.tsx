@@ -94,6 +94,17 @@ describe('StudentExamPreview', () => {
     expect(input.value).toBe('abcdefghijklmnop');
   });
 
+  it('shows a single writing placeholder in preview mode', () => {
+    render(
+      <MemoryRouter>
+        <StudentExamPreview state={createExamState()} examId="exam-1" initialModule="writing" />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getAllByText('Write your answer here…')).toHaveLength(1);
+    expect(screen.getByRole('textbox', { name: /writing response/i })).not.toHaveAttribute('placeholder');
+  });
+
   it('preserves sibling slot values in preview during slot-targeted updates', () => {
     const state = createExamState();
     state.activeModule = 'reading';

@@ -550,7 +550,6 @@ export function StudentWriting({
                 spellCheck={!security.preventAutocorrect}
                 autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
                 autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
-                placeholder="Write your answer here…"
               />
               </div>
 	          </div>

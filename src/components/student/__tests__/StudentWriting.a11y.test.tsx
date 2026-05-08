@@ -157,6 +157,56 @@ describe('StudentWriting a11y', () => {
     expect(placeholder).toHaveClass('lg:left-10');
   });
 
+  it('renders a single writing placeholder when empty and unfocused', () => {
+    render(
+      <StudentWriting
+        state={createExamState()}
+        writingAnswers={{}}
+        onWritingChange={() => undefined}
+        onSubmit={() => undefined}
+        currentQuestionId={null}
+        onNavigate={() => undefined}
+      />,
+    );
+
+    expect(screen.getAllByText('Write your answer here…')).toHaveLength(1);
+    expect(screen.getByRole('textbox', { name: /writing response/i })).not.toHaveAttribute('placeholder');
+  });
+
+  it('hides placeholder on focus and typed content, then restores on clear + blur', () => {
+    function Harness() {
+      const [answers, setAnswers] = React.useState<Record<string, string>>({});
+      return (
+        <StudentWriting
+          state={createExamState()}
+          writingAnswers={answers}
+          onWritingChange={(taskId, text) => {
+            setAnswers((current) => ({ ...current, [taskId]: text }));
+          }}
+          onSubmit={() => undefined}
+          currentQuestionId={null}
+          onNavigate={() => undefined}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    const editor = screen.getByRole('textbox', { name: /writing response/i }) as HTMLTextAreaElement;
+    expect(screen.getAllByText('Write your answer here…')).toHaveLength(1);
+
+    fireEvent.focus(editor);
+    expect(screen.queryByText('Write your answer here…')).not.toBeInTheDocument();
+
+    fireEvent.change(editor, { target: { value: 'hello world' } });
+    fireEvent.blur(editor);
+    expect(screen.queryByText('Write your answer here…')).not.toBeInTheDocument();
+
+    fireEvent.change(editor, { target: { value: '' } });
+    fireEvent.blur(editor);
+    expect(screen.getAllByText('Write your answer here…')).toHaveLength(1);
+  });
+
   it('matches tablet resizer dimensions used in reading and listening', () => {
     render(
       <StudentWriting
