@@ -7,7 +7,6 @@ import { sanitizeHtml } from '../../utils/sanitizeHtml';
 import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { useSplitPaneResize } from './useSplitPaneResize';
-import { MIN_HEIGHTS } from '../../constants/uiConstants';
 import { registerAnswerUndoRedoGuard } from './answerUndoRedoGuard';
 
 interface StudentWritingProps {
@@ -490,7 +489,7 @@ export function StudentWriting({
           }`}
         >
           <div className="flex-1 overflow-hidden flex flex-col bg-white rounded-xl shadow-lg border border-gray-200 animate-in slide-in-from-right-4 duration-300">
-            <div className="relative flex-1 w-full">
+            <div className="relative flex flex-1 min-h-0 w-full flex-col">
               <div
                 className={`flex flex-col gap-2 border-b border-gray-200 bg-gray-50 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-gray-600 sm:flex-row sm:items-center sm:justify-between ${
                   isTabletMode ? 'pl-10 pr-3' : 'px-3'
@@ -546,9 +545,8 @@ export function StudentWriting({
                   isTabletMode
                     ? 'pt-4 pr-4 pb-4 pl-10 md:pt-6 md:pr-6 md:pb-6 md:pl-10 lg:pt-8 lg:pr-8 lg:pb-8 lg:pl-10'
                     : 'p-4 md:p-6 lg:p-8'
-                } whitespace-pre-wrap break-words [overflow-wrap:anywhere]`}
+                } h-full min-h-0 resize-none whitespace-pre-wrap break-words [overflow-wrap:anywhere]`}
                 data-student-zoom-scroll
-                style={{ minHeight: MIN_HEIGHTS.WRITING_EDITOR }}
                 spellCheck={!security.preventAutocorrect}
                 autoCorrect={security.preventAutocorrect ? 'off' : 'on'}
                 autoCapitalize={security.preventAutocorrect ? 'off' : 'on'}
