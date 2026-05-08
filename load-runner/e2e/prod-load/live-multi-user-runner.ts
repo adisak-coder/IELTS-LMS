@@ -146,6 +146,11 @@ function isSubmissionId(value: string | null): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function isUuid(value: string | null): value is string {
+  if (!value) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 async function defaultLoginOrRegister(page: Page, user: VirtualUser, registerUrl: string): Promise<void> {
   const entryUrl = registerUrl.replace(/\/register\/?$/i, '');
   await page.goto(entryUrl, { waitUntil: 'domcontentloaded' });
@@ -387,6 +392,53 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
       continue;
     }
 
+    const textInputs = page.locator('input[aria-label*="Answer for question" i], textarea[aria-label*="Answer for question" i]');
+    const textCount = await textInputs.count().catch(() => 0);
+    for (let i = 0; i < textCount; i += 1) {
+      const input = textInputs.nth(i);
+      if (!(await input.isVisible().catch(() => false))) continue;
+      await input.fill(`ans-${user.userId}-${writes}`).catch(() => {});
+      writes += 1;
+    }
+
+    const writingValue = `writing-${user.userId}-${writes}`;
+    const writingInputs = page.locator(
+      [
+        'textarea[aria-label="Writing response"]',
+        'textarea[aria-label*="writing response" i]',
+        'textarea[placeholder*="write your answer" i]',
+        '[contenteditable="true"]',
+      ].join(', '),
+    );
+    const writingCount = await writingInputs.count().catch(() => 0);
+    for (let i = 0; i < writingCount; i += 1) {
+      const input = writingInputs.nth(i);
+      if (!(await input.isVisible().catch(() => false))) continue;
+      await input.click().catch(() => {});
+      await input.fill(writingValue).catch(() => {});
+      await input.press('End').catch(() => {});
+      await input.type(' ').catch(() => {});
+      await input.press('Backspace').catch(() => {});
+      // Controlled editor expects input/change via onChange, plus fallback for legacy rich text.
+      await input
+        .evaluate((node, value) => {
+          if (!(node instanceof HTMLElement)) return;
+          const target = node as HTMLInputElement | HTMLTextAreaElement;
+          if ('value' in target) {
+            target.value = value;
+            target.dispatchEvent(new Event('input', { bubbles: true }));
+            target.dispatchEvent(new Event('change', { bubbles: true }));
+            return;
+          }
+          if (node.isContentEditable) {
+            node.textContent = value;
+            node.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
+          }
+        }, writingValue)
+        .catch(() => {});
+      writes += 1;
+    }
+
     const finishButton = page.getByRole('button', { name: 'Finish' }).first();
     if (await finishButton.isVisible().catch(() => false)) {
       await finishButton
@@ -421,53 +473,6 @@ async function defaultRunExamActions(page: Page, user: VirtualUser, ctx: Scenari
         .catch(() => confirmSubmit.click({ force: true, noWaitAfter: true, timeout: 5000 }));
       await page.waitForTimeout(700);
       continue;
-    }
-
-    const textInputs = page.locator('input[aria-label*="Answer for question" i], textarea[aria-label*="Answer for question" i]');
-    const textCount = await textInputs.count().catch(() => 0);
-    for (let i = 0; i < textCount; i += 1) {
-      const input = textInputs.nth(i);
-      if (!(await input.isVisible().catch(() => false))) continue;
-      await input.fill(`ans-${user.userId}-${writes}`).catch(() => {});
-      writes += 1;
-    }
-
-    const writingValue = `writing-${user.userId}-${writes}`;
-    const writingInputs = page.locator(
-      [
-        // Updated writing UI: placeholder-driven text area on the right panel.
-        'textarea[placeholder*="write your answer" i]',
-        '[aria-label*="writing response" i] textarea',
-        '[aria-label*="essay" i]',
-        'textarea[name*="writing" i]',
-        // Keep support for old rich-text editors.
-        '[contenteditable="true"]',
-      ].join(', '),
-    );
-    const writingCount = await writingInputs.count().catch(() => 0);
-    for (let i = 0; i < writingCount; i += 1) {
-      const input = writingInputs.nth(i);
-      if (!(await input.isVisible().catch(() => false))) continue;
-      await input.click().catch(() => {});
-      await input.fill(writingValue).catch(() => {});
-      // Some editors require explicit input/change events to emit SetEssayText mutations.
-      await input
-        .evaluate((node, value) => {
-          if (!(node instanceof HTMLElement)) return;
-          const target = node as HTMLInputElement | HTMLTextAreaElement;
-          if ('value' in target) {
-            target.value = value;
-            target.dispatchEvent(new Event('input', { bubbles: true }));
-            target.dispatchEvent(new Event('change', { bubbles: true }));
-            return;
-          }
-          if (node.isContentEditable) {
-            node.textContent = value;
-            node.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
-          }
-        }, writingValue)
-        .catch(() => {});
-      writes += 1;
     }
 
     const choice = page.locator('input[type="radio"], input[type="checkbox"]').first();
@@ -721,17 +726,17 @@ async function run(): Promise<void> {
           }, { origin: ctx.origin, scheduleId: ctx.scheduleId }).catch(() => null);
           submissionId = findSubmissionIdDeep(sessionSnapshot);
         }
-        if (!isSubmissionId(submissionId)) {
+        if (!isUuid(submissionId)) {
           const candidates = [user.candidateId ?? '', user.email, user.userId];
           const deadlineMs = Date.now() + 20_000;
-          while (!isSubmissionId(submissionId) && Date.now() < deadlineMs) {
+          while (!isUuid(submissionId) && Date.now() < deadlineMs) {
             submissionId = await gradingVerifier.findLatestSubmissionIdForStudent(ctx.scheduleId, candidates);
-            if (isSubmissionId(submissionId)) break;
+            if (isUuid(submissionId)) break;
             await page.waitForTimeout(1000).catch(() => {});
           }
         }
-        if (!isSubmissionId(submissionId)) {
-          throw new Error('GRADING_VERIFY_NO_SUBMISSION_ID: unable to resolve grading submission id for student.');
+        if (!isUuid(submissionId)) {
+          throw new Error('GRADING_VERIFY_NO_SUBMISSION_ID: unable to resolve UUID grading submission for student.');
         }
         const verifyResult = await gradingVerifier.verifySubmission(submissionId, answerCapture.expected);
         if (!verifyResult.ok) {

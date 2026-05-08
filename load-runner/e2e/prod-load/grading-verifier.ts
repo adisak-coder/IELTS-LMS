@@ -27,6 +27,35 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' && uuidPattern.test(value);
+}
+
+function findUuidDeep(value: unknown, depth = 0): string | null {
+  if (depth > 6 || value == null) return null;
+  if (isUuid(value)) return value;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findUuidDeep(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!isRecord(value)) return null;
+  const record = value as Record<string, unknown>;
+  for (const key of ['submissionId', 'id', 'uuid', 'submissionUuid', 'gradingSubmissionId']) {
+    const direct = record[key];
+    if (isUuid(direct)) return direct;
+  }
+  for (const nested of Object.values(record)) {
+    const found = findUuidDeep(nested, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 export async function createGradingVerifier(config: GradingVerifyConfig): Promise<{
   verifySubmission: (submissionId: string, expected: ExpectedAnswerSnapshot) => Promise<GradingVerifyResult>;
   findLatestSubmissionIdForStudent: (scheduleId: string, candidates: string[]) => Promise<string | null>;
@@ -43,8 +72,6 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
   if (!loginRes.ok()) {
     throw new Error(`GRADING_VERIFY_LOGIN_FAILED: status=${loginRes.status()} body=${await loginRes.text().catch(() => '')}`);
   }
-
-  const isSubmissionId = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
   const findLatestSubmissionIdForStudent = async (scheduleId: string, candidates: string[]): Promise<string | null> => {
     const normalized = candidates.map((item) => item.trim().toLowerCase()).filter(Boolean);
@@ -80,8 +107,8 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
     let bestSubmittedAt = 0;
     for (const item of submissions) {
       if (!isRecord(item)) continue;
-      const id = item['id'];
-      if (!isSubmissionId(id)) continue;
+      const uuid = findUuidDeep(item);
+      if (!uuid) continue;
       const points = score(item);
       if (points <= 0) continue;
       const submittedAtRaw = item['submittedAt'];
@@ -94,7 +121,7 @@ export async function createGradingVerifier(config: GradingVerifyConfig): Promis
       if (points > bestScore || (points === bestScore && submittedAtMs > bestSubmittedAt)) {
         bestScore = points;
         bestSubmittedAt = submittedAtMs;
-        bestId = id;
+        bestId = uuid;
       }
     }
     return bestId;
