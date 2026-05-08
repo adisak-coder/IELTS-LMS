@@ -50,6 +50,47 @@ function createWritingRuntimeSnapshot(): ExamSessionRuntime {
   };
 }
 
+function createReadingRuntimeSnapshot(): ExamSessionRuntime {
+  return {
+    id: 'runtime-reading-1',
+    scheduleId: 'sched-1',
+    examId: 'exam-1',
+    examTitle: 'Mock Exam',
+    cohortName: 'Cohort A',
+    deliveryMode: 'proctor_start',
+    status: 'live',
+    actualStartAt: '2026-01-01T00:00:00.000Z',
+    actualEndAt: null,
+    activeSectionKey: 'reading',
+    currentSectionKey: 'reading',
+    currentSectionRemainingSeconds: 300,
+    waitingForNextSection: false,
+    isOverrun: false,
+    totalPausedSeconds: 0,
+    sections: [
+      {
+        sectionKey: 'reading',
+        label: 'Reading',
+        order: 1,
+        plannedDurationMinutes: 60,
+        gapAfterMinutes: 0,
+        status: 'live',
+        availableAt: '2026-01-01T00:00:00.000Z',
+        actualStartAt: '2026-01-01T00:00:00.000Z',
+        actualEndAt: null,
+        pausedAt: null,
+        accumulatedPausedSeconds: 0,
+        extensionMinutes: 0,
+        completionReason: undefined,
+        projectedStartAt: '2026-01-01T00:00:00.000Z',
+        projectedEndAt: '2026-01-01T01:00:00.000Z',
+      },
+    ],
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
 function createWritingAttemptSnapshot(): StudentAttempt {
   return {
     id: 'attempt-1',
@@ -102,6 +143,19 @@ function createWritingAttemptSnapshot(): StudentAttempt {
     },
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function createReadingAttemptSnapshot(): StudentAttempt {
+  const attempt = createWritingAttemptSnapshot();
+  return {
+    ...attempt,
+    id: 'attempt-reading-1',
+    phase: 'exam',
+    currentModule: 'reading',
+    currentQuestionId: 'rq-1',
+    answers: {},
+    writingAnswers: {},
   };
 }
 
@@ -194,6 +248,60 @@ describe('StudentApp runtime-backed mode', () => {
     },
   };
 
+  const readingState: ExamState = {
+    ...state,
+    activeModule: 'reading',
+    config: {
+      ...state.config,
+      sections: {
+        ...state.config.sections,
+        reading: {
+          ...state.config.sections.reading,
+          enabled: true,
+          allowedQuestionTypes: ['SHORT_ANSWER'],
+        },
+        listening: {
+          ...state.config.sections.listening,
+          enabled: false,
+        },
+        writing: {
+          ...state.config.sections.writing,
+          enabled: false,
+        },
+        speaking: {
+          ...state.config.sections.speaking,
+          enabled: false,
+        },
+      },
+    },
+    reading: {
+      passages: [
+        {
+          id: 'p1',
+          title: 'Passage 1',
+          content: 'Read and answer.',
+          images: [],
+          wordCount: 3,
+          blocks: [
+            {
+              id: 'reading-short-1',
+              type: 'SHORT_ANSWER',
+              instruction: 'Answer the question.',
+              questions: [
+                {
+                  id: 'rq-1',
+                  prompt: 'Type one word',
+                  correctAnswer: 'alpha',
+                  answerRule: 'ONE_WORD',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+
   it('keeps tablet footer viewport height stable while an editable field is focused', async () => {
     const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
     const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
@@ -224,6 +332,63 @@ describe('StudentApp runtime-backed mode', () => {
 
       const editor = await screen.findByRole('textbox', { name: /writing response/i });
       fireEvent.focus(editor);
+
+      act(() => {
+        visualViewport.setHeight(600);
+        visualViewport.dispatchResize();
+      });
+
+      expect(root.style.getPropertyValue('--student-viewport-height')).toBe('900px');
+    } finally {
+      visualViewport.restore();
+      window.matchMedia = originalMatchMedia;
+      if (originalInnerWidth) {
+        Object.defineProperty(window, 'innerWidth', originalInnerWidth);
+      }
+      if (originalInnerHeight) {
+        Object.defineProperty(window, 'innerHeight', originalInnerHeight);
+      }
+      if (originalMaxTouchPoints) {
+        Object.defineProperty(window.navigator, 'maxTouchPoints', originalMaxTouchPoints);
+      } else {
+        Reflect.deleteProperty(window.navigator, 'maxTouchPoints');
+      }
+    }
+  });
+
+  it('keeps objective footer viewport height stable on iPad while answer input is focused', async () => {
+    const originalInnerWidth = Object.getOwnPropertyDescriptor(window, 'innerWidth');
+    const originalInnerHeight = Object.getOwnPropertyDescriptor(window, 'innerHeight');
+    const originalMatchMedia = window.matchMedia;
+    const originalMaxTouchPoints = Object.getOwnPropertyDescriptor(window.navigator, 'maxTouchPoints');
+    const visualViewport = installVisualViewportMock(900);
+
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 900 });
+    window.matchMedia = vi.fn(createMatchMediaMock(true)) as unknown as typeof window.matchMedia;
+    Object.defineProperty(window.navigator, 'maxTouchPoints', { configurable: true, value: 5 });
+
+    try {
+      render(
+        <StudentAppWrapper
+          state={readingState}
+          onExit={() => {}}
+          scheduleId="sched-1"
+          attemptSnapshot={createReadingAttemptSnapshot()}
+          runtimeSnapshot={createReadingRuntimeSnapshot()}
+        />,
+      );
+
+      const root = document.documentElement;
+      await waitFor(() => {
+        expect(root.style.getPropertyValue('--student-viewport-height')).toBe('900px');
+      });
+
+      const footer = screen.getByRole('contentinfo', { name: /question navigation and progress/i });
+      expect(footer).toHaveClass('student-exam-footer');
+
+      const input = await screen.findByRole('textbox', { name: /answer for question 1/i });
+      fireEvent.focus(input);
 
       act(() => {
         visualViewport.setHeight(600);

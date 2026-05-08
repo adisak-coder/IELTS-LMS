@@ -5,6 +5,23 @@ import { describe, expect, it, vi } from 'vitest';
 import { StudentFooter } from '../StudentFooter';
 
 describe('StudentFooter', () => {
+  it('uses the shared student exam footer class contract', () => {
+    render(
+      <StudentFooter
+        questions={[]}
+        currentQuestionId={null}
+        onNavigate={() => {}}
+        answers={{}}
+        onSubmit={() => {}}
+      />,
+    );
+
+    const footer = screen.getByRole('contentinfo', {
+      name: /question navigation and progress/i,
+    });
+    expect(footer).toHaveClass('student-exam-footer');
+  });
+
   it('navigates when selecting a question chip', () => {
     const onNavigate = vi.fn();
 
