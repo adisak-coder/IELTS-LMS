@@ -230,6 +230,22 @@ describe('StudentApp runtime-backed mode', () => {
     vi.restoreAllMocks();
     window.localStorage.clear();
     window.sessionStorage.clear();
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          data: {
+            attempt: {
+              attemptToken: 'test-token',
+              expiresAt: '2099-01-01T00:00:00.000Z',
+            },
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
     vi.spyOn(studentAttemptRepository as any, 'getPendingMutations').mockResolvedValue([]);
     vi.spyOn(studentAttemptRepository as any, 'saveAttempt').mockResolvedValue();
     vi.spyOn(studentAttemptRepository as any, 'savePendingMutations').mockResolvedValue();
@@ -2216,6 +2232,7 @@ describe('StudentApp runtime-backed mode', () => {
 
   it('shows a blocking tab-switch warning overlay when tab switching is detected', async () => {
     vi.useFakeTimers();
+    const hiddenSpy = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
 
     const config = createDefaultConfig('Academic', 'Academic');
     config.security.requireFullscreen = false;
@@ -2355,6 +2372,7 @@ describe('StudentApp runtime-backed mode', () => {
 
     act(() => {
       window.dispatchEvent(new Event('blur'));
+      document.dispatchEvent(new Event('visibilitychange'));
     });
 
     await act(async () => {
@@ -2369,6 +2387,7 @@ describe('StudentApp runtime-backed mode', () => {
 
     expect(screen.queryByText(/Tab switching detected/i)).not.toBeInTheDocument();
 
+    hiddenSpy.mockRestore();
     vi.useRealTimers();
   });
 

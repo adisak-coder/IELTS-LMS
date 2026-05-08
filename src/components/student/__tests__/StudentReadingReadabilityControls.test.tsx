@@ -133,4 +133,27 @@ describe('StudentReading passage readability controls', () => {
     expect(questionPane).not.toHaveStyle({ fontSize: 'var(--student-reading-question-font-size)' });
     expect(questionPane).not.toHaveStyle({ lineHeight: 'var(--student-reading-question-line-height)' });
   });
+
+  it('preserves authored passage html when highlight mode is enabled', () => {
+    const state = createState();
+    state.reading.passages[0].content =
+      '<p>William Henry Perkin was born in London.<br>As a boy, curiosity shaped his studies.</p><p><em>Second paragraph keeps emphasis.</em></p>';
+
+    const { container } = render(
+      <StudentReading
+        state={state}
+        answers={{}}
+        onAnswerChange={() => {}}
+        currentQuestionId="q1"
+        onNavigate={() => {}}
+        highlightEnabled
+      />,
+    );
+
+    const highlightContainer = container.querySelector('[data-student-highlightable="true"]');
+    expect(highlightContainer).not.toBeNull();
+    expect(highlightContainer?.querySelectorAll('p')).toHaveLength(2);
+    expect(highlightContainer?.querySelector('br')).not.toBeNull();
+    expect(highlightContainer?.querySelector('em')).not.toBeNull();
+  });
 });
