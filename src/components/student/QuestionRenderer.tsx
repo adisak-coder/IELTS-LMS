@@ -700,13 +700,22 @@ export function QuestionRenderer({
                     );
                   }
 
+                  const placeholderPattern = /_{2,}/g;
+                  const promptSegments = cellValue.split(placeholderPattern);
+                  const promptPrefixText = (promptSegments[0] ?? '').trimEnd();
+                  const promptSuffixText = promptSegments.length > 1
+                    ? (promptSegments.slice(1).join(' ').trimStart())
+                    : '';
+
                   return (
                     <TableCompletionSlotCell
                       key={slot.cell.id}
                       slotId={slot.slotId}
                       isActive={currentQuestionId === slot.slotId}
                       isFlagged={Boolean(flags[slot.slotId])}
-                      promptText={cellValue}
+                      promptPrefixText={promptPrefixText}
+                      promptSuffixText={promptSuffixText}
+                      slotNumber={number + slot.index}
                       answerValue={stringArrayAnswer[slot.index] ?? ''}
                       ariaLabel={`Answer for question ${number + slot.index}`}
                       highlightEnabled={highlightEnabled}

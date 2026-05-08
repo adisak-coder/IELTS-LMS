@@ -156,7 +156,7 @@ describe('student question experience', () => {
     expect(answerInput).not.toHaveClass('text-sm');
   });
 
-  it('shows authored table cell prompt text above the slot input and keeps underscores', () => {
+  it('renders table placeholder token as inline numbered input and preserves surrounding text', () => {
     const block: TableCompletionBlock = {
       id: 'table-prompt',
       type: 'TABLE_COMPLETION',
@@ -177,12 +177,14 @@ describe('student question experience', () => {
       />,
     );
 
-    expect(screen.getByText('no _______ (red)')).toBeInTheDocument();
+    expect(screen.getByText(/no/i)).toBeInTheDocument();
+    expect(screen.getByText(/\(red\)/i)).toBeInTheDocument();
+    expect(screen.queryByText('no _______ (red)')).not.toBeInTheDocument();
+    expect(screen.getByText('5.')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Answer for question 5' })).toBeInTheDocument();
-    expect(screen.queryByText('5.')).not.toBeInTheDocument();
   });
 
-  it('keeps table completion slots free from injected numeric badges inside the authored cell', () => {
+  it('replaces authored underscore placeholder token inside table completion slot cells', () => {
     const block: TableCompletionBlock = {
       id: 'table-no-badge',
       type: 'TABLE_COMPLETION',
@@ -205,8 +207,10 @@ describe('student question experience', () => {
 
     const slotCell = container.querySelector('#question-table-no-badge\\:cell-1');
     expect(slotCell).not.toBeNull();
-    expect(slotCell).toHaveTextContent('no _______ (red)');
-    expect(slotCell?.querySelector('span.text-blue-700')).toBeNull();
+    expect(slotCell).toHaveTextContent('no');
+    expect(slotCell).toHaveTextContent('(red)');
+    expect(slotCell).not.toHaveTextContent('_______');
+    expect(slotCell).toHaveTextContent('5.');
   });
 
   it('emits slot metadata for table completion edits so shared answer keys persist per question slot', () => {

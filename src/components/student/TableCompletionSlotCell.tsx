@@ -7,7 +7,9 @@ export type TableCompletionSlotCellProps = {
   slotId: string;
   isActive: boolean;
   isFlagged: boolean;
-  promptText: string;
+  promptPrefixText: string;
+  promptSuffixText: string;
+  slotNumber: number;
   answerValue: string;
   ariaLabel: string;
   highlightEnabled: boolean;
@@ -26,7 +28,9 @@ export function TableCompletionSlotCell({
   slotId,
   isActive,
   isFlagged,
-  promptText,
+  promptPrefixText,
+  promptSuffixText,
+  slotNumber,
   answerValue,
   ariaLabel,
   highlightEnabled,
@@ -43,28 +47,40 @@ export function TableCompletionSlotCell({
       className={`border border-gray-200 px-3 py-2 align-top ${isActive ? 'ring-2 ring-blue-500 ring-inset' : ''} ${isFlagged ? 'bg-amber-50' : ''}`}
     >
       <div className="space-y-2">
-        <FormattedText
-          as="p"
-          className="text-[length:var(--student-control-font-size)] text-gray-800"
-          text={promptText}
-          highlightEnabled={highlightEnabled}
-          highlightColor={highlightColor}
-        />
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <ProtectedInput
-              type="text"
-              name={slotId}
-              value={answerValue}
-              onChange={(event) => onChange(event.target.value)}
-              className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              placeholder="Enter answer..."
-              security={security}
-              sessionId={sessionId}
-              studentId={studentId}
-              aria-label={ariaLabel}
-            />
-          </div>
+        <div className="text-[length:var(--student-control-font-size)] text-gray-800 [white-space:pre-wrap]">
+          <FormattedText
+            as="span"
+            className="text-[length:var(--student-control-font-size)] text-gray-800"
+            text={promptPrefixText}
+            highlightEnabled={highlightEnabled}
+            highlightColor={highlightColor}
+          />
+          <span className="mx-1 inline-flex items-center gap-2 align-middle">
+            <span className="font-bold text-gray-900">{slotNumber}.</span>
+            <span className="inline-block min-w-[11rem] max-w-full align-middle">
+              <ProtectedInput
+                type="text"
+                name={slotId}
+                value={answerValue}
+                onChange={(event) => onChange(event.target.value)}
+                className="w-full min-w-0 rounded-md border border-gray-300 px-3 py-2 text-[length:var(--student-control-font-size)] focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100"
+                placeholder="Enter answer..."
+                security={security}
+                sessionId={sessionId}
+                studentId={studentId}
+                aria-label={ariaLabel}
+              />
+            </span>
+          </span>
+          <FormattedText
+            as="span"
+            className="text-[length:var(--student-control-font-size)] text-gray-800"
+            text={promptSuffixText}
+            highlightEnabled={highlightEnabled}
+            highlightColor={highlightColor}
+          />
+        </div>
+        <div className="flex justify-end">
           <div className="mt-1">{renderFlagButton(slotId)}</div>
         </div>
       </div>
