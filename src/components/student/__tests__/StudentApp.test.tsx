@@ -10,6 +10,10 @@ import type { ExamSessionRuntime } from '../../../types/domain';
 import type { StudentAttempt } from '../../../types/studentAttempt';
 
 function setWritingEditorText(editor: HTMLElement, value: string) {
+  if (editor instanceof HTMLTextAreaElement) {
+    fireEvent.change(editor, { target: { value } });
+    return;
+  }
   editor.textContent = value;
   fireEvent.input(editor);
 }
@@ -1541,9 +1545,9 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLElement;
+    const editor = (await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement;
     setWritingEditorText(editor, 'Server seed LOCAL_TYPED');
-    expect(editor.textContent ?? '').toContain('LOCAL_TYPED');
+    expect(editor.value).toContain('LOCAL_TYPED');
 
     attemptSnapshot = {
       ...attemptSnapshot,
@@ -1560,7 +1564,7 @@ describe('StudentApp runtime-backed mode', () => {
       />,
     );
 
-    expect((((await screen.findByRole('textbox', { name: /writing response/i })) as HTMLElement).textContent ?? '')).toContain('LOCAL_TYPED');
+    expect(((await screen.findByRole('textbox', { name: /writing response/i })) as HTMLTextAreaElement).value).toContain('LOCAL_TYPED');
   });
 
   it('keeps local choice selection stable during same-attempt refresh', async () => {

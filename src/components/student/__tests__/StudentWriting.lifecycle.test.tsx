@@ -48,6 +48,10 @@ function createExamState(): ExamState {
 }
 
 function setWritingEditorText(editor: HTMLElement, value: string) {
+  if (editor instanceof HTMLTextAreaElement) {
+    fireEvent.change(editor, { target: { value } });
+    return;
+  }
   editor.textContent = value;
   fireEvent.input(editor);
 }
