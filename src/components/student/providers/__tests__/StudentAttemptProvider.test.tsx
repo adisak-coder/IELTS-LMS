@@ -1718,6 +1718,67 @@ describe('StudentAttemptProvider', () => {
     });
   });
 
+  it('preserves local answers in preview mode when backend snapshots refresh', async () => {
+    const state = createExamState();
+    const initialAttempt = createAttemptSnapshot();
+    let updateAttemptSnapshot: ((next: StudentAttempt) => void) | null = null;
+
+    const Wrapper = ({ children }: { children: React.ReactNode }) => {
+      const [attemptSnapshot, setAttemptSnapshot] = React.useState(initialAttempt);
+
+      React.useEffect(() => {
+        updateAttemptSnapshot = setAttemptSnapshot;
+        return () => {
+          updateAttemptSnapshot = null;
+        };
+      }, []);
+
+      return (
+        <StudentRuntimeProvider state={state} onExit={vi.fn()} attemptSnapshot={attemptSnapshot}>
+          <StudentAttemptProvider
+            scheduleId={attemptSnapshot.scheduleId}
+            attemptSnapshot={attemptSnapshot}
+            persistenceEnabled={false}
+          >
+            {children}
+          </StudentAttemptProvider>
+        </StudentRuntimeProvider>
+      );
+    };
+
+    const { result } = renderHook(() => useStudentAttempt(), { wrapper: Wrapper });
+
+    await waitFor(() => {
+      expect(result.current.state.attemptId).toBe('attempt-1');
+    });
+
+    await act(async () => {
+      result.current.actions.persistAnswer('q1', 'PREVIEW_LOCAL');
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.attempt?.answers.q1).toBe('PREVIEW_LOCAL');
+    });
+
+    const refreshedBackendAttempt: StudentAttempt = {
+      ...initialAttempt,
+      updatedAt: '2026-01-01T00:00:03.000Z',
+      answers: {},
+      recovery: {
+        ...initialAttempt.recovery,
+        syncState: 'idle',
+      },
+    };
+
+    await act(async () => {
+      updateAttemptSnapshot?.(refreshedBackendAttempt);
+    });
+
+    await waitFor(() => {
+      expect(result.current.state.attempt?.answers.q1).toBe('PREVIEW_LOCAL');
+    });
+  });
+
   it('does not attempt state updates after unmount while flushing', async () => {
     const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 

@@ -36,6 +36,8 @@ const allowedEditingKeys = new Set([
   'Escape',
 ]);
 
+type UndoRedoKind = 'undo' | 'redo';
+
 function isEditingTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -46,6 +48,23 @@ function isEditingTarget(target: EventTarget | null) {
     target.tagName === 'TEXTAREA' ||
     target.isContentEditable
   );
+}
+
+function historyKindFromUndoRedoShortcut(event: KeyboardEvent): UndoRedoKind | null {
+  const key = event.key.toLowerCase();
+  const usesUndoModifier = (event.metaKey || event.ctrlKey) && !event.altKey;
+  if (!usesUndoModifier) {
+    return null;
+  }
+
+  if (!event.shiftKey && key === 'z') {
+    return 'undo';
+  }
+
+  const isRedo =
+    (event.metaKey && event.shiftKey && key === 'z') ||
+    (event.ctrlKey && (key === 'y' || (event.shiftKey && key === 'z')));
+  return isRedo ? 'redo' : null;
 }
 
 function isIpadSafari(userAgent: string): boolean {
@@ -170,6 +189,26 @@ export function KeyboardProvider({ children }: KeyboardProviderProps) {
           'high',
         );
         return;
+      }
+
+      if (editingTarget) {
+        const undoRedoKind = historyKindFromUndoRedoShortcut(event);
+        if (undoRedoKind) {
+          event.preventDefault();
+          event.stopPropagation();
+          void saveStudentAuditEvent(
+            sessionId,
+            undoRedoKind === 'undo' ? 'UNDO_BLOCKED' : 'REDO_BLOCKED',
+            {
+              surface: 'student-global',
+              targetName: target instanceof HTMLElement ? target.tagName : 'unknown',
+              via: 'keydown',
+              cancelable: event.cancelable,
+            },
+            studentId,
+          );
+          return;
+        }
       }
 
       if (shouldBlockClipboard && (event.metaKey || event.ctrlKey) && blockedModifierKeys.has(normalizedKey)) {

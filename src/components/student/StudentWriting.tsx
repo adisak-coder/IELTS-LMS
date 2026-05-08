@@ -8,6 +8,7 @@ import { useOptionalStudentAttempt } from './providers/StudentAttemptProvider';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import { useSplitPaneResize } from './useSplitPaneResize';
 import { MIN_HEIGHTS } from '../../constants/uiConstants';
+import { registerAnswerUndoRedoGuard } from './answerUndoRedoGuard';
 
 interface StudentWritingProps {
   state: ExamState;
@@ -243,6 +244,45 @@ export function StudentWriting({
       lastKeydownRef.current = Date.now();
     };
 
+    const releaseUndoRedoGuard = registerAnswerUndoRedoGuard({
+      element: editor,
+      readLatestSnapshot: () => readEditorPlainText(editor),
+      restoreLatestSnapshot: (snapshot) => {
+        writeEditorPlainText(editor, snapshot);
+        previousValueRef.current = snapshot;
+        commitDraftText(activeTaskId, snapshot, { flushDurability: false });
+      },
+      flushPersist: () => {
+        attemptContext?.actions.flushAnswerDurabilityNow?.();
+      },
+      onBlocked: (signal) => {
+        saveStudentAuditEvent(
+          resolvedSessionId,
+          signal.kind === 'undo' ? 'UNDO_BLOCKED' : 'REDO_BLOCKED',
+          {
+            surface: 'writing',
+            targetName: 'writing-editor',
+            via: signal.via,
+            cancelable: signal.cancelable,
+          },
+          resolvedStudentId,
+        );
+      },
+      onRestored: (signal) => {
+        saveStudentAuditEvent(
+          resolvedSessionId,
+          signal.kind === 'undo' ? 'UNDO_RESTORED' : 'REDO_RESTORED',
+          {
+            surface: 'writing',
+            targetName: 'writing-editor',
+            via: signal.via,
+            cancelable: signal.cancelable,
+          },
+          resolvedStudentId,
+        );
+      },
+    });
+
     editor.addEventListener('beforeinput', handleBeforeInput);
     editor.addEventListener('input', handleInput);
     editor.addEventListener('keydown', handleKeydown);
@@ -251,8 +291,9 @@ export function StudentWriting({
       editor.removeEventListener('beforeinput', handleBeforeInput);
       editor.removeEventListener('input', handleInput);
       editor.removeEventListener('keydown', handleKeydown);
+      releaseUndoRedoGuard();
     };
-  }, [resolvedSessionId, resolvedStudentId]);
+  }, [activeTaskId, attemptContext, commitDraftText, resolvedSessionId, resolvedStudentId]);
 
   if (!currentTask) {
     return null;

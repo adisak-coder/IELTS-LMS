@@ -660,12 +660,36 @@ export function StudentAttemptProvider({
     }
 
     if (!persistenceEnabled) {
-      const ephemeralAttempt = mergeAttempt(attemptSnapshot, {
-        recovery: {
-          pendingMutationCount: 0,
-          syncState: 'idle',
-        },
-      });
+      const currentAttempt = attemptRef.current;
+      const sameAttempt = currentAttempt?.id === attemptSnapshot.id;
+      const ephemeralAttempt =
+        sameAttempt && currentAttempt
+          ? {
+              ...currentAttempt,
+              proctorStatus: attemptSnapshot.proctorStatus,
+              proctorNote: attemptSnapshot.proctorNote,
+              proctorUpdatedAt: attemptSnapshot.proctorUpdatedAt,
+              proctorUpdatedBy: attemptSnapshot.proctorUpdatedBy,
+              lastWarningId: attemptSnapshot.lastWarningId ?? currentAttempt.lastWarningId,
+              lastAcknowledgedWarningId:
+                currentAttempt.lastAcknowledgedWarningId
+                ?? attemptSnapshot.lastAcknowledgedWarningId,
+              violations: mergeViolationsById(
+                currentAttempt.violations ?? [],
+                attemptSnapshot.violations ?? [],
+              ),
+              recovery: {
+                ...currentAttempt.recovery,
+                pendingMutationCount: 0,
+                syncState: 'idle',
+              },
+            }
+          : mergeAttempt(attemptSnapshot, {
+              recovery: {
+                pendingMutationCount: 0,
+                syncState: 'idle',
+              },
+            });
       attemptRef.current = ephemeralAttempt;
       setAttempt(ephemeralAttempt);
       observedPositionRef.current = JSON.stringify({

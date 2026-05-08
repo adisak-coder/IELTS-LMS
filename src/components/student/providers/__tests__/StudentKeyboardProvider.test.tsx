@@ -10,6 +10,12 @@ import { StudentAttemptProvider } from '../StudentAttemptProvider';
 import { StudentRuntimeProvider, useStudentRuntime } from '../StudentRuntimeProvider';
 import { StudentUIProvider, useStudentUI } from '../StudentUIProvider';
 
+const saveStudentAuditEventMock = vi.fn();
+
+vi.mock('@services/studentAuditService', () => ({
+  saveStudentAuditEvent: (...args: unknown[]) => saveStudentAuditEventMock(...args),
+}));
+
 function createExamState(): ExamState {
   return {
     title: 'Test Exam',
@@ -98,6 +104,7 @@ function createAttemptSnapshot(): StudentAttempt {
 describe('StudentKeyboardProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    saveStudentAuditEventMock.mockReset();
   });
 
   function renderHarness(overrideState?: (nextState: ExamState) => void) {
@@ -318,6 +325,32 @@ describe('StudentKeyboardProvider', () => {
 
     expect(event.defaultPrevented).toBe(false);
     expect(harness.runtime.state.violations).toHaveLength(0);
+  });
+
+  it('blocks undo shortcuts inside editable inputs without recording a restricted-shortcut violation', () => {
+    const harness = renderHarness();
+    const event = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+
+    act(() => {
+      harness.editor.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(harness.runtime.state.violations).toHaveLength(0);
+    expect(saveStudentAuditEventMock).toHaveBeenCalledWith(
+      'sched-1',
+      'UNDO_BLOCKED',
+      expect.objectContaining({
+        surface: 'student-global',
+        via: 'keydown',
+      }),
+      'attempt-1',
+    );
   });
 
   it('records a screenshot-attempt violation for PrintScreen', () => {
