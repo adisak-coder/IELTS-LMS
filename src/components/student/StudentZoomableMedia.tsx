@@ -17,6 +17,11 @@ const MIN_ZOOM = 1;
 const MAX_ZOOM = 2.8;
 const DEFAULT_ZOOM = 1;
 
+interface IntrinsicSize {
+  width: number;
+  height: number;
+}
+
 export function StudentZoomableMedia({
   sources,
   alt,
@@ -35,6 +40,9 @@ export function StudentZoomableMedia({
   const [sourceIndex, setSourceIndex] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
+  const [intrinsicSize, setIntrinsicSize] = useState<IntrinsicSize | null>(null);
+  const [fitScale, setFitScale] = useState(1);
+  const viewportRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const currentSource = normalizedSources[sourceIndex] ?? '';
@@ -43,6 +51,12 @@ export function StudentZoomableMedia({
   useEffect(() => {
     setSourceIndex(0);
   }, [normalizedSources]);
+
+  useEffect(() => {
+    setIntrinsicSize(null);
+    setFitScale(1);
+    setZoom(DEFAULT_ZOOM);
+  }, [currentSource]);
 
   useEffect(() => {
     if (!isOpen) {
@@ -73,6 +87,39 @@ export function StudentZoomableMedia({
     event.preventDefault();
   };
 
+  const recomputeFitScale = () => {
+    if (!isOpen || !viewportRef.current || !intrinsicSize) {
+      return;
+    }
+
+    const viewportRect = viewportRef.current.getBoundingClientRect();
+    const maxWidth = Math.max(1, viewportRect.width);
+    const maxHeight = Math.max(1, viewportRect.height);
+    const naturalWidth = Math.max(1, intrinsicSize.width);
+    const naturalHeight = Math.max(1, intrinsicSize.height);
+    const computed = Math.min(maxWidth / naturalWidth, maxHeight / naturalHeight);
+    setFitScale(Number.isFinite(computed) && computed > 0 ? computed : 1);
+  };
+
+  useEffect(() => {
+    recomputeFitScale();
+    if (!isOpen) {
+      return;
+    }
+
+    const handleViewportChange = () => {
+      recomputeFitScale();
+    };
+
+    window.addEventListener('resize', handleViewportChange);
+    window.addEventListener('orientationchange', handleViewportChange);
+
+    return () => {
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleViewportChange);
+    };
+  }, [intrinsicSize, isOpen]);
+
   const handleOpen = () => {
     if (!currentSource) {
       return;
@@ -94,6 +141,14 @@ export function StudentZoomableMedia({
     setSourceIndex((currentIndex) => Math.min(currentIndex + 1, normalizedSources.length - 1));
   };
 
+  const handleModalImageLoad = (event: React.SyntheticEvent<HTMLImageElement>) => {
+    const nextWidth = event.currentTarget.naturalWidth;
+    const nextHeight = event.currentTarget.naturalHeight;
+    if (nextWidth > 0 && nextHeight > 0) {
+      setIntrinsicSize({ width: nextWidth, height: nextHeight });
+    }
+  };
+
   const adjustZoom = (delta: number) => {
     setZoom((currentZoom) => {
       const nextZoom = Math.round((currentZoom + delta) * 100) / 100;
@@ -101,10 +156,18 @@ export function StudentZoomableMedia({
     });
   };
 
-  const imageZoomStyle = {
-    width: `${Math.round(zoom * 100)}%`,
-    maxWidth: 'none',
-  } as React.CSSProperties;
+  const renderedWidthPx = intrinsicSize ? intrinsicSize.width * fitScale * zoom : null;
+  const renderedHeightPx = intrinsicSize ? intrinsicSize.height * fitScale * zoom : null;
+  const imageZoomStyle = intrinsicSize
+    ? ({
+        width: `${renderedWidthPx}px`,
+        height: `${renderedHeightPx}px`,
+        maxWidth: 'none',
+      } as React.CSSProperties)
+    : ({
+        width: '100%',
+        maxWidth: '100%',
+      } as React.CSSProperties);
 
   const annotationScale = zoom / DEFAULT_ZOOM;
 
@@ -217,22 +280,28 @@ export function StudentZoomableMedia({
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto bg-gray-100 p-4 md:p-6">
+            <div className="flex-1 overflow-auto bg-gray-100 p-4 md:p-6" data-testid="zoom-media-viewport" ref={viewportRef}>
               <div className="mx-auto flex min-h-full w-full justify-center">
                 <div
                   className="relative"
-                  style={{
-                    width: `${Math.round(zoom * 100)}%`,
-                    minWidth: `${Math.round(zoom * 100)}%`,
-                  }}
+                  style={
+                    intrinsicSize
+                      ? {
+                          width: `${renderedWidthPx}px`,
+                          height: `${renderedHeightPx}px`,
+                        }
+                      : undefined
+                  }
                 >
                   <img
                     src={currentSource}
                     alt={alt}
                     className={`block h-auto w-full object-contain ${modalImageClassName ?? ''}`}
+                    data-testid="zoom-media-image"
                     draggable={false}
                     referrerPolicy="no-referrer"
                     onError={handleImageError}
+                    onLoad={handleModalImageLoad}
                     onContextMenu={handleContextMenu}
                     onDragStart={handleContextMenu}
                     style={{

@@ -138,4 +138,38 @@ describe('StudentExamPreview', () => {
     expect(q1Input.value).toBe('ONE');
     expect(q2Input.value).toBe('TWO');
   });
+
+  it('uses the same image zoom fit contract in preview mode', () => {
+    const state = createExamState();
+    state.activeModule = 'reading';
+    state.activePassageId = 'passage-1';
+    state.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Sample',
+        images: [{ id: 'img-1', src: '/preview-image.png', alt: 'Preview chart', annotations: [] }],
+        blocks: [],
+      },
+    ];
+
+    render(
+      <MemoryRouter>
+        <StudentExamPreview state={state} examId="exam-1" initialModule="reading" />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /preview chart\. tap to zoom the passage image/i }));
+
+    const modalImage = screen.getByTestId('zoom-media-image') as HTMLImageElement;
+    Object.defineProperty(modalImage, 'naturalWidth', { configurable: true, value: 1200 });
+    Object.defineProperty(modalImage, 'naturalHeight', { configurable: true, value: 1800 });
+    fireEvent.load(modalImage);
+
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('100%');
+    fireEvent.click(screen.getByRole('button', { name: /zoom in image/i }));
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('120%');
+    fireEvent.click(screen.getByRole('button', { name: /reset image zoom/i }));
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('100%');
+  });
 });

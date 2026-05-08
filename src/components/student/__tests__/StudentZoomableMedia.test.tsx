@@ -1,6 +1,6 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { StudentZoomableMedia } from '../StudentZoomableMedia';
 
 describe('StudentZoomableMedia', () => {
@@ -28,5 +28,50 @@ describe('StudentZoomableMedia', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /zoom in image/i }));
     expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('120%');
+  });
+
+  it('treats 100% as fit-to-viewport baseline and reset returns to that fit', () => {
+    render(
+      <StudentZoomableMedia
+        sources={['/tall-image.png']}
+        alt="Tall chart"
+        label="Tall chart"
+        hint="Tap to zoom the chart"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /tall chart\. tap to zoom the chart/i }));
+
+    const viewport = screen.getByTestId('zoom-media-viewport');
+    const viewportRectSpy = vi.spyOn(viewport, 'getBoundingClientRect');
+    viewportRectSpy.mockReturnValue({
+      width: 800,
+      height: 500,
+      top: 0,
+      left: 0,
+      right: 800,
+      bottom: 500,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    const image = screen.getByTestId('zoom-media-image') as HTMLImageElement;
+    Object.defineProperty(image, 'naturalWidth', { configurable: true, value: 1200 });
+    Object.defineProperty(image, 'naturalHeight', { configurable: true, value: 1800 });
+    fireEvent.load(image);
+
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('100%');
+    expect(parseFloat(image.style.width)).toBeCloseTo(333.3333, 3);
+    expect(parseFloat(image.style.height)).toBeCloseTo(500, 3);
+
+    fireEvent.click(screen.getByRole('button', { name: /zoom in image/i }));
+    expect(parseFloat(image.style.width)).toBeCloseTo(400, 3);
+    expect(parseFloat(image.style.height)).toBeCloseTo(600, 3);
+
+    fireEvent.click(screen.getByRole('button', { name: /reset image zoom/i }));
+    expect(screen.getByRole('button', { name: /reset image zoom/i })).toHaveTextContent('100%');
+    expect(parseFloat(image.style.width)).toBeCloseTo(333.3333, 3);
+    expect(parseFloat(image.style.height)).toBeCloseTo(500, 3);
   });
 });
