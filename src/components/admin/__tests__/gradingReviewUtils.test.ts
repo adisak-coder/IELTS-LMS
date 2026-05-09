@@ -555,14 +555,18 @@ describe('gradingReviewUtils', () => {
       'Section',
       'Total Score',
       'Q1 Answer',
+      'Q1 Right Answer/Answer Key',
       'Correct Q1',
       'Q2 Answer',
+      'Q2 Right Answer/Answer Key',
       'Correct Q2',
     ]);
     expect(exportData.rows[0]?.totalScore).toBe('');
     expect(exportData.rows[0]?.['answer:q-1']).toBe('Alpha');
+    expect(exportData.rows[0]?.['rightAnswer:q-1']).toBe('Alpha');
     expect(exportData.rows[0]?.['manualCorrect:q-1']).toBe('');
     expect(exportData.rows[0]?.['answer:q-2']).toBe('Beta');
+    expect(exportData.rows[0]?.['rightAnswer:q-2']).toBe('Beta');
     expect(exportData.rows[0]?.['manualCorrect:q-2']).toBe('');
   });
 

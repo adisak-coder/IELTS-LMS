@@ -468,6 +468,7 @@ export function buildWideObjectiveExport({
     const label = getQuestionColumnLabel(descriptor, descriptors);
     return [
       { key: `answer:${descriptor.id}`, label: `${label} Answer` },
+      { key: `rightAnswer:${descriptor.id}`, label: `${label} Right Answer/Answer Key` },
       { key: `manualCorrect:${descriptor.id}`, label: `Correct ${label}` },
     ];
   });
@@ -509,6 +510,7 @@ export function buildWideObjectiveExport({
         row[`rightAnswer:${descriptor.id}`] = item?.correctAnswer ?? '';
         row[`score:${descriptor.id}`] = toOptionalNumber(scoredResult?.awardedScore);
       } else {
+        row[`rightAnswer:${descriptor.id}`] = item?.correctAnswer ?? '';
         row[`manualCorrect:${descriptor.id}`] = '';
       }
     }
