@@ -204,7 +204,7 @@ export function RichTextHighlighter({
         ref={containerRef as any}
         className={className}
         data-student-highlightable="true"
-        style={enabled ? { WebkitUserSelect: 'text', userSelect: 'text', touchAction: 'auto' } : undefined}
+        style={{ WebkitUserSelect: 'text', userSelect: 'text', ...(enabled ? { touchAction: 'auto' } : {}) }}
         onClick={removeTappedHighlight}
         onMouseUp={enabled && !showHighlightButton ? handleMouseUp : undefined}
         onTouchStart={enabled && !showHighlightButton ? startTouchSelectionSession : undefined}

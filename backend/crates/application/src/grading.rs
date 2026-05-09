@@ -14,7 +14,7 @@ use ielts_backend_infrastructure::{
     actor_context::ActorContext, actor_context::ActorRole, authorization::AuthorizationService,
 };
 use serde_json::{json, Map, Value};
-use sqlx::{FromRow, MySqlPool};
+use sqlx::{FromRow, MySql, MySqlPool, QueryBuilder};
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 use uuid::{fmt::Hyphenated, Uuid};
@@ -46,6 +46,28 @@ pub struct GradingProjectionReport {
     pub writing_task_rows_synced: u64,
     pub affected_schedule_ids: HashSet<String>,
     pub next_watermark: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ObjectiveAutoGradingBackfillRequest {
+    pub apply: bool,
+    pub schedule_id: Option<String>,
+    pub exam_id: Option<String>,
+    pub published_version_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub submission_id: Option<String>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ObjectiveAutoGradingBackfillReport {
+    pub attempts_scanned: u64,
+    pub submissions_matched: u64,
+    pub submissions_missing: u64,
+    pub sections_checked: u64,
+    pub sections_needing_update: u64,
+    pub sections_updated: u64,
+    pub submissions_updated: u64,
 }
 
 pub struct GradingService {
@@ -1147,6 +1169,152 @@ impl GradingService {
         })
     }
 
+    pub async fn backfill_objective_auto_grading(
+        &self,
+        request: ObjectiveAutoGradingBackfillRequest,
+    ) -> Result<ObjectiveAutoGradingBackfillReport, GradingError> {
+        let mut builder = QueryBuilder::<MySql>::new(
+            r#"
+            SELECT
+                a.id,
+                a.schedule_id,
+                a.exam_id,
+                a.published_version_id,
+                a.candidate_id,
+                a.candidate_name,
+                a.candidate_email,
+                s.cohort_name,
+                a.submitted_at,
+                a.final_submission,
+                v.content_snapshot,
+                v.config_snapshot,
+                a.updated_at
+            FROM student_attempts a
+            JOIN exam_schedules s ON s.id = a.schedule_id
+            JOIN exam_versions v ON v.id = a.published_version_id
+            WHERE a.submitted_at IS NOT NULL
+            "#,
+        );
+
+        if let Some(schedule_id) = request.schedule_id.as_deref() {
+            builder
+                .push(" AND a.schedule_id = ")
+                .push_bind(schedule_id);
+        }
+        if let Some(exam_id) = request.exam_id.as_deref() {
+            builder.push(" AND a.exam_id = ").push_bind(exam_id);
+        }
+        if let Some(published_version_id) = request.published_version_id.as_deref() {
+            builder
+                .push(" AND a.published_version_id = ")
+                .push_bind(published_version_id);
+        }
+        if let Some(attempt_id) = request.attempt_id.as_deref() {
+            builder.push(" AND a.id = ").push_bind(attempt_id);
+        }
+
+        builder.push(" ORDER BY a.updated_at ASC, a.id ASC");
+        if let Some(limit) = request.limit.map(|value| value.max(1)) {
+            let limit_i64 = i64::try_from(limit).unwrap_or(i64::MAX);
+            builder.push(" LIMIT ").push_bind(limit_i64);
+        }
+
+        let attempts: Vec<AttemptSubmissionRow> =
+            builder.build_query_as().fetch_all(&self.pool).await?;
+        let mut report = ObjectiveAutoGradingBackfillReport::default();
+        report.attempts_scanned = attempts.len() as u64;
+
+        for attempt in attempts {
+            let attempt_id = attempt.id.to_string();
+            let submission = sqlx::query_as::<_, StudentSubmission>(
+                "SELECT * FROM student_submissions WHERE attempt_id = ?",
+            )
+            .bind(&attempt_id)
+            .fetch_optional(&self.pool)
+            .await?;
+
+            let Some(submission) = submission else {
+                report.submissions_missing = report.submissions_missing.saturating_add(1);
+                continue;
+            };
+
+            if let Some(submission_id_filter) = request.submission_id.as_deref() {
+                if submission.id != submission_id_filter {
+                    continue;
+                }
+            }
+
+            report.submissions_matched = report.submissions_matched.saturating_add(1);
+
+            let answers = attempt
+                .final_submission
+                .get("answers")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let answer_sections = build_objective_answer_sections(&attempt.content_snapshot);
+            let listening_answers =
+                filter_answers_for_section(&answers, &answer_sections, "listening");
+            let reading_answers = filter_answers_for_section(&answers, &answer_sections, "reading");
+            let listening_auto_results = compute_objective_auto_grading_results(
+                "listening",
+                &listening_answers,
+                &attempt.content_snapshot,
+                submission.submitted_at,
+            );
+            let reading_auto_results = compute_objective_auto_grading_results(
+                "reading",
+                &reading_answers,
+                &attempt.content_snapshot,
+                submission.submitted_at,
+            );
+
+            let existing_sections = sqlx::query_as::<_, SectionSubmission>(
+                "SELECT * FROM section_submissions WHERE submission_id = ? AND section IN ('listening', 'reading')",
+            )
+            .bind(&submission.id)
+            .fetch_all(&self.pool)
+            .await?;
+
+            let existing_map = existing_sections
+                .into_iter()
+                .map(|section| (section.section, section.auto_grading_results.map(Into::into)))
+                .collect::<HashMap<String, Option<Value>>>();
+
+            let listening_needs_update = existing_map
+                .get("listening")
+                .and_then(|value| value.as_ref())
+                .is_none_or(|value| *value != listening_auto_results);
+            let reading_needs_update = existing_map
+                .get("reading")
+                .and_then(|value| value.as_ref())
+                .is_none_or(|value| *value != reading_auto_results);
+
+            report.sections_checked = report.sections_checked.saturating_add(2);
+            if listening_needs_update {
+                report.sections_needing_update = report.sections_needing_update.saturating_add(1);
+            }
+            if reading_needs_update {
+                report.sections_needing_update = report.sections_needing_update.saturating_add(1);
+            }
+
+            if request.apply && (listening_needs_update || reading_needs_update) {
+                self.ensure_objective_section_submissions(
+                    &submission,
+                    &attempt.final_submission,
+                    &attempt.content_snapshot,
+                    &attempt.config_snapshot,
+                )
+                .await?;
+                report.submissions_updated = report.submissions_updated.saturating_add(1);
+                report.sections_updated = report
+                    .sections_updated
+                    .saturating_add(u64::from(listening_needs_update) + u64::from(reading_needs_update));
+            }
+        }
+
+        Ok(report)
+    }
+
     async fn ensure_materialized_state(&self) -> Result<(), GradingError> {
         self.run_projection_cycle(GradingProjectionRequest::default())
             .await?;
@@ -1497,6 +1665,41 @@ impl GradingService {
         content_snapshot: &Value,
         config_snapshot: &Value,
     ) -> Result<SectionSyncReport, GradingError> {
+        self.ensure_section_submissions_with_mode(
+            submission,
+            final_submission,
+            content_snapshot,
+            config_snapshot,
+            SectionSyncMode::Full,
+        )
+        .await
+    }
+
+    async fn ensure_objective_section_submissions(
+        &self,
+        submission: &StudentSubmission,
+        final_submission: &Value,
+        content_snapshot: &Value,
+        config_snapshot: &Value,
+    ) -> Result<SectionSyncReport, GradingError> {
+        self.ensure_section_submissions_with_mode(
+            submission,
+            final_submission,
+            content_snapshot,
+            config_snapshot,
+            SectionSyncMode::ObjectiveOnly,
+        )
+        .await
+    }
+
+    async fn ensure_section_submissions_with_mode(
+        &self,
+        submission: &StudentSubmission,
+        final_submission: &Value,
+        content_snapshot: &Value,
+        config_snapshot: &Value,
+        mode: SectionSyncMode,
+    ) -> Result<SectionSyncReport, GradingError> {
         let answers = final_submission
             .get("answers")
             .cloned()
@@ -1506,51 +1709,23 @@ impl GradingService {
             .cloned()
             .unwrap_or_else(|| json!({}));
         let submitted_at = submission.submitted_at;
-        let answer_sections = build_objective_answer_sections(content_snapshot);
-        let listening_answers = filter_answers_for_section(&answers, &answer_sections, "listening");
-        let reading_answers = filter_answers_for_section(&answers, &answer_sections, "reading");
-        let listening_auto_results = compute_objective_auto_grading_results(
-            "listening",
-            &listening_answers,
+        let section_specs = build_section_sync_specs(
+            mode,
+            &answers,
+            &writing_answers,
             content_snapshot,
-            submitted_at,
-        );
-        let reading_auto_results = compute_objective_auto_grading_results(
-            "reading",
-            &reading_answers,
-            content_snapshot,
+            config_snapshot,
             submitted_at,
         );
         let mut section_rows_synced: u64 = 0;
         let mut writing_task_rows_synced: u64 = 0;
 
-        for (section, payload, status) in [
-            (
-                "listening",
-                json!({ "type": "listening", "answers": listening_answers }),
-                SectionGradingStatus::AutoGraded,
-            ),
-            (
-                "reading",
-                json!({ "type": "reading", "answers": reading_answers }),
-                SectionGradingStatus::AutoGraded,
-            ),
-            (
-                "writing",
-                json!({ "type": "writing", "tasks": writing_task_array(&writing_answers, content_snapshot, config_snapshot) }),
-                SectionGradingStatus::NeedsReview,
-            ),
-            (
-                "speaking",
-                json!({ "type": "speaking", "responses": [] }),
-                SectionGradingStatus::Pending,
-            ),
-        ] {
+        for section_spec in section_specs {
             let existing_section_id = sqlx::query_scalar::<_, String>(
                 "SELECT id FROM section_submissions WHERE submission_id = ? AND section = ?",
             )
             .bind(&submission.id)
-            .bind(section)
+            .bind(section_spec.section)
             .fetch_optional(&self.pool)
             .await?;
             let section_id = existing_section_id.unwrap_or_else(|| Uuid::new_v4().to_string());
@@ -1563,36 +1738,22 @@ impl GradingService {
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE
                     answers = VALUES(answers),
-                    auto_grading_results = COALESCE(auto_grading_results, VALUES(auto_grading_results)),
+                    auto_grading_results = VALUES(auto_grading_results),
                     submitted_at = VALUES(submitted_at)
                 "#,
             )
             .bind(&section_id)
             .bind(&submission.id)
-            .bind(section)
-            .bind(&payload)
-            .bind(if matches!(status, SectionGradingStatus::AutoGraded) {
-                Some(match section {
-                    "listening" => listening_auto_results.clone(),
-                    "reading" => reading_auto_results.clone(),
-                    _ => json!({
-                        "generatedAt": submitted_at,
-                        "totalScore": 0,
-                        "maxScore": 0,
-                        "percentage": 0,
-                        "questionResults": []
-                    }),
-                })
-            } else {
-                None
-            })
-            .bind(status)
+            .bind(section_spec.section)
+            .bind(&section_spec.payload)
+            .bind(section_spec.auto_grading_results)
+            .bind(section_spec.grading_status)
             .bind(submitted_at)
             .execute(&self.pool)
             .await?;
             section_rows_synced = section_rows_synced.saturating_add(1);
 
-            if section == "writing" {
+            if section_spec.section == "writing" {
                 let tasks =
                     writing_task_entries(&writing_answers, content_snapshot, config_snapshot);
                 for (task_id, value) in tasks {
@@ -1763,6 +1924,77 @@ struct SubmissionSyncReport {
     writing_task_rows_synced: u64,
     affected_schedule_ids: HashSet<String>,
     max_updated_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SectionSyncMode {
+    Full,
+    ObjectiveOnly,
+}
+
+#[derive(Debug, Clone)]
+struct SectionSyncSpec {
+    section: &'static str,
+    payload: Value,
+    auto_grading_results: Option<Value>,
+    grading_status: SectionGradingStatus,
+}
+
+fn build_section_sync_specs(
+    mode: SectionSyncMode,
+    answers: &Value,
+    writing_answers: &Value,
+    content_snapshot: &Value,
+    config_snapshot: &Value,
+    submitted_at: DateTime<Utc>,
+) -> Vec<SectionSyncSpec> {
+    let answer_sections = build_objective_answer_sections(content_snapshot);
+    let listening_answers = filter_answers_for_section(answers, &answer_sections, "listening");
+    let reading_answers = filter_answers_for_section(answers, &answer_sections, "reading");
+    let listening_auto_results = compute_objective_auto_grading_results(
+        "listening",
+        &listening_answers,
+        content_snapshot,
+        submitted_at,
+    );
+    let reading_auto_results = compute_objective_auto_grading_results(
+        "reading",
+        &reading_answers,
+        content_snapshot,
+        submitted_at,
+    );
+
+    let mut specs = vec![
+        SectionSyncSpec {
+            section: "listening",
+            payload: json!({ "type": "listening", "answers": listening_answers }),
+            auto_grading_results: Some(listening_auto_results),
+            grading_status: SectionGradingStatus::AutoGraded,
+        },
+        SectionSyncSpec {
+            section: "reading",
+            payload: json!({ "type": "reading", "answers": reading_answers }),
+            auto_grading_results: Some(reading_auto_results),
+            grading_status: SectionGradingStatus::AutoGraded,
+        },
+    ];
+
+    if mode == SectionSyncMode::Full {
+        specs.push(SectionSyncSpec {
+            section: "writing",
+            payload: json!({ "type": "writing", "tasks": writing_task_array(writing_answers, content_snapshot, config_snapshot) }),
+            auto_grading_results: None,
+            grading_status: SectionGradingStatus::NeedsReview,
+        });
+        specs.push(SectionSyncSpec {
+            section: "speaking",
+            payload: json!({ "type": "speaking", "responses": [] }),
+            auto_grading_results: None,
+            grading_status: SectionGradingStatus::Pending,
+        });
+    }
+
+    specs
 }
 
 fn map_schedule_status(status: ScheduleStatus) -> GradingSessionStatus {
@@ -2296,7 +2528,11 @@ fn compute_objective_auto_grading_results(
     content_snapshot: &Value,
     submitted_at: DateTime<Utc>,
 ) -> Value {
-    let answer_map = section_answers.as_object();
+    let answer_map = build_effective_objective_answer_map(
+        section_key,
+        section_answers,
+        content_snapshot,
+    );
     let specs = build_objective_scoring_specs(content_snapshot, section_key);
     let mut total_score = 0i64;
     let mut max_score = 0i64;
@@ -2305,7 +2541,7 @@ fn compute_objective_auto_grading_results(
     for spec in specs {
         max_score += 1;
         let student_answer = answer_map
-            .and_then(|answers| answers.get(&spec.question_id))
+            .get(&spec.question_id)
             .cloned()
             .unwrap_or(Value::Null);
         let is_correct = spec.expected.matches(&student_answer);
@@ -2338,6 +2574,206 @@ fn compute_objective_auto_grading_results(
         "percentage": percentage,
         "questionResults": question_results
     })
+}
+
+fn build_effective_objective_answer_map(
+    section_key: &str,
+    section_answers: &Value,
+    content_snapshot: &Value,
+) -> Map<String, Value> {
+    let base_answers = section_answers.as_object().cloned().unwrap_or_default();
+    let mut expanded = base_answers.clone();
+
+    let mut index_slots_for_blocks = |blocks: &[Value]| {
+        for block in blocks {
+            index_block_slot_answer_aliases(block, &base_answers, &mut expanded);
+        }
+    };
+
+    match section_key {
+        "reading" => {
+            if let Some(passages) = content_snapshot
+                .get("reading")
+                .and_then(|reading| reading.get("passages"))
+                .and_then(Value::as_array)
+            {
+                for passage in passages {
+                    if let Some(blocks) = passage.get("blocks").and_then(Value::as_array) {
+                        index_slots_for_blocks(blocks);
+                    }
+                }
+            }
+        }
+        "listening" => {
+            if let Some(parts) = content_snapshot
+                .get("listening")
+                .and_then(|listening| listening.get("parts"))
+                .and_then(Value::as_array)
+            {
+                for part in parts {
+                    if let Some(blocks) = part.get("blocks").and_then(Value::as_array) {
+                        index_slots_for_blocks(blocks);
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+
+    expanded
+}
+
+fn index_block_slot_answer_aliases(
+    block: &Value,
+    base_answers: &Map<String, Value>,
+    expanded: &mut Map<String, Value>,
+) {
+    let Some(block_type) = block.get("type").and_then(Value::as_str) else {
+        return;
+    };
+
+    match block_type {
+        "SENTENCE_COMPLETION" | "NOTE_COMPLETION" => {
+            if let Some(questions) = block.get("questions").and_then(Value::as_array) {
+                for question in questions {
+                    let Some(question_id) = question.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    if let Some(blanks) = question.get("blanks").and_then(Value::as_array) {
+                        for (blank_index, blank) in blanks.iter().enumerate() {
+                            let Some(blank_id) = blank.get("id").and_then(Value::as_str) else {
+                                continue;
+                            };
+                            copy_array_slot_alias(
+                                base_answers,
+                                expanded,
+                                question_id,
+                                blank_index,
+                                &format!("{question_id}:{blank_id}"),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        "DIAGRAM_LABELING" => {
+            let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(labels) = block.get("labels").and_then(Value::as_array) {
+                for (label_index, label) in labels.iter().enumerate() {
+                    let Some(label_id) = label.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    copy_array_slot_alias(
+                        base_answers,
+                        expanded,
+                        block_id,
+                        label_index,
+                        &format!("{block_id}:{label_id}"),
+                    );
+                }
+            }
+        }
+        "FLOW_CHART" => {
+            let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(steps) = block.get("steps").and_then(Value::as_array) {
+                for (step_index, step) in steps.iter().enumerate() {
+                    let Some(step_id) = step.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    copy_array_slot_alias(
+                        base_answers,
+                        expanded,
+                        block_id,
+                        step_index,
+                        &format!("{block_id}:{step_id}"),
+                    );
+                }
+            }
+        }
+        "TABLE_COMPLETION" => {
+            let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(cells) = block.get("cells").and_then(Value::as_array) {
+                for (cell_index, cell) in cells.iter().enumerate() {
+                    let Some(cell_id) = cell.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    copy_array_slot_alias(
+                        base_answers,
+                        expanded,
+                        block_id,
+                        cell_index,
+                        &format!("{block_id}:{cell_id}"),
+                    );
+                }
+            }
+        }
+        "CLASSIFICATION" => {
+            let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(items) = block.get("items").and_then(Value::as_array) {
+                for (item_index, item) in items.iter().enumerate() {
+                    let Some(item_id) = item.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    copy_array_slot_alias(
+                        base_answers,
+                        expanded,
+                        block_id,
+                        item_index,
+                        &format!("{block_id}:{item_id}"),
+                    );
+                }
+            }
+        }
+        "MATCHING_FEATURES" => {
+            let Some(block_id) = block.get("id").and_then(Value::as_str) else {
+                return;
+            };
+            if let Some(features) = block.get("features").and_then(Value::as_array) {
+                for (feature_index, feature) in features.iter().enumerate() {
+                    let Some(feature_id) = feature.get("id").and_then(Value::as_str) else {
+                        continue;
+                    };
+                    copy_array_slot_alias(
+                        base_answers,
+                        expanded,
+                        block_id,
+                        feature_index,
+                        &format!("{block_id}:{feature_id}"),
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn copy_array_slot_alias(
+    base_answers: &Map<String, Value>,
+    expanded: &mut Map<String, Value>,
+    array_question_id: &str,
+    slot_index: usize,
+    slot_question_id: &str,
+) {
+    if expanded.contains_key(slot_question_id) {
+        return;
+    }
+
+    let Some(values) = base_answers.get(array_question_id).and_then(Value::as_array) else {
+        return;
+    };
+    let Some(slot_value) = values.get(slot_index) else {
+        return;
+    };
+
+    expanded.insert(slot_question_id.to_owned(), slot_value.clone());
 }
 
 fn build_objective_scoring_specs(
@@ -2775,28 +3211,45 @@ fn resolve_accepted_answers(
 
     if let Some(values) = accepted_answers.and_then(Value::as_array) {
         for value in values.iter().filter_map(Value::as_str) {
-            let trimmed = value.trim();
-            if trimmed.is_empty() {
-                continue;
+            for variant in split_accepted_answer_variants(value) {
+                let trimmed = variant.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let canonical = canonicalize_answer_for_matching(trimmed);
+                if canonical.is_empty() || !seen.insert(canonical) {
+                    continue;
+                }
+                resolved.push(trimmed.to_owned());
             }
-            let canonical = canonicalize_answer_for_matching(trimmed);
-            if canonical.is_empty() || !seen.insert(canonical) {
-                continue;
-            }
-            resolved.push(trimmed.to_owned());
         }
     }
 
     if resolved.is_empty() {
         if let Some(correct) = correct_answer.and_then(Value::as_str) {
-            let trimmed = correct.trim();
-            if !trimmed.is_empty() {
+            for variant in split_accepted_answer_variants(correct) {
+                let trimmed = variant.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let canonical = canonicalize_answer_for_matching(trimmed);
+                if canonical.is_empty() || !seen.insert(canonical) {
+                    continue;
+                }
                 resolved.push(trimmed.to_owned());
             }
         }
     }
 
     resolved
+}
+
+fn split_accepted_answer_variants(value: &str) -> Vec<&str> {
+    if value.contains('|') {
+        value.split('|').collect::<Vec<_>>()
+    } else {
+        vec![value]
+    }
 }
 
 fn canonical_text_values(value: &Value) -> Vec<String> {
@@ -3314,6 +3767,115 @@ mod tests {
                 "l-match-features:f2": "Y"
             })
         );
+    }
+
+    #[test]
+    fn objective_auto_grading_supports_array_backed_slot_answers_and_case_insensitive_match() {
+        let section_answers = json!({
+            "sentence-1": ["HALF WAY"]
+        });
+        let content_snapshot = json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "sentence-block-1",
+                        "type": "SENTENCE_COMPLETION",
+                        "questions": [{
+                            "id": "sentence-1",
+                            "blanks": [{ "id": "blank-1", "correctAnswer": "half way" }]
+                        }]
+                    }]
+                }]
+            }
+        });
+
+        let results = compute_objective_auto_grading_results(
+            "reading",
+            &section_answers,
+            &content_snapshot,
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        assert_eq!(results["totalScore"], 1);
+        assert_eq!(results["maxScore"], 1);
+        assert_eq!(results["questionResults"][0]["questionId"], "sentence-1:blank-1");
+        assert_eq!(results["questionResults"][0]["studentAnswer"], "HALF WAY");
+        assert_eq!(results["questionResults"][0]["correctAnswer"], "half way");
+        assert_eq!(results["questionResults"][0]["isCorrect"], true);
+    }
+
+    #[test]
+    fn objective_auto_grading_treats_pipe_delimited_correct_answer_as_alternatives() {
+        let section_answers = json!({
+            "short-1": "triangular graph"
+        });
+        let content_snapshot = json!({
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "id": "short-block-1",
+                        "type": "SHORT_ANSWER",
+                        "questions": [{
+                            "id": "short-1",
+                            "correctAnswer": "graph | triangular graph"
+                        }]
+                    }]
+                }]
+            }
+        });
+
+        let results = compute_objective_auto_grading_results(
+            "reading",
+            &section_answers,
+            &content_snapshot,
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        );
+
+        assert_eq!(results["totalScore"], 1);
+        assert_eq!(results["maxScore"], 1);
+        assert_eq!(results["questionResults"][0]["questionId"], "short-1");
+        assert_eq!(results["questionResults"][0]["isCorrect"], true);
+    }
+
+    #[test]
+    fn objective_only_section_sync_plan_excludes_writing_and_speaking() {
+        let answers = json!({
+            "l-q1": "A",
+            "r-q1": "B"
+        });
+        let content_snapshot = json!({
+            "listening": {
+                "parts": [{
+                    "blocks": [{
+                        "type": "SHORT_ANSWER",
+                        "questions": [{ "id": "l-q1", "correctAnswer": "A" }]
+                    }]
+                }]
+            },
+            "reading": {
+                "passages": [{
+                    "blocks": [{
+                        "type": "SHORT_ANSWER",
+                        "questions": [{ "id": "r-q1", "correctAnswer": "B" }]
+                    }]
+                }]
+            }
+        });
+
+        let specs = build_section_sync_specs(
+            SectionSyncMode::ObjectiveOnly,
+            &answers,
+            &json!({}),
+            &content_snapshot,
+            &json!({}),
+            Utc.with_ymd_and_hms(2026, 1, 1, 0, 0, 0).unwrap(),
+        );
+        let sections = specs
+            .iter()
+            .map(|spec| spec.section)
+            .collect::<Vec<_>>();
+
+        assert_eq!(sections, vec!["listening", "reading"]);
     }
 }
 

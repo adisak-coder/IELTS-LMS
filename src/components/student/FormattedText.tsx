@@ -37,34 +37,49 @@ export function FormattedText({
   preserveInlineEmphasis = false,
 }: FormattedTextProps) {
   const Tag = as as any;
-  const segments = useMemo(
-    () => (preserveInlineEmphasis ? parseRichMarkdown(text) : parseBoldMarkdown(text)),
-    [preserveInlineEmphasis, text],
+  const shouldSplitParagraphs = as === 'div' && /\n\n/.test(text);
+  const paragraphTexts = useMemo(() => {
+    if (!shouldSplitParagraphs) return [text];
+    return text.split(/\n\n+/).filter(Boolean);
+  }, [shouldSplitParagraphs, text]);
+  const paragraphSegments = useMemo(
+    () =>
+      paragraphTexts.map((pText) =>
+        preserveInlineEmphasis ? parseRichMarkdown(pText) : parseBoldMarkdown(pText),
+      ),
+    [preserveInlineEmphasis, paragraphTexts],
   );
-  const classes = ['whitespace-pre-wrap', 'break-words', className].filter(Boolean).join(' ');
+  const classes = shouldSplitParagraphs
+    ? ['break-words', className].filter(Boolean).join(' ')
+    : ['whitespace-pre-wrap', 'break-words', className].filter(Boolean).join(' ');
   const containerRef = useRef<HTMLElement | null>(null);
   const lastMouseSelectionIntentAtRef = useRef<number | null>(null);
   const initialHtml = useMemo(
     () =>
-      segments
-        .map((segment) => {
-          const escapedText = escapeHtml(segment.text);
-          const isBold = Boolean(segment.bold);
-          const isItalic = preserveInlineEmphasis ? Boolean((segment as { italic?: boolean }).italic) : false;
+      paragraphSegments
+        .map((segments) => {
+          const content = segments
+            .map((segment) => {
+              const escapedText = escapeHtml(segment.text);
+              const isBold = Boolean(segment.bold);
+              const isItalic = preserveInlineEmphasis ? Boolean((segment as { italic?: boolean }).italic) : false;
 
-          if (isBold && isItalic) {
-            return `<strong><em>${escapedText}</em></strong>`;
-          }
-          if (isBold) {
-            return `<strong>${escapedText}</strong>`;
-          }
-          if (isItalic) {
-            return `<em>${escapedText}</em>`;
-          }
-          return escapedText;
+              if (isBold && isItalic) {
+                return `<strong><em>${escapedText}</em></strong>`;
+              }
+              if (isBold) {
+                return `<strong>${escapedText}</strong>`;
+              }
+              if (isItalic) {
+                return `<em>${escapedText}</em>`;
+              }
+              return escapedText;
+            })
+            .join('');
+          return shouldSplitParagraphs ? `<p class="whitespace-pre-wrap break-words">${content}</p>` : content;
         })
         .join(''),
-    [segments],
+    [paragraphSegments, preserveInlineEmphasis, shouldSplitParagraphs],
   );
   const { html, setHtml, hasPersistedHtml } = usePersistedStudentHighlightHtml(
     initialHtml,
@@ -234,25 +249,41 @@ export function FormattedText({
     );
   }
 
+  const renderSegment = (
+    segment: { text: string; bold: boolean; italic?: boolean },
+    index: number,
+  ) =>
+    segment.bold ? (
+      preserveInlineEmphasis && segment.italic ? (
+        <strong key={index} className="font-bold">
+          <em>{segment.text}</em>
+        </strong>
+      ) : (
+        <strong key={index} className="font-bold">
+          {segment.text}
+        </strong>
+      )
+    ) : preserveInlineEmphasis && segment.italic ? (
+      <em key={index}>{segment.text}</em>
+    ) : (
+      <React.Fragment key={index}>{segment.text}</React.Fragment>
+    );
+
+  if (shouldSplitParagraphs) {
+    return (
+      <Tag className={classes}>
+        {paragraphSegments.map((segments, pIdx) => (
+          <p key={pIdx} className="whitespace-pre-wrap break-words">
+            {segments.map((segment, index) => renderSegment(segment, index))}
+          </p>
+        ))}
+      </Tag>
+    );
+  }
+
   return (
     <Tag className={classes}>
-      {segments.map((segment, index) =>
-        segment.bold ? (
-          preserveInlineEmphasis && (segment as { italic?: boolean }).italic ? (
-            <strong key={index} className="font-bold">
-              <em>{segment.text}</em>
-            </strong>
-          ) : (
-            <strong key={index} className="font-bold">
-              {segment.text}
-            </strong>
-          )
-        ) : preserveInlineEmphasis && (segment as { italic?: boolean }).italic ? (
-          <em key={index}>{segment.text}</em>
-        ) : (
-          <React.Fragment key={index}>{segment.text}</React.Fragment>
-        ),
-      )}
+      {paragraphSegments[0]?.map((segment, index) => renderSegment(segment, index))}
     </Tag>
   );
 }

@@ -3,6 +3,10 @@ export interface AcceptsAlternativeAnswers {
   acceptedAnswers?: string[] | undefined;
 }
 
+function splitAnswerVariants(value: string): string[] {
+  return value.includes('|') ? value.split('|') : [value];
+}
+
 export function normalizeAnswerForMatching(value: string): string {
   return value
     .normalize('NFKC')
@@ -20,18 +24,21 @@ export function sanitizeAcceptedAnswers(acceptedAnswers: readonly string[] | und
   const sanitized: string[] = [];
 
   for (const value of acceptedAnswers ?? []) {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      continue;
-    }
+    const variants = splitAnswerVariants(value);
+    for (const variant of variants) {
+      const trimmed = variant.trim();
+      if (!trimmed) {
+        continue;
+      }
 
-    const key = normalizeAnswerForMatching(trimmed);
-    if (!key || seen.has(key)) {
-      continue;
-    }
+      const key = normalizeAnswerForMatching(trimmed);
+      if (!key || seen.has(key)) {
+        continue;
+      }
 
-    seen.add(key);
-    sanitized.push(trimmed);
+      seen.add(key);
+      sanitized.push(trimmed);
+    }
   }
 
   return sanitized;
@@ -43,8 +50,7 @@ export function resolveAcceptedAnswers(entry: AcceptsAlternativeAnswers): string
     return fromAccepted;
   }
 
-  const fallback = entry.correctAnswer.trim();
-  return fallback ? [fallback] : [];
+  return sanitizeAcceptedAnswers(splitAnswerVariants(entry.correctAnswer));
 }
 
 export function buildAcceptedAnswerFields(acceptedAnswers: readonly string[]): {
