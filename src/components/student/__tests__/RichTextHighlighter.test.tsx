@@ -31,4 +31,18 @@ describe('RichTextHighlighter user-select', () => {
     expect(wrapper).not.toBeNull();
     expect(wrapper.style.userSelect).toBe('text');
   });
+
+  it('sets touchAction:auto when enabled=false so touch text selection works in passage pane', () => {
+    const { container } = render(
+      <RichTextHighlighter
+        content="<p>Hello world</p>"
+        contentType="html"
+        enabled={false}
+      />,
+    );
+
+    const wrapper = container.firstElementChild as HTMLElement;
+    expect(wrapper).not.toBeNull();
+    expect(wrapper.style.touchAction).toBe('auto');
+  });
 });

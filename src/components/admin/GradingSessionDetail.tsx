@@ -343,6 +343,16 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
         return;
       }
 
+      const objectiveSection =
+        section === 'reading_manual'
+          ? 'reading'
+          : section === 'listening_manual'
+            ? 'listening'
+            : section;
+      const exportMode = section === 'reading_manual' || section === 'listening_manual'
+        ? 'manual'
+        : 'auto';
+
       const examState = await resolveExamState(fullSession.publishedVersionId);
       const bundles = await Promise.all(
         fullSubmissions.map(async (submission) => ({
@@ -359,14 +369,20 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
         submissions: bundles.map(({ submission }) => submission),
         sectionSubmissions: bundles.map(({ submission, sections }) => ({
           submissionId: submission.id,
-          sectionSubmission: sections.find((item) => item.section === section),
+          sectionSubmission: sections.find((item) => item.section === objectiveSection),
         })),
         examState,
-        moduleType: section,
+        moduleType: objectiveSection,
+        mode: exportMode,
       });
 
       downloadCsvFile(
-        buildCsvFilename(fullSession.examTitle, section, fullSession.cohortName),
+        buildCsvFilename(
+          fullSession.examTitle,
+          objectiveSection,
+          fullSession.cohortName,
+          exportMode === 'manual' ? 'manual-check' : undefined,
+        ),
         buildCsvContent(exportPayload.columns, exportPayload.rows),
       );
     } catch (error) {
@@ -666,7 +682,9 @@ export function GradingSessionDetail({ sessionId, onBack, onStudentSelect }: Gra
           <GradingExportButtons
             exportingSection={exportingSection}
             onExportReading={() => void handleExportSection('reading')}
+            onExportReadingManual={() => void handleExportSection('reading_manual')}
             onExportListening={() => void handleExportSection('listening')}
+            onExportListeningManual={() => void handleExportSection('listening_manual')}
             onPrintWriting={() => void handleExportSection('writing')}
           />
         </div>

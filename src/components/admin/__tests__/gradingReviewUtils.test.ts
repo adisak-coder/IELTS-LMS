@@ -507,6 +507,59 @@ describe('gradingReviewUtils', () => {
     expect(exportData.rows[0]?.ieltsBandScore).toBe(2.5);
   });
 
+  test('builds manual-check export with empty total score and correct columns', () => {
+    const examState = createInitialExamState('Exam', 'Academic');
+    examState.reading.passages = [
+      {
+        id: 'passage-1',
+        title: 'Passage 1',
+        content: 'Content',
+        blocks: [
+          {
+            id: 'block-1',
+            type: 'SHORT_ANSWER',
+            instruction: 'Answer the question.',
+            questions: [
+              { id: 'q-1', prompt: 'First?', correctAnswer: 'Alpha', answerRule: 'ONE_WORD' },
+            ],
+          },
+        ],
+        images: [],
+        wordCount: 1,
+      },
+    ];
+
+    const exportData = buildWideObjectiveExport({
+      session: { sessionId: 'session-1', examTitle: 'Exam' },
+      submissions: [createStudentSubmission('sub-1', 'stu-1', 'Student One')],
+      sectionSubmissions: [
+        {
+          submissionId: 'sub-1',
+          sectionSubmission: createSectionSubmission('sub-1', 'reading', { 'q-1': 'Alpha' }, [
+            createQuestionResult('q-1', true, 1),
+          ]),
+        },
+      ],
+      examState,
+      moduleType: 'reading',
+      mode: 'manual',
+    });
+
+    expect(exportData.columns.map((column) => column.label)).toEqual([
+      'Exam Title',
+      'Student Name',
+      'Student ID',
+      'Student Email',
+      'Section',
+      'Total Score',
+      'Q1 Answer',
+      'Correct Q1',
+    ]);
+    expect(exportData.rows[0]?.totalScore).toBe('');
+    expect(exportData.rows[0]?.['answer:q-1']).toBe('Alpha');
+    expect(exportData.rows[0]?.['manualCorrect:q-1']).toBe('');
+  });
+
   test('leaves missing objective answers and unscored questions blank', () => {
     const examState = createInitialExamState('Exam', 'Academic');
     examState.reading.passages = [

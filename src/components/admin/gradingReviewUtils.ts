@@ -19,7 +19,12 @@ import {
 } from './gradingAnswerUtils';
 import { htmlToPlainText, htmlToPlainTextPreserveLineBreaks } from '../../utils/htmlText';
 
-export type GradingExportSection = 'reading' | 'listening' | 'writing';
+export type GradingExportSection =
+  | 'reading'
+  | 'listening'
+  | 'reading_manual'
+  | 'listening_manual'
+  | 'writing';
 
 export interface CsvColumn {
   key: string;
@@ -88,6 +93,15 @@ export const OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS: CsvColumn[] = [
   { key: 'maxScore', label: 'Max Score' },
   { key: 'percentage', label: 'Percentage' },
   { key: 'correctCount', label: 'Correct Count' },
+];
+
+export const OBJECTIVE_WIDE_MANUAL_EXPORT_BASE_COLUMNS: CsvColumn[] = [
+  { key: 'examTitle', label: 'Exam Title' },
+  { key: 'studentName', label: 'Student Name' },
+  { key: 'studentId', label: 'Student ID' },
+  { key: 'studentEmail', label: 'Student Email' },
+  { key: 'section', label: 'Section' },
+  { key: 'totalScore', label: 'Total Score' },
 ];
 
 export const WRITING_EXPORT_COLUMNS: CsvColumn[] = [
@@ -288,12 +302,15 @@ export interface WideObjectiveExportInput {
   }>;
   examState: ExamState | null;
   moduleType: 'reading' | 'listening';
+  mode?: ObjectiveWideExportMode;
 }
 
 export interface WideObjectiveExport {
   columns: CsvColumn[];
   rows: Array<Record<string, unknown>>;
 }
+
+export type ObjectiveWideExportMode = 'auto' | 'manual';
 
 export interface WideWritingExportInput {
   session: ExportSessionContext;
@@ -423,20 +440,30 @@ export function buildWideObjectiveExport({
   sectionSubmissions,
   examState,
   moduleType,
+  mode = 'auto',
 }: WideObjectiveExportInput): WideObjectiveExport {
   const descriptors = examState ? getStudentQuestionsForModule(examState, moduleType) : [];
   const answerColumns = descriptors.map((descriptor) => {
     const label = getQuestionColumnLabel(descriptor, descriptors);
     return { key: `answer:${descriptor.id}`, label: `${label} Answer` };
   });
-  const rightAnswerColumns = descriptors.map((descriptor) => {
-    const label = getQuestionColumnLabel(descriptor, descriptors);
-    return { key: `rightAnswer:${descriptor.id}`, label: `${label} Right Answer` };
-  });
-  const scoreColumns = descriptors.map((descriptor) => {
-    const label = getQuestionColumnLabel(descriptor, descriptors);
-    return { key: `score:${descriptor.id}`, label: `${label} Score` };
-  });
+  const rightAnswerColumns =
+    mode === 'auto'
+      ? descriptors.map((descriptor) => {
+        const label = getQuestionColumnLabel(descriptor, descriptors);
+        return { key: `rightAnswer:${descriptor.id}`, label: `${label} Right Answer` };
+      })
+      : descriptors.map((descriptor) => {
+        const label = getQuestionColumnLabel(descriptor, descriptors);
+        return { key: `manualCorrect:${descriptor.id}`, label: `Correct ${label}` };
+      });
+  const scoreColumns =
+    mode === 'auto'
+      ? descriptors.map((descriptor) => {
+        const label = getQuestionColumnLabel(descriptor, descriptors);
+        return { key: `score:${descriptor.id}`, label: `${label} Score` };
+      })
+      : [];
   const sectionBySubmissionId = new Map(
     sectionSubmissions.map((entry) => [entry.submissionId, entry.sectionSubmission] as const),
   );
@@ -458,7 +485,7 @@ export function buildWideObjectiveExport({
       cohortName: submission.cohortName,
       section: moduleType,
       submittedAt: sectionSubmission?.submittedAt ?? submission.submittedAt,
-      totalScore: toOptionalNumber(autoGradingResults?.totalScore),
+      totalScore: mode === 'manual' ? '' : toOptionalNumber(autoGradingResults?.totalScore),
       maxScore: toOptionalNumber(autoGradingResults?.maxScore),
       percentage: toOptionalNumber(autoGradingResults?.percentage),
       correctCount: autoGradingResults?.questionResults
@@ -471,8 +498,12 @@ export function buildWideObjectiveExport({
       const item = items.get(descriptor.id);
       const scoredResult = scoredResults.get(descriptor.id);
       row[`answer:${descriptor.id}`] = item?.studentAnswer ?? '';
-      row[`rightAnswer:${descriptor.id}`] = item?.correctAnswer ?? '';
-      row[`score:${descriptor.id}`] = toOptionalNumber(scoredResult?.awardedScore);
+      if (mode === 'auto') {
+        row[`rightAnswer:${descriptor.id}`] = item?.correctAnswer ?? '';
+        row[`score:${descriptor.id}`] = toOptionalNumber(scoredResult?.awardedScore);
+      } else {
+        row[`manualCorrect:${descriptor.id}`] = '';
+      }
     }
 
     return row;
@@ -480,11 +511,13 @@ export function buildWideObjectiveExport({
 
   return {
     columns: [
-      ...OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS,
+      ...(mode === 'auto'
+        ? OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS
+        : OBJECTIVE_WIDE_MANUAL_EXPORT_BASE_COLUMNS),
       ...answerColumns,
       ...rightAnswerColumns,
       ...scoreColumns,
-      { key: 'ieltsBandScore', label: 'IELTS Band Score' },
+      ...(mode === 'auto' ? [{ key: 'ieltsBandScore', label: 'IELTS Band Score' }] : []),
     ],
     rows,
   };
@@ -632,8 +665,9 @@ export function buildCsvFilename(
   examTitle: string,
   section: GradingExportSection,
   cohortName?: string | undefined,
+  variant?: string | undefined,
 ): string {
-  const parts = [examTitle, cohortName, section, new Date().toISOString().slice(0, 10)]
+  const parts = [examTitle, cohortName, section, variant, new Date().toISOString().slice(0, 10)]
     .filter((part): part is string => typeof part === 'string' && part.trim() !== '')
     .map(slugifyCsvFilePart);
   return `${parts.join('-') || 'grading-export'}.csv`;

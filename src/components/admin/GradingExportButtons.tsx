@@ -5,14 +5,18 @@ import type { GradingExportSection } from './gradingReviewUtils';
 interface GradingExportButtonsProps {
   exportingSection: GradingExportSection | null;
   onExportReading: () => void;
+  onExportReadingManual: () => void;
   onExportListening: () => void;
+  onExportListeningManual: () => void;
   onPrintWriting: () => void;
 }
 
 export function GradingExportButtons({
   exportingSection,
   onExportReading,
+  onExportReadingManual,
   onExportListening,
+  onExportListeningManual,
   onPrintWriting,
 }: GradingExportButtonsProps) {
   const buttons: Array<{
@@ -21,7 +25,9 @@ export function GradingExportButtons({
     onClick: () => void;
   }> = [
     { key: 'reading', label: 'Reading CSV', onClick: onExportReading },
+    { key: 'reading_manual', label: 'Reading Manual Check CSV', onClick: onExportReadingManual },
     { key: 'listening', label: 'Listening CSV', onClick: onExportListening },
+    { key: 'listening_manual', label: 'Listening Manual Check CSV', onClick: onExportListeningManual },
     { key: 'writing', label: 'Print all writing', onClick: onPrintWriting },
   ];
 

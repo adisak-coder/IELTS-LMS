@@ -252,6 +252,7 @@
   .student-reading-passage-pane,
   .student-writing-prompt-pane {
     max-height: none;
+    touch-action: auto;
   }
 
   .student-stimulus-content p {
