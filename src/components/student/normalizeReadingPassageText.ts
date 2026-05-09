@@ -175,9 +175,7 @@ function htmlToPlainText(html: string): string {
   if (typeof DOMParser !== 'undefined') {
     const parser = new DOMParser();
     const doc = parser.parseFromString(html, 'text/html');
-    const blockTexts = Array.from(
-      doc.body.querySelectorAll('p,div,section,article,li,h1,h2,h3,h4,h5,h6,blockquote,pre'),
-    )
+    const blockTexts = collectLeafReadableBlocks(doc.body)
       .map((node) => normalizeLineContent(node.textContent ?? ''))
       .filter(Boolean);
 
@@ -268,6 +266,14 @@ function normalizeInlineText(text: string): string {
   return text.replace(/\s+/g, ' ');
 }
 
+const RICH_TEXT_BLOCK_SELECTOR =
+  'p,div,section,article,li,h1,h2,h3,h4,h5,h6,blockquote,pre';
+
+function collectLeafReadableBlocks(root: ParentNode): HTMLElement[] {
+  const candidates = Array.from(root.querySelectorAll(RICH_TEXT_BLOCK_SELECTOR));
+  return candidates.filter((candidate) => !candidate.querySelector(RICH_TEXT_BLOCK_SELECTOR));
+}
+
 function htmlToMarkedText(html: string): string {
   if (typeof DOMParser === 'undefined') {
     return htmlToPlainText(html);
@@ -315,7 +321,7 @@ function htmlToMarkedText(html: string): string {
     return joined;
   };
 
-  const blocks = Array.from(doc.body.querySelectorAll('p,div,section,article,li,h1,h2,h3,h4,h5,h6,blockquote,pre'))
+  const blocks = collectLeafReadableBlocks(doc.body)
     .map((node) => renderNode(node, { bold: false, italic: false }))
     .filter(Boolean);
 

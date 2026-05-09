@@ -28,6 +28,8 @@ export interface HighlightApplyResult {
   reason: HighlightPolicyReason | null;
 }
 
+const HIGHLIGHT_SELECTOR = 'mark[data-highlighted="true"]';
+
 const isHighlightDebugEnabled =
   typeof import.meta !== 'undefined' &&
   typeof import.meta.env !== 'undefined' &&
@@ -258,46 +260,18 @@ function applyHighlightToClonedRange(
     return { html: null, reason: 'empty_selection' };
   }
 
-  if (selectionCrossesBlockBoundary(clonedContainer, clonedRange)) {
-    const didApplySplitHighlight = applySplitRangeHighlight(
-      clonedContainer,
-      clonedRange,
-      highlightClassName,
-    );
-    return didApplySplitHighlight
-      ? { html: clonedContainer.innerHTML, reason: null }
-      : { html: null, reason: 'cross_block_selection' };
-  }
-
-  const didApplySingleHighlight = applySingleRangeHighlight(
+  const crossesBlockBoundary = selectionCrossesBlockBoundary(clonedContainer, clonedRange);
+  const didApplyHighlight = applySplitRangeHighlight(
+    clonedContainer,
     clonedRange,
     highlightClassName,
   );
-  return didApplySingleHighlight
-    ? { html: clonedContainer.innerHTML, reason: null }
-    : { html: null, reason: 'empty_selection' };
-}
-
-function applySingleRangeHighlight(
-  range: Range,
-  highlightClassName: string,
-): boolean {
-  const wrapper = document.createElement('mark');
-  wrapper.className = highlightClassName;
-  wrapper.setAttribute('data-highlighted', 'true');
-
-  try {
-    range.surroundContents(wrapper);
-    return true;
-  } catch {
-    try {
-      wrapper.appendChild(range.extractContents());
-      range.insertNode(wrapper);
-      return true;
-    } catch {
-      return false;
-    }
+  if (!didApplyHighlight) {
+    return { html: null, reason: crossesBlockBoundary ? 'cross_block_selection' : 'empty_selection' };
   }
+
+  flattenNestedHighlightedMarks(clonedContainer);
+  return { html: clonedContainer.innerHTML, reason: null };
 }
 
 function applySplitRangeHighlight(
@@ -413,6 +387,10 @@ function wrapTextNodeSegment(
   endOffset: number,
   highlightClassName: string,
 ): boolean {
+  if (isInsideHighlightedMark(textNode)) {
+    return false;
+  }
+
   const fullText = textNode.textContent ?? '';
   const selectedText = fullText.slice(startOffset, endOffset);
   if (!selectedText || selectedText.trim().length === 0) {
@@ -443,6 +421,31 @@ function wrapTextNodeSegment(
 
   textNode.parentNode.replaceChild(fragment, textNode);
   return true;
+}
+
+function isInsideHighlightedMark(node: Node): boolean {
+  const parentElement =
+    node.nodeType === Node.ELEMENT_NODE
+      ? (node as Element)
+      : node.parentElement;
+  if (!parentElement) {
+    return false;
+  }
+  return Boolean(parentElement.closest(HIGHLIGHT_SELECTOR));
+}
+
+function flattenNestedHighlightedMarks(root: ParentNode): void {
+  const nestedMarks = Array.from(root.querySelectorAll(`${HIGHLIGHT_SELECTOR} ${HIGHLIGHT_SELECTOR}`));
+  for (const nestedMark of nestedMarks) {
+    const parent = nestedMark.parentNode;
+    if (!parent) {
+      continue;
+    }
+    while (nestedMark.firstChild) {
+      parent.insertBefore(nestedMark.firstChild, nestedMark);
+    }
+    parent.removeChild(nestedMark);
+  }
 }
 
 function findNearestBlockBoundary(container: HTMLElement, node: Node): Node {

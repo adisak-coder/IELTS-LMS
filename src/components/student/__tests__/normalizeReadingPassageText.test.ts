@@ -44,4 +44,12 @@ describe('normalizeReadingContentForHighlightText', () => {
     expect(output).toContain('***Questions 1-13***');
     expect(output.startsWith('*You should spend about 20 minutes on')).toBe(true);
   });
+
+  it('avoids duplicate and flattened output when rich text uses wrapper containers', () => {
+    const input = '<div><p>Alpha beta.</p><p>Gamma delta.</p></div>';
+
+    const output = normalizeReadingContentForHighlightedFormattedText(input);
+
+    expect(output).toBe('Alpha beta.\n\nGamma delta.');
+  });
 });

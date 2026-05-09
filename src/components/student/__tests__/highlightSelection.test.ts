@@ -368,4 +368,80 @@ describe('applySelectionHighlight', () => {
     expect(result.reason).toBeNull();
     expect(result.html).toContain('data-highlighted="true"');
   });
+
+  it('does not create nested marks when re-highlighting text that is already highlighted', () => {
+    const container = document.createElement('div');
+    container.innerHTML = '<p>Alpha beta gamma</p>';
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let currentNode = walker.nextNode();
+      let targetTextNode: Text | null = null;
+      while (currentNode) {
+        if ((currentNode.textContent ?? '').includes('beta')) {
+          targetTextNode = currentNode as Text;
+          break;
+        }
+        currentNode = walker.nextNode();
+      }
+      if (!targetTextNode) {
+        throw new Error('Expected text node containing beta');
+      }
+
+      const value = targetTextNode.textContent ?? '';
+      const start = value.indexOf('beta');
+      const end = start + 'beta'.length;
+      const range = document.createRange();
+      range.setStart(targetTextNode, start);
+      range.setEnd(targetTextNode, end);
+
+      const selection = {
+        rangeCount: 1,
+        getRangeAt: () => range,
+        toString: () => range.toString(),
+        removeAllRanges: vi.fn(),
+      } as unknown as Selection;
+
+      const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+      if (result.html) {
+        container.innerHTML = result.html;
+      }
+    }
+
+    const marks = container.querySelectorAll('mark[data-highlighted="true"]');
+    expect(marks).toHaveLength(1);
+    expect(container.innerHTML).toContain('<mark class="bg-blue-200" data-highlighted="true">beta</mark>');
+  });
+
+  it('flattens persisted nested mark stacks when applying a new highlight', () => {
+    const container = document.createElement('div');
+    container.innerHTML =
+      '<p>Alpha <mark data-highlighted="true" class="bg-yellow-200"><mark data-highlighted="true" class="bg-yellow-200">beta</mark></mark> gamma</p>';
+
+    const textNode = Array.from(container.querySelectorAll('p')[0]?.childNodes ?? []).find(
+      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').includes('gamma'),
+    );
+    if (!textNode || textNode.nodeType !== Node.TEXT_NODE) {
+      throw new Error('Expected a plain text node containing gamma');
+    }
+
+    const value = textNode.textContent ?? '';
+    const start = value.indexOf('gamma');
+    const end = start + 'gamma'.length;
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, end);
+
+    const selection = {
+      rangeCount: 1,
+      getRangeAt: () => range,
+      toString: () => range.toString(),
+      removeAllRanges: vi.fn(),
+    } as unknown as Selection;
+
+    const result = applySelectionHighlightWithPolicy(container, selection, 'bg-blue-200');
+    expect(result.reason).toBeNull();
+    expect(result.html).not.toContain('</mark><mark');
+    expect(result.html).not.toContain('<mark data-highlighted="true" class="bg-yellow-200"><mark');
+  });
 });
