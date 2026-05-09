@@ -521,6 +521,7 @@ describe('gradingReviewUtils', () => {
             instruction: 'Answer the question.',
             questions: [
               { id: 'q-1', prompt: 'First?', correctAnswer: 'Alpha', answerRule: 'ONE_WORD' },
+              { id: 'q-2', prompt: 'Second?', correctAnswer: 'Beta', answerRule: 'ONE_WORD' },
             ],
           },
         ],
@@ -535,8 +536,9 @@ describe('gradingReviewUtils', () => {
       sectionSubmissions: [
         {
           submissionId: 'sub-1',
-          sectionSubmission: createSectionSubmission('sub-1', 'reading', { 'q-1': 'Alpha' }, [
+          sectionSubmission: createSectionSubmission('sub-1', 'reading', { 'q-1': 'Alpha', 'q-2': 'Beta' }, [
             createQuestionResult('q-1', true, 1),
+            createQuestionResult('q-2', true, 1),
           ]),
         },
       ],
@@ -554,10 +556,14 @@ describe('gradingReviewUtils', () => {
       'Total Score',
       'Q1 Answer',
       'Correct Q1',
+      'Q2 Answer',
+      'Correct Q2',
     ]);
     expect(exportData.rows[0]?.totalScore).toBe('');
     expect(exportData.rows[0]?.['answer:q-1']).toBe('Alpha');
     expect(exportData.rows[0]?.['manualCorrect:q-1']).toBe('');
+    expect(exportData.rows[0]?.['answer:q-2']).toBe('Beta');
+    expect(exportData.rows[0]?.['manualCorrect:q-2']).toBe('');
   });
 
   test('leaves missing objective answers and unscored questions blank', () => {

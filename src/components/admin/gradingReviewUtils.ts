@@ -464,6 +464,13 @@ export function buildWideObjectiveExport({
         return { key: `score:${descriptor.id}`, label: `${label} Score` };
       })
       : [];
+  const manualQuestionColumns = descriptors.flatMap((descriptor) => {
+    const label = getQuestionColumnLabel(descriptor, descriptors);
+    return [
+      { key: `answer:${descriptor.id}`, label: `${label} Answer` },
+      { key: `manualCorrect:${descriptor.id}`, label: `Correct ${label}` },
+    ];
+  });
   const sectionBySubmissionId = new Map(
     sectionSubmissions.map((entry) => [entry.submissionId, entry.sectionSubmission] as const),
   );
@@ -514,9 +521,9 @@ export function buildWideObjectiveExport({
       ...(mode === 'auto'
         ? OBJECTIVE_WIDE_EXPORT_BASE_COLUMNS
         : OBJECTIVE_WIDE_MANUAL_EXPORT_BASE_COLUMNS),
-      ...answerColumns,
-      ...rightAnswerColumns,
-      ...scoreColumns,
+      ...(mode === 'auto'
+        ? [...answerColumns, ...rightAnswerColumns, ...scoreColumns]
+        : manualQuestionColumns),
       ...(mode === 'auto' ? [{ key: 'ieltsBandScore', label: 'IELTS Band Score' }] : []),
     ],
     rows,
