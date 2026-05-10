@@ -20,6 +20,7 @@ import { StudentUIProvider, useStudentUI } from './providers/StudentUIProvider';
 import { getStudentTypographyScale } from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
+import { clearReadingHighlightSnapshotsForAttempt } from '../../features/student/highlight-infra/localHighlightStore';
 import { resolveObjectiveAnswerUpdate } from './resolveObjectiveAnswerUpdate';
 import { useZoomScrollAnchoring } from './useZoomScrollAnchoring';
 import { useStudentTabletMode } from './tabletMode';
@@ -106,6 +107,7 @@ function StudentExamPreviewInner({
   const highlightNamespace = `preview:${examId}`;
   const clearHighlights = () => {
     clearStudentHighlights(highlightNamespace);
+    clearReadingHighlightSnapshotsForAttempt(highlightNamespace);
   };
   const studentShellStyle = {
     zoom: uiState.accessibilitySettings.zoom,
@@ -299,6 +301,7 @@ function StudentExamPreviewInner({
           highlightEnabled={uiState.accessibilitySettings.highlightMode}
           highlightColor={highlightColor}
           highlightClassName={highlightClassName}
+          readingHighlightAttemptId={highlightNamespace}
           />
         ) : null}
 

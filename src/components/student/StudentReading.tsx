@@ -8,7 +8,6 @@ import { getBlockQuestionCount } from '../../utils/examUtils';
 import { getQuestionStartNumber, getStudentQuestionsForModule } from '../../services/examAdapterService';
 import { prefersReducedMotion } from './prefersReducedMotion';
 import { FormattedText } from './FormattedText';
-import { RichTextHighlighter } from './RichTextHighlighter';
 import { StudentZoomableMedia } from './StudentZoomableMedia';
 import type { StudentHighlightColor } from './highlightPalette';
 import type { StimulusAnnotation } from '../../types';
@@ -19,6 +18,9 @@ import {
   normalizeReadingPlainTextForDisplay,
 } from './normalizeReadingPassageText';
 import { isInstructionReferencePlacement } from '../../utils/referenceImagePlacement';
+import { ReadingHighlightView } from '../../features/student/highlight-ui/ReadingHighlightView';
+import { useReadingHighlightController } from '../../features/student/highlight-ui/useReadingHighlightController';
+import { sanitizeHtml } from '../../utils/sanitizeHtml';
 
 interface StudentReadingProps {
   state: ExamState;
@@ -35,6 +37,7 @@ interface StudentReadingProps {
   highlightEnabled?: boolean | undefined;
   highlightColor?: StudentHighlightColor | undefined;
   highlightClassName?: string | undefined;
+  readingHighlightAttemptId?: string | undefined;
   tabletMode?: boolean | undefined;
   contentZoom?: number | undefined;
 }
@@ -49,7 +52,7 @@ export function StudentReading({
   onToggleFlag,
   highlightEnabled = false,
   highlightColor,
-  highlightClassName,
+  readingHighlightAttemptId,
   tabletMode = false,
   contentZoom = 1,
 }: StudentReadingProps) {
@@ -127,6 +130,20 @@ export function StudentReading({
     () => normalizeReadingContentForHighlightedFormattedText(activePassage?.content ?? ''),
     [activePassage?.content],
   );
+  const readingHighlightKey = useMemo(
+    () => ({
+      attemptId: readingHighlightAttemptId ?? 'preview',
+      section: 'reading' as const,
+      passageId: activePassage?.id ?? 'unknown-passage',
+      blockId: 'passage-content',
+    }),
+    [activePassage?.id, readingHighlightAttemptId],
+  );
+  const readingHighlightController = useReadingHighlightController({
+    key: readingHighlightKey,
+    blockTextLength: highlightPassageText.length,
+    color: highlightColor ?? 'yellow',
+  });
   const passageContentClassName = passageHasHtml
     ? 'student-accessible-table-typography whitespace-normal break-words [overflow-wrap:anywhere]'
     : 'student-accessible-table-typography whitespace-pre-wrap break-words [overflow-wrap:anywhere]';
@@ -142,8 +159,6 @@ export function StudentReading({
           as="p"
           className={`${answerCompact ? 'text-xs md:text-sm' : 'text-sm md:text-base'} leading-relaxed text-gray-800 break-words [overflow-wrap:anywhere]`}
           text={instruction}
-          highlightEnabled={highlightEnabled}
-          highlightColor={highlightColor}
         />
       </div>
     );
@@ -258,23 +273,18 @@ export function StudentReading({
           </h2>
           <div className={`${materialCompact ? 'space-y-3' : 'space-y-5'} break-normal text-gray-900 [&_h1]:font-black [&_h1]:leading-tight [&_h1]:[font-size:var(--student-passage-h1-font-size)] [&_h2]:font-bold [&_h2]:leading-tight [&_h2]:[font-size:var(--student-passage-h2-font-size)] [&_h3]:font-bold [&_h3]:leading-snug [&_h3]:[font-size:var(--student-passage-h3-font-size)] [&_img]:max-w-full [&_img]:rounded-2xl [&_li]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-7 [&_p]:my-3 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-7`}>
             {highlightEnabled ? (
-              <FormattedText
-                as="div"
-                text={highlightPassageText}
+              <ReadingHighlightView
+                content={highlightPassageText}
+                ranges={readingHighlightController.ranges}
                 className="whitespace-pre-wrap break-normal"
-                highlightEnabled
-                highlightColor={highlightColor}
-                highlightClassName={highlightClassName}
-                preserveInlineEmphasis
+                onApplySelection={readingHighlightController.applySelection}
+                onRemoveAtOffset={readingHighlightController.removeAtOffset}
               />
             ) : (
-              <RichTextHighlighter
-                content={renderedPassageContent}
-                contentType="html"
-                enabled={false}
+              <div
                 className="whitespace-pre-wrap break-normal"
-                highlightColor={highlightColor}
-                highlightClassName={highlightClassName}
+                data-student-highlightable="true"
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(renderedPassageContent) }}
               />
             )}
             {(activePassage.images ?? []).map((image) => (

@@ -38,3 +38,9 @@
 - In-exam proctor visibility is intentionally delayed (target window to be defined in implementation, e.g. 15-30 seconds).
 - Every in-progress answer read must be auditable (actor, role, schedule, attempt, timestamp, reason/context).
 - Proctor in-progress reads must come from a dedicated delayed projection/read model, not the live student session endpoint.
+
+## Reading Highlight Rewrite Direction (Resolved, 2026-05-09)
+
+- Reading highlight architecture will move to a **big-bang Tiptap/ProseMirror rewrite** (read-only view + decoration-driven highlights).
+- Reading highlights will no longer persist mutated HTML; persistence will use structured **block-local text ranges** with local-only restore across browser close.
+- UX parity is required for existing highlight colors (`yellow`, `amber`, `green`, `blue`) and single-target remove behavior on click/tap.

@@ -23,6 +23,7 @@ import {
 } from './accessibilityScale';
 import { getStudentHighlightClassName } from './highlightPalette';
 import { StudentHighlightPersistenceProvider, clearStudentHighlights } from './highlightPersistence';
+import { clearReadingHighlightSnapshotsForAttempt } from '../../features/student/highlight-infra/localHighlightStore';
 import { useStudentTabletMode } from './tabletMode';
 import { shouldOfferTimeExtension } from './timeExtensionPolicy';
 import { useStudentAttempt } from './providers/StudentAttemptProvider';
@@ -151,7 +152,8 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
   const attemptFlags = attemptState.attempt?.flags ?? {};
   const clearHighlights = useCallback(() => {
     clearStudentHighlights(highlightNamespace);
-  }, [highlightNamespace]);
+    clearReadingHighlightSnapshotsForAttempt(attemptState.attemptId ?? highlightNamespace);
+  }, [attemptState.attemptId, highlightNamespace]);
   const studentShellStyle = {
     height: 'var(--student-viewport-height, 100dvh)',
     zoom: tabletMode ? 1 : uiState.accessibilitySettings.zoom,
@@ -1122,6 +1124,7 @@ export function StudentApp({ showSubmitControls = true }: StudentAppProps) {
             highlightEnabled={uiState.accessibilitySettings.highlightMode}
             highlightColor={highlightColor}
             highlightClassName={highlightClassName}
+            readingHighlightAttemptId={attemptState.attemptId}
             onIncreasePassageReadability={uiActions.increasePassageReadability}
             onDecreasePassageReadability={uiActions.decreasePassageReadability}
             onResetPassageReadability={uiActions.resetPassageReadability}
